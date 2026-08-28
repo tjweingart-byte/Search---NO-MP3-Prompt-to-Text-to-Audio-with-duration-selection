@@ -363,6 +363,23 @@ problem — it was faithfully playing an empty stream.
 formats: a generator that raises, and a generator that yields nothing, must each
 produce a 502 rather than a playable silence.
 
+### Follow-up: the disabled button looked like a spinner
+
+Reported with a screenshot. Two more UI problems, both mine:
+
+1. **`button:disabled { cursor: progress }`** meant hovering the disabled Listen
+   button showed a spinning wheel — which reads as "working on it" when it
+   actually means "you cannot press this". Now `cursor: not-allowed`, with
+   `progress` moved to a `.working` class applied only while an episode is
+   genuinely being generated.
+2. **Two health warnings overwrote each other.** `say()` replaces the status
+   text, so when both the API key and the speech engine were missing, only the
+   *second* message survived. The screenshot showed "No speech engine installed"
+   while the button was disabled for an entirely different reason — the missing
+   key. Notices are now collected and rendered as a list: blocking problems in
+   red, warnings in amber, and the disabled button carries a `title` explaining
+   itself on hover.
+
 ### If you still hear nothing
 
 1. `curl localhost:8000/api/health` — check `api_key_configured` and

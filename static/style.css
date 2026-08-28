@@ -35,10 +35,16 @@ button {
   padding: .8rem 1.4rem; font-size: 1rem; font-weight: 600; cursor: pointer;
   border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink);
 }
-button:disabled { opacity: .5; cursor: progress; }
+/* not-allowed, never progress: a disabled button showing a spinner reads as
+   "working on it" when it actually means "you cannot press this". */
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.working { cursor: progress; }
 button.ghost { background: transparent; color: var(--muted); border: 1px solid #2b3040; margin-left: .5rem; }
 .status { min-height: 1.5rem; margin: 1.1rem 2px; color: var(--muted); }
 .status.error { color: #ff9a9a; }
+.status p { margin: 0 0 .45rem; }
+.status .blocking { color: #ffb4b4; font-weight: 600; }
+.status .warn { color: #ffd79a; }
 .meter { margin: .5rem 2px 1.5rem; }
 .bar { height: 6px; background: #232733; border-radius: 99px; overflow: hidden; }
 .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .25s linear; }

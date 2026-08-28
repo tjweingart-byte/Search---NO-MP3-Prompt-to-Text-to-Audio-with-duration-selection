@@ -46,11 +46,26 @@ function say(msg, isError = false) {
   statusEl.classList.toggle("error", isError);
 }
 
+/* Several problems can be true at once - no API key AND no speech engine.
+   Showing them one at a time means the later one silently overwrites the
+   earlier one, and the user is told the wrong reason for what they see. */
+function showNotices(notices) {
+  statusEl.classList.remove("error");
+  statusEl.innerHTML = "";
+  for (const note of notices) {
+    const p = document.createElement("p");
+    p.className = note.blocking ? "blocking" : "warn";
+    p.textContent = note.text;
+    statusEl.appendChild(p);
+  }
+}
+
 function reset() {
   if (ticker) { clearInterval(ticker); ticker = null; }
   if (controller) { controller.abort(); controller = null; }
   if (ctx) { ctx.close().catch(() => {}); ctx = null; }
   goBtn.disabled = false;
+  goBtn.classList.remove("working");
   stopBtn.hidden = true;
 }
 
@@ -82,6 +97,7 @@ form.addEventListener("submit", async (event) => {
   if (!q) return;
 
   goBtn.disabled = true;
+  goBtn.classList.add("working");
   stopBtn.hidden = false;
   meterWrap.hidden = false;
   transcriptWrap.hidden = true;
@@ -159,8 +175,12 @@ form.addEventListener("submit", async (event) => {
     }
     // Let the tail finish playing before tearing the context down.
     const remaining = Math.max(0, playHead - ctx.currentTime) * 1000;
-    setTimeout(() => { if (ticker) clearInterval(ticker); goBtn.disabled = false; stopBtn.hidden = true; },
-               remaining + 250);
+    setTimeout(() => {
+      if (ticker) clearInterval(ticker);
+      goBtn.disabled = false;
+      goBtn.classList.remove("working");
+      stopBtn.hidden = true;
+    }, remaining + 250);
   } catch (err) {
     if (err.name === "AbortError") return;
     say(err.message || "Something went wrong.", true);
@@ -172,12 +192,29 @@ fetch("/api/health")
   .then((r) => r.json())
   .then((h) => {
     engineEl.textContent = `${h.model} · voice: ${h.tts.selected} · ${h.sample_rate} Hz`;
+
+    const notices = [];
     if (!h.api_key_configured) {
-      say("No Anthropic credentials on the server — set ANTHROPIC_API_KEY in .env and restart.", true);
-      goBtn.disabled = true;
+      notices.push({
+        blocking: true,
+        text: "Listen is disabled: the server has no Anthropic credentials. Put " +
+              "ANTHROPIC_API_KEY in a .env file in the folder you run ./run.sh from, " +
+              "then restart the server.",
+      });
     }
     if (h.tts.selected === "debug") {
-      say("No speech engine installed — you will hear a placeholder tone. Install espeak-ng or piper.", true);
+      notices.push({
+        blocking: false,
+        text: "No speech engine installed, so you would hear a placeholder tone " +
+              "rather than a voice. Install espeak-ng (sudo apt-get install espeak-ng, " +
+              "or brew install espeak-ng) and restart the server.",
+      });
     }
+
+    const blocking = notices.find((n) => n.blocking);
+    goBtn.disabled = Boolean(blocking);
+    // Hovering a disabled control should explain itself.
+    goBtn.title = blocking ? blocking.text : "";
+    if (notices.length) showNotices(notices);
   })
-  .catch(() => {});
+  .catch(() => say("Could not reach the server. Is it still running?", true));
