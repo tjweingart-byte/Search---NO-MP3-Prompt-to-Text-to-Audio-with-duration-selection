@@ -110,6 +110,7 @@ form.addEventListener("submit", async (event) => {
     const reader = res.body.getReader();
     let leftover = new Uint8Array(0);
     let first = true;
+    let received = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -124,6 +125,7 @@ form.addEventListener("submit", async (event) => {
         merged.set(value, leftover.length);
         bytes = merged;
       }
+      received += value.length;
       const usable = bytes.length - (bytes.length % 2);
       leftover = bytes.slice(usable);
       if (!usable) continue;
@@ -143,7 +145,18 @@ form.addEventListener("submit", async (event) => {
       }
     }
 
-    say("Episode complete.");
+    // A stream that ends with no samples is a server-side failure that could
+    // not change the status code. Never report that as success.
+    if (received === 0) {
+      throw new Error("The server sent an empty episode. Check the server log — " +
+                      "usually a missing ANTHROPIC_API_KEY or no speech engine installed.");
+    }
+    const expected = target * sampleRate * 2;
+    if (received < expected * 0.5) {
+      say("The episode ended early — generation failed partway through. Check the server log.", true);
+    } else {
+      say("Episode complete.");
+    }
     // Let the tail finish playing before tearing the context down.
     const remaining = Math.max(0, playHead - ctx.currentTime) * 1000;
     setTimeout(() => { if (ticker) clearInterval(ticker); goBtn.disabled = false; stopBtn.hidden = true; },
@@ -159,7 +172,10 @@ fetch("/api/health")
   .then((r) => r.json())
   .then((h) => {
     engineEl.textContent = `${h.model} · voice: ${h.tts.selected} · ${h.sample_rate} Hz`;
-    if (!h.api_key_configured) say("No Anthropic credentials found on the server.", true);
+    if (!h.api_key_configured) {
+      say("No Anthropic credentials on the server — set ANTHROPIC_API_KEY in .env and restart.", true);
+      goBtn.disabled = true;
+    }
     if (h.tts.selected === "debug") {
       say("No speech engine installed — you will hear a placeholder tone. Install espeak-ng or piper.", true);
     }

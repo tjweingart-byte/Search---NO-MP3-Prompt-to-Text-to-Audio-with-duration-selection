@@ -305,3 +305,72 @@ seconds to the cost of one sentence of synthesis (~15 ms).
   morning briefing) via the Batch API at 50% cost would make the common case a
   hit for everyone.
 - `purge_expired()` exists but nothing calls it on a schedule.
+
+
+---
+
+## 12. "It generates an episode but I can't hear anything"
+
+Reported from a real run, reproduced, and fixed. There were **two** ways the app
+could produce a silent episode that every layer treated as a success.
+
+**Cause 1: a failure before the first audio byte became a silent HTTP 200.**
+The original code wrapped the whole stream in a catch-all whose comment read
+"the response has already begun, so an error cannot become a 500". That is true
+*after* the first byte — and false before it. So a rejected API key made the
+Claude call raise, the handler logged it and closed the stream, and the browser
+received `200 OK` with zero bytes. The player dutifully reported "Episode
+complete" and played nothing.
+
+Reproduced exactly:
+
+```
+$ curl -o /dev/null -w "%{http_code} %{size_download}\n" ".../api/audio?q=...&fmt=pcm"
+200 0
+```
+
+**Fix.** The handler now pulls chunks until real audio exists *before* returning
+a response. A failure during that window becomes a proper `502` with a message
+naming the cause. The same request now answers:
+
+```
+502 {"error": "Claude rejected the credentials. Set ANTHROPIC_API_KEY in .env
+     (or run `ant auth login`) and restart the server."}
+```
+
+`friendly_error()` maps auth, permission, model-not-found, rate-limit and
+connection failures to something actionable rather than a stack trace.
+
+**Cause 2: an empty script was padded into a silent "valid" episode.**
+Found by a test written for cause 1. When the model returned nothing, the
+end-of-episode room tone still ran, so the pipeline emitted a few seconds of
+silence — enough bytes to look like a real episode to the priming check, the
+`Content-Length`, and the player. The pipeline now refuses to pad an episode
+containing no speech, and the endpoint rejects on `stats.sentences == 0` rather
+than on a byte count, because silence is bytes but is not an episode.
+
+**Also fixed, on the player side.** It now counts received bytes: zero bytes
+raises a visible error instead of "Episode complete", and a stream ending under
+half the expected length says so. The health check disables the Listen button
+outright when the server reports no credentials, so the failure is visible
+before anyone waits on a generation.
+
+**Verified in a real browser** (Chromium, Web Audio instrumented): 106 buffers
+scheduled, 180.2 s of audio, peak amplitude 0.84. The player was never the
+problem — it was faithfully playing an empty stream.
+
+**Regression tests** in `tests/test_app.py` cover both causes across both output
+formats: a generator that raises, and a generator that yields nothing, must each
+produce a 502 rather than a playable silence.
+
+### If you still hear nothing
+
+1. `curl localhost:8000/api/health` — check `api_key_configured` and
+   `tts.selected`. If `selected` is `"debug"`, no speech engine is installed and
+   you will hear a quiet placeholder tone, not a voice: install `espeak-ng`.
+2. Watch the server log while you press Listen. Every episode logs a line with
+   `words`, `sentences` and `cache`; `sentences: 0` means the script was empty.
+3. Check the browser console and the status line under the form — real errors
+   now surface there in red.
+4. Check your system volume and that the tab is not muted. The stream is played
+   through Web Audio, so it obeys the tab's mute state.

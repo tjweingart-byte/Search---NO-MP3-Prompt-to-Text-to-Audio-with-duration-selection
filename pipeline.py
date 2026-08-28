@@ -276,6 +276,13 @@ class PodcastPipeline:
         A second or two of quiet at the end reads as the episode finishing; a
         hard cut reads as a bug.
         """
+        # Never pad an episode that has no speech in it. Doing so manufactures
+        # a few seconds of silence that looks like a valid episode to every
+        # layer above, which is how an empty script reached listeners as
+        # "it generated something but I hear nothing".
+        if stats.sentences == 0:
+            stats.audio_seconds = pace.elapsed
+            return
         shortfall = min(pace.remaining_seconds, MAX_TAIL_SILENCE)
         if shortfall > 0.05:
             pad = silence(shortfall, self.engine.sample_rate)

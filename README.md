@@ -120,6 +120,15 @@ See `.env.example`. Notable knobs: `MODEL` (defaults to `claude-opus-5`;
 `claude-sonnet-5` is cheaper and faster), `ENABLE_WEB_SEARCH`, `TTS_ENGINE`,
 `TARGET_WPM`, and `RATE_LIMIT_SECONDS`.
 
+## Troubleshooting
+
+**"It generates an episode but I can't hear anything."** Almost always the
+server failing while the browser still gets a valid-looking response. Check
+`curl localhost:8000/api/health`: `api_key_configured: false` means no
+credentials, and `tts.selected: "debug"` means no speech engine is installed (you
+will hear a quiet tone, not a voice — install `espeak-ng`). Both now surface in
+the interface rather than playing silence. See `PROBLEMS.md` §12.
+
 ## Known limitations
 
 See `PROBLEMS.md` §10 — in short: espeak sounds robotic (install piper), the

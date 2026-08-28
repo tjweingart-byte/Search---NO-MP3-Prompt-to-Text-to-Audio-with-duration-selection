@@ -30,7 +30,30 @@ log = logging.getLogger("podcast")
 
 app = FastAPI(title="Search to Podcast", version="1.0.0")
 
+# A streamed WAV opens with a 44-byte header, which is not audio.
+WAV_HEADER_BYTES = 44
+
 _last_request: dict[str, float] = defaultdict(float)
+
+
+def friendly_error(exc: Exception) -> str:
+    """Turn an SDK failure into something the person in the browser can act on."""
+    import anthropic
+
+    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)) or (
+        isinstance(exc, TypeError) and "authentication method" in str(exc)
+    ):
+        return (
+            "Claude rejected the credentials. Set ANTHROPIC_API_KEY in .env "
+            "(or run `ant auth login`) and restart the server."
+        )
+    if isinstance(exc, anthropic.NotFoundError):
+        return f"The model {settings.model!r} is not available to this account. Try MODEL=claude-sonnet-5."
+    if isinstance(exc, anthropic.RateLimitError):
+        return "Claude is rate limiting this key. Wait a moment and try again."
+    if isinstance(exc, anthropic.APIConnectionError):
+        return "Could not reach the Claude API. Check the server's network access."
+    return f"Generation failed: {type(exc).__name__}. See the server log for details."
 
 # One cache shared by every request this worker serves - and, with the SQLite
 # backend, by every other worker on the machine too.
@@ -139,17 +162,45 @@ async def audio(
     # The player must be told the engine's real rate, not the configured one.
     sample_rate = pipeline.engine.sample_rate
 
+    source = pipeline.stream_wav(plan, stats) if fmt == "wav" else pipeline.stream_pcm(plan, stats)
+
+    # Pull chunks until real audio exists BEFORE returning a response. Once the
+    # first byte is sent the status code is fixed, so a failure after that point
+    # can only be logged - which is how a broken API key used to arrive at the
+    # browser as a successful, silent, empty episode. Priming here means such a
+    # failure becomes a proper error the interface can show.
+    primed: list[bytes] = []
+    try:
+        async for chunk in source:
+            primed.append(chunk)
+            if sum(len(c) for c in primed) > WAV_HEADER_BYTES:
+                break
+    except Exception as exc:
+        log.exception("generation failed before any audio was produced")
+        raise HTTPException(status_code=502, detail=friendly_error(exc)) from exc
+
+    # `stats.sentences` is the honest test: silence is bytes, but it is not an
+    # episode. A script that came back empty must not be served as one.
+    if stats.sentences == 0 or sum(len(c) for c in primed) <= WAV_HEADER_BYTES:
+        log.error("generation produced no audio for %r", plan.query)
+        raise HTTPException(
+            status_code=502,
+            detail="The episode came back with no speech in it. Check the server "
+            "log, and that ANTHROPIC_API_KEY is set and a speech engine is installed.",
+        )
+
     async def body():
         try:
-            source = pipeline.stream_wav(plan, stats) if fmt == "wav" else pipeline.stream_pcm(plan, stats)
+            for chunk in primed:
+                yield chunk
             async for chunk in source:
                 if await request.is_disconnected():
                     log.info("client disconnected; abandoning generation")
                     break
                 yield chunk
         except Exception:
-            # The response has already begun, so an error cannot become a 500.
-            # Log it and close the stream; the player stops at what it has.
+            # Past the first byte the status code is already sent, so this can
+            # only be logged. The player detects the short stream and says so.
             log.exception("audio stream failed mid-flight")
         finally:
             log.info(
