@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import sys
+from functools import lru_cache
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -157,20 +159,34 @@ class DebugEngine(TTSEngine):
 
     name = "debug"
 
-    async def synth(self, text: str, wpm: float) -> bytes:
-        import math
-        import struct
+    #: 220 Hz carrier and a 2 Hz tremolo both complete a whole number of cycles
+    #: in exactly one second, so one second of samples tiles seamlessly. Building
+    #: it once and repeating it is ~50x faster than a per-sample Python loop,
+    #: which otherwise dominates the test suite.
+    _CYCLE_SECONDS = 1
 
+    @staticmethod
+    @lru_cache(maxsize=4)
+    def _one_second(sample_rate: int) -> bytes:
+        import array
+        import math
+
+        samples = array.array("h")
+        for i in range(sample_rate):
+            env = 0.15 * (0.6 + 0.4 * math.sin(2 * math.pi * 2.0 * i / sample_rate))
+            samples.append(int(32767 * env * math.sin(2 * math.pi * 220.0 * i / sample_rate)))
+        if sys.byteorder == "big":
+            samples.byteswap()  # the stream is little-endian everywhere
+        return samples.tobytes()
+
+    async def synth(self, text: str, wpm: float) -> bytes:
         words = max(1, len(text.split()))
         seconds = words / (max(wpm, 1.0) / 60.0)
-        frames = int(seconds * settings.sample_rate)
-        buf = bytearray()
-        for i in range(frames):
-            # Gentle 220 Hz tone with a slow tremolo, kept quiet on purpose.
-            env = 0.15 * (0.6 + 0.4 * math.sin(2 * math.pi * 2.0 * i / settings.sample_rate))
-            value = int(32767 * env * math.sin(2 * math.pi * 220.0 * i / settings.sample_rate))
-            buf += struct.pack("<h", value)
-        return bytes(buf)
+        rate = settings.sample_rate
+        cycle = self._one_second(rate)
+        frames = int(seconds * rate)
+        whole, remainder = divmod(frames, rate)
+        return cycle * whole + cycle[: remainder * settings.sample_width]
 
     @staticmethod
     def available() -> bool:

@@ -166,15 +166,45 @@ since research is already done, and abandonment on disconnect.
 
 If you need more:
 
-**Latency**
-- **Prompt caching** on the system prompt — it's stable across every request.
-- **`claude-sonnet-5`** for the script pass: ~2.5x cheaper and noticeably faster.
-  One env var (`MODEL`).
-- **Pre-warm the TTS process.** Currently one subprocess per sentence, which is
-  fine for espeak (~10 ms) but wasteful for piper's model load. A persistent
-  worker process fed sentences over a pipe removes that per-sentence cost.
-- **Speak a fixed opening line** while the model is still on its first sentence,
-  to cover the initial research latency.
+**Where the time actually goes.** Measured: TTS is ~330x realtime (15 ms for a
+5-second sentence) and the model outputs text ~16x faster than the listener
+consumes it. So after the opening sentence, *nothing downstream is ever the
+bottleneck* — the script finishes long before playback does. The only latency
+that matters is **time to first audio**, and that is almost entirely the model:
+web search (~2-6 s) + thinking tokens + the first sentence. Optimising anything
+else is optimising ~2% of the wait. Two consequences:
+
+- Parallelising script generation across sections would not help. The script is
+  already far ahead of the listener.
+- **Prompt caching is not worth it here** (correcting an earlier note): the
+  stable prefix is ~172 tokens, well under the 512-4096 token minimum cacheable
+  prefix, so it would never cache.
+
+**Latency — the levers that actually move it**
+- **Cold-open in parallel.** Have `claude-haiku-4-5` write a one-sentence opener
+  with no tools while the main model researches. Speech starts in well under a
+  second and the research latency disappears behind it. Biggest single win.
+- **Skip web search when it isn't needed.** It is the largest share of
+  time-to-first-audio. `ENABLE_WEB_SEARCH=0` for evergreen topics, or expose it
+  as a "use live sources" toggle in the UI.
+- **`claude-sonnet-5` or `claude-haiku-4-5`** for the script pass: cheaper and
+  noticeably faster to first token. One env var (`MODEL`).
+- **Pre-warm the TTS process.** Measured: subprocess spawn is 9.4 ms, 62% of
+  espeak's per-sentence cost but only ~1.6 s spread across a whole 10-minute
+  episode — so it is irrelevant for espeak. It is *essential* for piper, which
+  reloads its ONNX voice on every spawn. Use a persistent worker fed over a pipe
+  if you switch to piper.
+
+**Throughput and cost per episode**
+- **Cache scripts by `(query, minutes)`.** The model call is the only expensive
+  part of an episode; re-synthesising the audio is essentially free.
+- **Batch API (50% cheaper)** for pre-generating popular or scheduled episodes
+  ahead of time. Not for interactive requests.
+
+**Server capacity.** At ~330x realtime, one CPU core covers roughly 300
+concurrent listeners' worth of synthesis. The app is I/O-bound; the TTS
+subprocesses are the only real CPU load, and queue depth caps memory per stream
+regardless of episode length.
 
 **Bandwidth / compute** — all of these keep the no-file architecture:
 - Drop to 16 kHz mono: ~1.9 MB/min instead of 2.6, with little quality loss for
