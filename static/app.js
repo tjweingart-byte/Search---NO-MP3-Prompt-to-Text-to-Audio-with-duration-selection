@@ -1,0 +1,167 @@
+/*
+ * Streaming player.
+ *
+ * The server sends raw 16-bit PCM over a chunked response. We read it with the
+ * fetch streams API, convert each chunk to float samples, and schedule it on a
+ * Web Audio clock. Playback starts on the first chunk, so the listener hears
+ * the opening line while the rest of the episode is still being written.
+ *
+ * No Blob, no object URL, no encoded file - the samples go straight to the
+ * output device.
+ */
+const $ = (id) => document.getElementById(id);
+
+const form = $("form");
+const queryEl = $("query");
+const minutesEl = $("minutes");
+const minutesOut = $("minutesOut");
+const goBtn = $("go");
+const stopBtn = $("stop");
+const statusEl = $("status");
+const meterWrap = $("meterWrap");
+const barEl = $("bar");
+const elapsedEl = $("elapsed");
+const totalEl = $("total");
+const transcriptWrap = $("transcriptWrap");
+const engineEl = $("engine");
+
+let ctx = null;          // AudioContext
+let controller = null;   // aborts the in-flight fetch
+let playHead = 0;        // next scheduled start time, in AudioContext seconds
+let startedAt = 0;
+let ticker = null;
+
+const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+function setMinutes() {
+  const m = Number(minutesEl.value);
+  minutesOut.textContent = `${m} minute${m === 1 ? "" : "s"}`;
+  totalEl.textContent = fmt(m * 60);
+}
+minutesEl.addEventListener("input", setMinutes);
+setMinutes();
+
+function say(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.classList.toggle("error", isError);
+}
+
+function reset() {
+  if (ticker) { clearInterval(ticker); ticker = null; }
+  if (controller) { controller.abort(); controller = null; }
+  if (ctx) { ctx.close().catch(() => {}); ctx = null; }
+  goBtn.disabled = false;
+  stopBtn.hidden = true;
+}
+
+stopBtn.addEventListener("click", () => { reset(); say("Stopped."); });
+
+/* One PCM chunk -> one scheduled AudioBuffer, appended to the play head. */
+function schedule(int16, sampleRate) {
+  const buf = ctx.createBuffer(1, int16.length, sampleRate);
+  const out = buf.getChannelData(0);
+  for (let i = 0; i < int16.length; i++) out[i] = int16[i] / 32768;
+
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+
+  // Never schedule in the past: if the network stalled and the play head fell
+  // behind the clock, restart from now instead of dropping the chunk.
+  const when = Math.max(playHead, ctx.currentTime + 0.05);
+  src.start(when);
+  playHead = when + buf.duration;
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  reset();
+
+  const q = queryEl.value.trim();
+  const minutes = Number(minutesEl.value);
+  if (!q) return;
+
+  goBtn.disabled = true;
+  stopBtn.hidden = false;
+  meterWrap.hidden = false;
+  transcriptWrap.hidden = true;
+  barEl.style.width = "0%";
+  say("Researching and writing…");
+
+  // Must be created inside the click handler or browsers keep it suspended.
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+  playHead = 0;
+  controller = new AbortController();
+
+  const url = `/api/audio?q=${encodeURIComponent(q)}&minutes=${minutes}&fmt=pcm`;
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: `Request failed (${res.status})` }));
+      throw new Error(body.error || `Request failed (${res.status})`);
+    }
+
+    const sampleRate = Number(res.headers.get("X-Sample-Rate")) || 22050;
+    const target = Number(res.headers.get("X-Requested-Seconds")) || minutes * 60;
+    totalEl.textContent = fmt(target);
+
+    const reader = res.body.getReader();
+    let leftover = new Uint8Array(0);
+    let first = true;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!controller) break;
+
+      // 16-bit samples can straddle a chunk boundary; carry the odd byte over.
+      let bytes = value;
+      if (leftover.length) {
+        const merged = new Uint8Array(leftover.length + value.length);
+        merged.set(leftover, 0);
+        merged.set(value, leftover.length);
+        bytes = merged;
+      }
+      const usable = bytes.length - (bytes.length % 2);
+      leftover = bytes.slice(usable);
+      if (!usable) continue;
+
+      schedule(new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + usable)),
+               sampleRate);
+
+      if (first) {
+        first = false;
+        startedAt = performance.now();
+        say("Playing — the rest is still being written.");
+        ticker = setInterval(() => {
+          const elapsed = (performance.now() - startedAt) / 1000;
+          elapsedEl.textContent = fmt(Math.min(elapsed, target));
+          barEl.style.width = `${Math.min(100, (elapsed / target) * 100)}%`;
+        }, 250);
+      }
+    }
+
+    say("Episode complete.");
+    // Let the tail finish playing before tearing the context down.
+    const remaining = Math.max(0, playHead - ctx.currentTime) * 1000;
+    setTimeout(() => { if (ticker) clearInterval(ticker); goBtn.disabled = false; stopBtn.hidden = true; },
+               remaining + 250);
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    say(err.message || "Something went wrong.", true);
+    reset();
+  }
+});
+
+fetch("/api/health")
+  .then((r) => r.json())
+  .then((h) => {
+    engineEl.textContent = `${h.model} · voice: ${h.tts.selected} · ${h.sample_rate} Hz`;
+    if (!h.api_key_configured) say("No Anthropic credentials found on the server.", true);
+    if (h.tts.selected === "debug") {
+      say("No speech engine installed — you will hear a placeholder tone. Install espeak-ng or piper.", true);
+    }
+  })
+  .catch(() => {});

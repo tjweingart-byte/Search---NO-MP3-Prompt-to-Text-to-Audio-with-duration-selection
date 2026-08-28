@@ -1,0 +1,52 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --ink: #e8eaf0;
+  --muted: #98a0b3;
+  --accent: #7aa2ff;
+  --accent-ink: #0b1020;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: start center;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: 6vh 1rem;
+}
+main { width: min(640px, 100%); }
+h1 { font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 0 0 .3rem; letter-spacing: -.02em; }
+.sub { color: var(--muted); margin: 0 0 2rem; }
+form { background: var(--panel); border: 1px solid #232733; border-radius: 14px; padding: 1.25rem; }
+input[type=text] {
+  width: 100%; padding: .85rem 1rem; font-size: 1rem;
+  background: #0e1116; color: var(--ink);
+  border: 1px solid #2b3040; border-radius: 10px;
+}
+input[type=text]:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.length { display: flex; align-items: center; gap: .9rem; margin: 1.1rem 0; }
+.length label { color: var(--muted); font-size: .9rem; }
+input[type=range] { flex: 1; accent-color: var(--accent); }
+output { font-variant-numeric: tabular-nums; min-width: 5.5rem; text-align: right; color: var(--muted); }
+button {
+  padding: .8rem 1.4rem; font-size: 1rem; font-weight: 600; cursor: pointer;
+  border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink);
+}
+button:disabled { opacity: .5; cursor: progress; }
+button.ghost { background: transparent; color: var(--muted); border: 1px solid #2b3040; margin-left: .5rem; }
+.status { min-height: 1.5rem; margin: 1.1rem 2px; color: var(--muted); }
+.status.error { color: #ff9a9a; }
+.meter { margin: .5rem 2px 1.5rem; }
+.bar { height: 6px; background: #232733; border-radius: 99px; overflow: hidden; }
+.bar > div { height: 100%; width: 0; background: var(--accent); transition: width .25s linear; }
+.times { display: flex; justify-content: space-between; color: var(--muted); font-size: .85rem;
+         font-variant-numeric: tabular-nums; margin-top: .4rem; }
+details { background: var(--panel); border: 1px solid #232733; border-radius: 12px; padding: .8rem 1rem; }
+summary { cursor: pointer; color: var(--muted); }
+#transcript { margin-top: .8rem; color: #cdd3e0; }
+#transcript p { margin: 0 0 .6rem; }
+#transcript p.live { color: var(--accent); }
+.engine { color: #5f6779; font-size: .8rem; margin-top: 1.5rem; }
