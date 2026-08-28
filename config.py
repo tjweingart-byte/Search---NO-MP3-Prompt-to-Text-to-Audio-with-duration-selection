@@ -42,6 +42,37 @@ class Settings:
     )
     max_web_searches: int = _env_int("MAX_WEB_SEARCHES", 5)
 
+    # --- Cold open --------------------------------------------------------
+    # A small, fast model writes one framing sentence with no tools while the
+    # main model is still researching, so speech starts almost immediately.
+    enable_cold_open: bool = field(
+        default_factory=lambda: os.environ.get("ENABLE_COLD_OPEN", "1") not in ("0", "false", "False")
+    )
+    cold_open_model: str = field(
+        default_factory=lambda: os.environ.get("COLD_OPEN_MODEL", "claude-haiku-4-5")
+    )
+    cold_open_words: int = _env_int("COLD_OPEN_WORDS", 18)
+
+    # --- Shared script cache ---------------------------------------------
+    cache_enabled: bool = field(
+        default_factory=lambda: os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")
+    )
+    cache_backend: str = field(default_factory=lambda: os.environ.get("CACHE_BACKEND", "sqlite"))
+    cache_path: str = field(default_factory=lambda: os.environ.get("CACHE_PATH", "scripts.db"))
+    # Default lifetime for a cached script.
+    cache_ttl_seconds: int = _env_int("CACHE_TTL_SECONDS", 86400)
+    # Lifetime for queries that read as time-sensitive ("latest", "today").
+    cache_ttl_volatile: int = _env_int("CACHE_TTL_VOLATILE", 900)
+    # Use a small model to canonicalise queries before looking them up. Raises
+    # the hit rate across differently-worded requests, at the cost of one fast
+    # call (~400ms) in front of every request. See cache.canonical_key.
+    cache_semantic_key: bool = field(
+        default_factory=lambda: os.environ.get("CACHE_SEMANTIC_KEY", "0") not in ("0", "false", "False")
+    )
+    canonical_key_model: str = field(
+        default_factory=lambda: os.environ.get("CANONICAL_KEY_MODEL", "claude-haiku-4-5")
+    )
+
     # --- Duration / pacing ------------------------------------------------
     min_minutes: int = 1
     max_minutes: int = 10

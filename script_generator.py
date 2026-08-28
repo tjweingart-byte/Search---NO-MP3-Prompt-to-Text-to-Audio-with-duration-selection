@@ -15,6 +15,7 @@ Two things matter here:
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from typing import AsyncIterator
@@ -22,6 +23,8 @@ from typing import AsyncIterator
 import anthropic
 
 from config import settings
+
+log = logging.getLogger(__name__)
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
 # Anything that would be read aloud as punctuation noise rather than speech.
@@ -52,6 +55,12 @@ class EpisodePlan:
     target_seconds: int
     word_budget: int
     sections: list[str]
+    #: Words already spoken by the cold open, deducted from the body's budget.
+    reserved_words: int = 0
+
+    @property
+    def body_budget(self) -> int:
+        return max(30, self.word_budget - self.reserved_words)
 
     @property
     def min_words(self) -> int:
@@ -92,24 +101,35 @@ def plan_episode(query: str, minutes: int) -> EpisodePlan:
             "the practical implications",
             "what to watch next",
         ]
-    return EpisodePlan(query, minutes, target_seconds, word_budget, sections)
+    # The cold open speaks first, so its words come out of the body's budget.
+    reserved = settings.cold_open_words if settings.enable_cold_open else 0
+    return EpisodePlan(query, minutes, target_seconds, word_budget, sections, reserved)
 
 
 def build_prompt(plan: EpisodePlan) -> str:
-    per_section = max(35, plan.word_budget // len(plan.sections))
+    budget = plan.body_budget
+    per_section = max(35, budget // len(plan.sections))
     outline = "\n".join(
         f"{i + 1}. {name} (about {per_section} words)"
         for i, name in enumerate(plan.sections)
+    )
+    already_opened = (
+        "\nThe episode has ALREADY opened with one short framing sentence that "
+        "the listener has heard. Do not write a greeting, a hook, or a restatement "
+        "of the question - continue straight into substance.\n"
+        if plan.reserved_words
+        else ""
     )
     return f"""Write a spoken audio briefing answering this listener request:
 
 <request>{plan.query}</request>
 
 Length contract - this is the most important requirement:
-- The finished script must be between {plan.min_words} and {plan.max_words} words.
+- The finished script must be between {int(budget * 0.94)} and {int(budget * 1.06)} words.
 - At a natural speaking pace that is {plan.minutes} minute(s) of audio.
 - Count as you go and land inside that range. Do not stop early and do not run over.
 
+{already_opened}
 Cover these beats in order, as continuous spoken prose with no headings:
 {outline}
 
@@ -195,6 +215,51 @@ class ScriptGenerator:
                 detail = getattr(final, "stop_details", None)
                 reason = getattr(detail, "explanation", None) or "the request was declined"
                 yield clean_for_speech(f"I can't put together a briefing on that. {reason}")
+
+    async def cold_open(self, plan: EpisodePlan) -> AsyncIterator[str]:
+        """One framing sentence, written by a small fast model, no tools.
+
+        This runs *concurrently* with the main researched call. Its only job is
+        to be speakable within a few hundred milliseconds so the listener hears
+        something while web search is still running.
+
+        The prompt forbids any factual claim, because this model has done no
+        research and must not guess ahead of what the main model will say. It
+        frames the question; it never answers it.
+        """
+        prompt = (
+            "A listener asked for a spoken briefing on this topic:\n"
+            f"<topic>{plan.query}</topic>\n\n"
+            f"Write ONE sentence of at most {settings.cold_open_words} words that opens "
+            "the episode by framing what is about to be covered.\n\n"
+            "Critical constraints:\n"
+            "- State NO facts, figures, dates, names, results or opinions about the "
+            "topic. You have done no research and anything you assert could be wrong.\n"
+            "- Only reframe the question itself. Think 'Here's what happened in X, and "
+            "why it mattered' - not 'X was a blowout'.\n"
+            "- No greeting, no 'welcome to the show', no show name.\n"
+            "- Output only the sentence."
+        )
+        try:
+            message = await self.client.messages.create(
+                model=settings.cold_open_model,
+                max_tokens=100,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if message.stop_reason == "refusal":
+                return
+            text = " ".join(b.text for b in message.content if b.type == "text")
+            sentence = clean_for_speech(text).strip()
+            # One sentence only, however chatty the model was.
+            match = _SENTENCE_END.search(sentence)
+            if match:
+                sentence = sentence[: match.end()].strip()
+            if sentence:
+                yield sentence
+        except Exception:
+            # A missing cold open costs a second of latency, not the episode.
+            log.warning("cold open failed; falling back to the main script", exc_info=True)
 
     async def top_up(
         self, plan: EpisodePlan, spoken_so_far: str, words_needed: int

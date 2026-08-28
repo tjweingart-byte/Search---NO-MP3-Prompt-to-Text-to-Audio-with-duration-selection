@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
 from audio_utils import PaceController, silence, streaming_wav_header
+from cache import ScriptCache, build_cache, cache_key, canonical_key, is_shareable, ttl_for
 from config import settings
 from script_generator import EpisodePlan, ScriptGenerator, count_words
 from tts import TTSEngine, build_engine
@@ -45,6 +46,27 @@ MAX_TAIL_SILENCE = 6.0
 
 
 @dataclass
+class _Pump:
+    """A sentence stream that is already running in the background."""
+
+    queue: asyncio.Queue
+    task: asyncio.Task
+
+    async def close(self) -> None:
+        self.task.cancel()
+        try:
+            await self.task
+        except BaseException:
+            pass
+
+
+async def _replay(sentences: list[str]) -> AsyncIterator[str]:
+    """Feed a cached script back through the normal speaking path."""
+    for sentence in sentences:
+        yield sentence
+
+
+@dataclass
 class GenerationStats:
     """Everything the UI needs to show, and the tests need to assert on."""
 
@@ -56,6 +78,10 @@ class GenerationStats:
     sample_rate: int = settings.sample_rate
     truncated: bool = False
     topups: int = 0
+    #: "hit" | "miss" | "off" - whether this episode reused a shared script.
+    cache: str = "off"
+    #: Whether a fast-model opener covered the research latency.
+    cold_open: bool = False
     script: list[str] = field(default_factory=list)
 
     @property
@@ -72,6 +98,8 @@ class GenerationStats:
             "engine": self.engine,
             "truncated": self.truncated,
             "topups": self.topups,
+            "cache": self.cache,
+            "cold_open": self.cold_open,
         }
 
 
@@ -80,25 +108,23 @@ class PodcastPipeline:
         self,
         generator: Optional[ScriptGenerator] = None,
         engine: Optional[TTSEngine] = None,
+        cache: Optional[ScriptCache] = None,
+        use_cache: bool = True,
     ):
         self.generator = generator or ScriptGenerator()
         self.engine = engine or build_engine()
+        self.cache = cache if cache is not None else (build_cache() if use_cache else None)
 
-    async def _speak(
-        self,
-        sentences: AsyncIterator[str],
-        pace: PaceController,
-        stats: GenerationStats,
-    ) -> AsyncIterator[bytes]:
-        """Synthesise a stream of sentences, staying inside the time budget.
+    def _start(self, sentences: AsyncIterator[str]) -> "_Pump":
+        """Begin consuming a sentence stream *now*, into a bounded queue.
 
-        Claude and the TTS engine are decoupled by a bounded queue so the slower
-        of the two never blocks the other: the model writes ahead while the
-        current sentence is still being spoken, and the queue depth caps memory
-        at a few seconds of audio however long the episode is.
+        Starting is separated from speaking so two model calls can be in flight
+        at once: the researched main script begins the moment the request
+        arrives, while the cold open is what actually reaches the speakers
+        first. The queue depth caps memory at a few seconds of audio however
+        long the episode is.
         """
         queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_DEPTH)
-        gap = silence(SENTENCE_GAP, self.engine.sample_rate)
 
         async def produce() -> None:
             try:
@@ -109,14 +135,32 @@ class PodcastPipeline:
             finally:
                 await queue.put(None)
 
-        producer = asyncio.create_task(produce())
+        return _Pump(queue, asyncio.create_task(produce()))
+
+    async def _speak(
+        self,
+        pump: "_Pump",
+        pace: PaceController,
+        stats: GenerationStats,
+        fatal: bool = True,
+    ) -> AsyncIterator[bytes]:
+        """Synthesise an already-running sentence stream inside the time budget.
+
+        `fatal=False` means a failure in this stream is logged and skipped
+        rather than ending the episode - used for the optional cold open.
+        """
+        queue = pump.queue
+        gap = silence(SENTENCE_GAP, self.engine.sample_rate)
         try:
             while True:
                 item = await queue.get()
                 if item is None:
                     break
                 if isinstance(item, Exception):
-                    raise item
+                    if fatal:
+                        raise item
+                    log.warning("optional stream failed; continuing", exc_info=item)
+                    break
 
                 sentence: str = item
                 words = count_words(sentence)
@@ -145,11 +189,7 @@ class PodcastPipeline:
                 yield pcm
                 yield gap
         finally:
-            producer.cancel()
-            try:
-                await producer
-            except BaseException:
-                pass
+            await pump.close()
 
     async def stream_pcm(
         self, plan: EpisodePlan, stats: Optional[GenerationStats] = None
@@ -166,7 +206,40 @@ class PodcastPipeline:
             sample_rate=self.engine.sample_rate,
         )
 
-        async for chunk in self._speak(self.generator.stream_sentences(plan), pace, stats):
+        # --- Cache: has anyone already asked for this? --------------------
+        shareable = is_shareable(plan.query)
+        key = ""
+        if self.cache and shareable:
+            canonical = None
+            if settings.cache_semantic_key:
+                canonical = await canonical_key(plan.query, self.generator.client)
+            key = cache_key(plan.query, plan.minutes, canonical)
+        if self.cache and shareable:
+            cached = self.cache.get(key)
+            if cached:
+                stats.cache = "hit"
+                log.info("cache hit for %r (%d min)", plan.query, plan.minutes)
+                # Replaying the same sentences through the same controller
+                # reproduces the episode exactly - and costs zero API tokens.
+                async for chunk in self._speak(self._start(_replay(cached)), pace, stats):
+                    yield chunk
+                async for chunk in self._finish(pace, stats):
+                    yield chunk
+                return
+        stats.cache = "miss" if self.cache else "off"
+
+        # --- Generate ------------------------------------------------------
+        # Start the researched call FIRST so web search is already running
+        # while the cold open is being written and spoken.
+        body = self._start(self.generator.stream_sentences(plan))
+        cold_open = getattr(self.generator, "cold_open", None)
+        if settings.enable_cold_open and plan.reserved_words and cold_open:
+            opener = self._start(cold_open(plan))
+            async for chunk in self._speak(opener, pace, stats, fatal=False):
+                yield chunk
+            stats.cold_open = stats.sentences > 0
+
+        async for chunk in self._speak(body, pace, stats):
             yield chunk
 
         # The model under-wrote. Rather than pad minutes of silence, buy more
@@ -181,20 +254,33 @@ class PodcastPipeline:
             words_needed = int(pace.remaining_seconds / 60.0 * settings.target_wpm)
             log.info("topping up %d words for %.1fs of dead air", words_needed, pace.remaining_seconds)
             before = pace.spoken_words
-            extra = self.generator.top_up(plan, " ".join(stats.script), words_needed)
+            extra = self._start(self.generator.top_up(plan, " ".join(stats.script), words_needed))
             async for chunk in self._speak(extra, pace, stats):
                 yield chunk
             if pace.spoken_words == before:
                 break  # the top-up produced nothing; stop asking
 
-        # Close any residual gap with room tone. A second or two of quiet at the
-        # end reads as the episode finishing; a hard cut reads as a bug.
+        if self.cache and shareable and stats.script:
+            ttl = ttl_for(plan.query)
+            self.cache.put(key, stats.script, ttl, plan.query)
+            log.info("cached %d sentences for %r (ttl %ds)", len(stats.script), plan.query, ttl)
+
+        async for chunk in self._finish(pace, stats):
+            yield chunk
+
+    async def _finish(
+        self, pace: PaceController, stats: GenerationStats
+    ) -> AsyncIterator[bytes]:
+        """Close any residual gap with room tone.
+
+        A second or two of quiet at the end reads as the episode finishing; a
+        hard cut reads as a bug.
+        """
         shortfall = min(pace.remaining_seconds, MAX_TAIL_SILENCE)
         if shortfall > 0.05:
             pad = silence(shortfall, self.engine.sample_rate)
             pace.observe(len(pad), 0)
             yield pad
-
         stats.audio_seconds = pace.elapsed
 
     async def stream_wav(

@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from cache import MemoryScriptCache, SqliteScriptCache, build_cache
 from config import settings
 from pipeline import GenerationStats, PodcastPipeline
 from script_generator import ScriptGenerator, plan_episode
@@ -30,6 +31,19 @@ log = logging.getLogger("podcast")
 app = FastAPI(title="Search to Podcast", version="1.0.0")
 
 _last_request: dict[str, float] = defaultdict(float)
+
+# One cache shared by every request this worker serves - and, with the SQLite
+# backend, by every other worker on the machine too.
+SCRIPT_CACHE = build_cache()
+
+
+def _cache_report() -> dict:
+    if SCRIPT_CACHE is None:
+        return {"enabled": False}
+    report = {"enabled": True, "semantic_key": settings.cache_semantic_key}
+    if isinstance(SCRIPT_CACHE, (MemoryScriptCache, SqliteScriptCache)):
+        report.update(SCRIPT_CACHE.stats())
+    return report
 
 
 def _rate_limit(request: Request) -> None:
@@ -77,6 +91,11 @@ async def health() -> dict:
         "min_minutes": settings.min_minutes,
         "max_minutes": settings.max_minutes,
         "tts": engine_report(),
+        "cold_open": {
+            "enabled": settings.enable_cold_open,
+            "model": settings.cold_open_model,
+        },
+        "cache": _cache_report(),
     }
 
 
@@ -111,7 +130,7 @@ async def audio(
     plan = _validated_plan(q, minutes)
 
     try:
-        pipeline = PodcastPipeline(engine=build_engine())
+        pipeline = PodcastPipeline(engine=build_engine(), cache=SCRIPT_CACHE)
     except TTSUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

@@ -58,10 +58,39 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `script_generator.py` | Duration → word budget, streaming Claude calls |
 | `tts.py` | Pluggable speech engines (piper / espeak / debug), all raw PCM |
 | `audio_utils.py` | Live WAV header, silence, the pacing controller |
+| `cache.py` | Shared script cache: key normalization, TTL policy, SQLite store |
 | `config.py` | Every setting, overridable by environment variable |
 | `static/` | Interface and the streaming Web Audio player |
 | `tests/test_pipeline.py` | Runs offline — no API key, no TTS needed |
 | `PROBLEMS.md` | Every problem hit while building this, and its solution |
+
+## Two optimisations worth knowing about
+
+**Cold open (on by default).** `claude-haiku-4-5` writes one framing sentence
+with no tools *while* the main model is still researching. The listener hears
+speech in well under a second instead of waiting out web search. The opener is
+forbidden from stating any fact, since it has done no research; it frames the
+question and nothing more. Its words are deducted from the main script's budget
+so the episode still lands on the clock.
+
+**Shared script cache (on by default).** Different people asking the same thing
+reuse one script — a cache hit costs zero API tokens. The cache stores the
+*script*, not the audio: a 10-minute script is ~9 KB against ~26 MB of PCM, and
+re-synthesis is nearly free. SQLite means every worker on the machine shares it.
+
+Verified: three differently-worded requests for the same NFL recap produced one
+model call and two cache hits, while a query containing "my" was regenerated and
+never stored.
+
+Keys are normalized (case, punctuation, word order, filler words), so "Give me a
+recap of week 5 of the NFL season" and "Week 5, NFL season — recap" share an
+entry. This is lexical, so a real synonym still misses; set
+`CACHE_SEMANTIC_KEY=1` to have a small model canonicalise the topic first, which
+raises the hit rate at the cost of ~400 ms in front of every request.
+
+Two safeguards: queries containing possessives or contact details are never
+shared or stored, and time-sensitive queries ("latest", "today") get a 15-minute
+TTL instead of 24 hours.
 
 ## API
 

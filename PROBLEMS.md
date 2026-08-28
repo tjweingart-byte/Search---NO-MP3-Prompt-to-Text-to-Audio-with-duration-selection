@@ -196,8 +196,7 @@ else is optimising ~2% of the wait. Two consequences:
   if you switch to piper.
 
 **Throughput and cost per episode**
-- **Cache scripts by `(query, minutes)`.** The model call is the only expensive
-  part of an episode; re-synthesising the audio is essentially free.
+- **Shared script cache — implemented** (`cache.py`). See §11.
 - **Batch API (50% cheaper)** for pre-generating popular or scheduled episodes
   ahead of time. Not for interactive requests.
 
@@ -238,3 +237,71 @@ regardless of episode length.
 - **No seeking or pause.** The player is a live stream; adding transport
   controls means buffering the whole episode client-side, which is a deliberate
   tradeoff against the current instant-start design.
+
+
+---
+
+## 11. Sharing one output between different users
+
+Implemented in `cache.py`. Two design decisions and three problems it raised.
+
+**Cache the script, not the audio.** A 10-minute script is ~9 KB; the same
+episode as PCM is ~26 MB — 2,900x larger. Re-synthesis runs at ~330x realtime,
+so storing audio buys almost nothing and costs a great deal of disk. Audio also
+can't be shared across durations, whereas the text is the part that cost money.
+
+**SQLite, not an in-process dict.** The users are different people, so the hit
+has to be visible to whichever worker serves the next request. SQLite in WAL
+mode gives cross-process sharing and restart persistence with no new dependency.
+Swap in Redis (same two methods) if you outgrow one machine.
+
+### Problem: equivalent phrasings miss each other
+
+"Give me a recap of week 5 of the NFL season" and "Week 5, NFL season — recap"
+are the same request. Keys are therefore normalized: lowercased, punctuation
+stripped, filler words removed, remaining tokens sorted.
+
+This is lexical, so it has a real limit — "NFL week 5 recap" vs "NFL **season**
+week 5 recap" differ by one meaningful word and still miss. There is a test
+documenting exactly this. `CACHE_SEMANTIC_KEY=1` closes the gap with a small
+model that canonicalises the topic first; the tradeoff is ~400 ms added to every
+request, which is a win when traffic concentrates on popular topics and a waste
+on a long tail of unique queries. Off by default.
+
+### Problem: staleness is worse than slowness
+
+Serving a cached "latest news" from six hours ago is a worse failure than making
+someone wait. TTL is therefore query-dependent: queries containing volatile
+markers ("latest", "today", "now", "breaking", "score") get 15 minutes; the rest
+get 24 hours. A recap of a *completed* event is a perfect cache candidate; the
+same query asked mid-event is not, which the volatile-word list only partly
+catches. A classifier call would do better, and is the natural upgrade.
+
+### Problem: an over-eager privacy filter silently disabled the cache
+
+The first version treated "me", "I" and "we" as personal markers. That reads
+sensibly and is badly wrong: "give **me** a recap of week 5" is not a personal
+query, and the filter meant most real traffic bypassed the cache entirely. It
+was caught by an end-to-end run showing two identical requests both missing, not
+by the unit tests. The filter now matches only possessives ("my", "our"), email
+addresses and phone numbers. There is a regression test for ordinary phrasing.
+
+Anything matching is generated fresh and never stored — the bias is towards not
+sharing.
+
+### Measured
+
+Three differently-worded requests for the same episode: **one model call, two
+cache hits**. A fourth request containing "my" was regenerated and left out of
+the store. On a hit the API cost is zero and time-to-first-audio drops from
+seconds to the cost of one sentence of synthesis (~15 ms).
+
+### Still open
+
+- Cache keys include `minutes`, so a topic is generated up to 10 times. Serving
+  shorter episodes by trimming a longer cached one would collapse that, at some
+  cost to structure — a 3-minute episode is not a truncated 10-minute one.
+- No cache warming. Pre-generating predictable episodes (this week's recap, the
+  morning briefing) via the Batch API at 50% cost would make the common case a
+  hit for everyone.
+- `purge_expired()` exists but nothing calls it on a schedule.
