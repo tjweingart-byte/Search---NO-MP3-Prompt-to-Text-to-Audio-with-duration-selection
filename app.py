@@ -100,7 +100,7 @@ def _rate_limit(request: Request) -> None:
     _last_request[client] = now
 
 
-def _validated_plan(q: str, minutes: int):
+def _validated_plan(q: str, minutes: int, context: str = ""):
     q = (q or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="Ask a question first.")
@@ -111,7 +111,7 @@ def _validated_plan(q: str, minutes: int):
             status_code=400,
             detail=f"Length must be {settings.min_minutes}-{settings.max_minutes} minutes.",
         )
-    return plan_episode(q, minutes)
+    return plan_episode(q, minutes, (context or "").strip()[:300])
 
 
 class ScriptRequest(BaseModel):
@@ -160,6 +160,7 @@ async def audio(
     q: str = Query(..., description="What the listener asked"),
     minutes: int = Query(3, ge=1, le=10),
     fmt: str = Query("wav", pattern="^(wav|pcm)$"),
+    context: str = Query("", description="Topic the listener just heard, for a follow-up"),
 ):
     """Stream the episode.
 
@@ -168,7 +169,7 @@ async def audio(
     chunks itself and therefore starts sooner and seeks better.
     """
     _rate_limit(request)
-    plan = _validated_plan(q, minutes)
+    plan = _validated_plan(q, minutes, context)
 
     try:
         pipeline = _make_pipeline()

@@ -26,6 +26,19 @@ from config import settings
 
 log = logging.getLogger(__name__)
 
+# The last few openers spoken by this server. Fed back into the prompt so a
+# listener working through several episodes does not hear the same shape of
+# introduction every time - the single most noticeable tell of a generated show.
+_RECENT_OPENERS: list[str] = []
+_RECENT_LIMIT = 8
+
+
+def remember_opener(text: str) -> None:
+    if not text:
+        return
+    _RECENT_OPENERS.append(text.strip())
+    del _RECENT_OPENERS[:-_RECENT_LIMIT]
+
 _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
 # Anything that would be read aloud as punctuation noise rather than speech.
 _MARKDOWN = re.compile(r"[*_`#>\[\]]|^\s*[-•]\s+", re.MULTILINE)
@@ -43,6 +56,17 @@ Spell out numbers, symbols and abbreviations the way a person says them \
 - Be accurate. If sources disagree or you are unsure, say so out loud in the \
 script. Do not invent statistics, quotes, names or dates.
 - Do not mention that you are an AI, and do not describe your own process.
+
+Time is part of being accurate. A listener asking about something ongoing wants \
+the newest state of it, not a summary of yesterday:
+- Always give the most recent information you can establish.
+- Say out loud when the picture you are describing is from - "as of this \
+morning", "as of Friday night" - the first time it matters. Do not leave the \
+listener guessing whether they are hearing something current or hours old.
+- If something has changed during the day, say what it was earlier and what it \
+is now, in that order.
+- If an event is still in progress or unresolved, say so plainly rather than \
+implying a final result.
 """
 
 
@@ -57,6 +81,8 @@ class EpisodePlan:
     sections: list[str]
     #: Words already spoken by the cold open, deducted from the body's budget.
     reserved_words: int = 0
+    #: What the listener has already heard, for a "go deeper" follow-up.
+    context: str = ""
 
     @property
     def body_budget(self) -> int:
@@ -71,7 +97,19 @@ class EpisodePlan:
         return int(self.word_budget * 1.06)
 
 
-def plan_episode(query: str, minutes: int) -> EpisodePlan:
+def now_line() -> str:
+    """The current date and time, so the script can anchor itself.
+
+    Without this the model has no idea what "this morning" means and cannot
+    tell a listener whether it is describing something current or stale.
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).astimezone()
+    return now.strftime("%A %d %B %Y at %H:%M %Z").replace(" 0", " ")
+
+
+def plan_episode(query: str, minutes: int, context: str = "") -> EpisodePlan:
     """Map a duration in minutes onto a concrete writing brief."""
     minutes = max(settings.min_minutes, min(settings.max_minutes, int(minutes)))
     target_seconds = minutes * 60
@@ -105,7 +143,7 @@ def plan_episode(query: str, minutes: int) -> EpisodePlan:
     # Reserve roughly one opener sentence: usually only one or two play, and
     # the pacing controller absorbs the difference either way.
     reserved = 18 if settings.enable_cold_open else 0
-    return EpisodePlan(query, minutes, target_seconds, word_budget, sections, reserved)
+    return EpisodePlan(query, minutes, target_seconds, word_budget, sections, reserved, context)
 
 
 def build_prompt(plan: EpisodePlan) -> str:
@@ -122,10 +160,25 @@ def build_prompt(plan: EpisodePlan) -> str:
         if plan.reserved_words
         else ""
     )
+    follow_up = ""
+    if plan.context:
+        follow_up = f"""
+This is a FOLLOW-UP. The listener has just finished a briefing on:
+<already_heard>{plan.context}</already_heard>
+
+Treat that as known. Do not re-explain it, do not re-introduce the subject, and
+do not repeat its background. Go straight into the narrower thing they asked
+for and stay on it for the whole episode - depth on that one point, not another
+overview.
+"""
+
     return f"""Write a spoken audio briefing answering this listener request:
 
 <request>{plan.query}</request>
 
+It is currently {now_line()}. Anchor anything time-sensitive to that, and prefer
+the newest information you can find over anything older.
+{follow_up}
 Length contract - this is the most important requirement:
 - The finished script must be between {int(budget * 0.94)} and {int(budget * 1.06)} words.
 - At a natural speaking pace that is {plan.minutes} minute(s) of audio.
@@ -229,21 +282,34 @@ class ScriptGenerator:
         research and must not guess ahead of what the main model will say. It
         frames the question; it never answers it.
         """
+        avoid = ""
+        if _RECENT_OPENERS:
+            recent = "\n".join("- " + o for o in _RECENT_OPENERS[-5:])
+            avoid = (
+                "\nThese are the openings this listener has already heard today. "
+                "Do not reuse their wording, their rhythm, or their opening move:\n"
+                f"{recent}\n"
+            )
         prompt = (
             "A listener asked for a spoken briefing on this topic:\n"
             f"<topic>{plan.query}</topic>\n\n"
             f"Write up to four short sentences, {settings.cold_open_words} words in total, "
-            "that open the episode by framing what is about to be covered. Each "
-            "sentence must stand alone and make sense as the last thing said "
-            "before the briefing proper begins, because playback may cut over to "
-            "the main script after any one of them.\n\n"
+            "that open the episode. Each sentence must stand alone and make sense as "
+            "the last thing said before the briefing proper begins, because playback "
+            "may cut over to the main script after any one of them.\n\n"
+            "Make it specific to THIS topic. Name the subject, and say what kind of "
+            "question it is - what is unsettled about it, what a listener would want "
+            "to know, why someone would be asking now. A listener who hears several "
+            "of these should never feel they are hearing a template.\n\n"
+            f"{avoid}\n"
             "Critical constraints:\n"
             "- State NO facts, figures, dates, names, results or opinions about the "
-            "topic. You have done no research and anything you assert could be wrong.\n"
-            "- Only reframe the question itself. Think 'Here's what happened in X, and "
-            "why it mattered' - not 'X was a blowout'.\n"
-            "- No greeting, no 'welcome to the show', no show name.\n"
-            "- Output only the sentence."
+            "topic. You have done no research and anything you assert could be wrong. "
+            "Frame the question; never answer it.\n"
+            "- No greeting, no 'welcome to the show', no show name, no 'let's dive in'.\n"
+            "- Do not say 'here is your briefing' or any variation. Start with substance "
+            "about the shape of the question.\n"
+            "- Output only the sentences."
         )
         try:
             message = await self.client.messages.create(
@@ -257,6 +323,7 @@ class ScriptGenerator:
             text = clean_for_speech(" ".join(b.text for b in message.content if b.type == "text"))
             # Yield sentence by sentence: the pipeline stops taking them the
             # moment the real script is ready, so later ones are often unused.
+            remember_opener(text)
             while text:
                 match = _SENTENCE_END.search(text)
                 if not match:

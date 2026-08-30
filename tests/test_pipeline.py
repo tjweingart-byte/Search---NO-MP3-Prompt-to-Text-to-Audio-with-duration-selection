@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from audio_utils import PaceController, pcm_duration, silence, streaming_wav_header  # noqa: E402
 from config import settings  # noqa: E402
 from pipeline import GenerationStats, PodcastPipeline  # noqa: E402
-from script_generator import clean_for_speech, plan_episode  # noqa: E402
+from script_generator import build_prompt, clean_for_speech, now_line, plan_episode  # noqa: E402
 from tts import DebugEngine  # noqa: E402
 from cache import (  # noqa: E402
     MemoryScriptCache,
@@ -410,3 +410,56 @@ def test_no_opener_is_spoken_when_the_script_fails():
     with pytest.raises(RuntimeError, match="model is down"):
         asyncio.run(run())
     assert stats.sentences == 0
+
+
+# --------------------------------------------------------------------------
+# Time scope, follow-up scope, and opener refill
+# --------------------------------------------------------------------------
+
+
+def test_the_script_is_told_what_time_it_is():
+    """Without a clock the model cannot tell current news from stale news."""
+    prompt = build_prompt(plan_episode("tour championship update", 3))
+    assert now_line().split(" at ")[0] in prompt, "the current date must reach the model"
+    assert "newest information" in prompt
+
+
+def test_a_follow_up_is_told_not_to_repeat_what_was_heard():
+    plain = build_prompt(plan_episode("the prize money", 3))
+    follow = build_prompt(plan_episode("the prize money", 3, context="The Tour Championship"))
+    assert "FOLLOW-UP" not in plain
+    assert "FOLLOW-UP" in follow
+    assert "The Tour Championship" in follow
+    assert "Do not re-explain" in follow
+
+
+def test_a_follow_up_is_cached_separately_from_the_same_question_asked_cold():
+    from cache import cache_key
+
+    cold = cache_key("the prize money", 3)
+    follow = cache_key("the prize money", 3, None, "The Tour Championship")
+    assert cold != follow, "a follow-up is a different episode from the same words asked cold"
+
+
+class ShortOpenerGenerator(SlowResearchGenerator):
+    """An opener that runs out long before the script is ready."""
+
+    async def cold_open(self, plan):
+        yield "Only one framing sentence."
+
+
+def test_the_opener_is_extended_rather_than_running_into_silence():
+    """The reported bug: opener ends, script is not ready, listener hears nothing."""
+    plan = plan_episode("a topic", 3)
+    stats = GenerationStats()
+    pipeline = PodcastPipeline(
+        generator=ShortOpenerGenerator(4.0), engine=DebugEngine(), cache=None
+    )
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    openers = [s for s in stats.script if s.startswith("Only one")]
+    assert len(openers) > 1, "a one-sentence opener must be refilled, not left to run dry"

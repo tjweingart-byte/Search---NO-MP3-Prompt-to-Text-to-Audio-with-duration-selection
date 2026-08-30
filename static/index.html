@@ -388,6 +388,7 @@
 
   .progress-wrap{ flex:none; padding:12px 20px 4px; }
   .progress-bar{ height:4px; border-radius:4px; background:rgba(244,239,228,0.12); position:relative; margin-bottom:6px; }
+  .progress-bar .buffered{ position:absolute; left:0; top:0; bottom:0; width:0; background:rgba(224,181,99,0.22); border-radius:4px; }
   .progress-bar .fill{ position:absolute; left:0; top:0; bottom:0; width:44%; background:var(--copper); border-radius:4px; }
   .progress-bar .knob{ position:absolute; left:44%; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; border-radius:50%; background:var(--copper); box-shadow:0 0 0 3px rgba(224,181,99,0.25); }
   .time-row{ display:flex; justify-content:space-between; font-family:'JetBrains Mono', monospace; font-size:9.5px; color:var(--text-muted); }
@@ -636,7 +637,7 @@
           <div class="cc-text" id="cc-text">Displayed here when captions are turned on.</div>
         </div>
         <div class="progress-wrap">
-          <div class="progress-bar"><div class="fill"></div><div class="knob"></div></div>
+          <div class="progress-bar"><div class="buffered"></div><div class="fill"></div><div class="knob"></div></div>
           <div class="time-row"><span id="curTime">1:24</span><span id="totalTime">3:00</span></div>
         </div>
         <div class="player-controls-2row">
@@ -1221,6 +1222,7 @@
     var wrap = document.querySelector("#screen-player .progress-bar");
     var fill = wrap ? wrap.querySelector(".fill") : null;
     var knob = wrap ? wrap.querySelector(".knob") : null;
+    var buffered = wrap ? wrap.querySelector(".buffered") : null;
     var cur  = document.getElementById("curTime");
     var tot  = document.getElementById("totalTime");
     // Once the episode has fully arrived its real length is authoritative;
@@ -1230,6 +1232,12 @@
     var pct = total ? (seconds / total) * 100 : 0;
     if(fill) fill.style.width = pct + "%";
     if(knob) knob.style.left = pct + "%";
+    // The faint bar behind shows how much of the episode has been written,
+    // which is the boundary skipping forward runs into.
+    if(buffered){
+      var wrote = total ? Math.min(100, (FamAudio.duration() / total) * 100) : 0;
+      buffered.style.width = wrote + "%";
+    }
     if(cur) cur.textContent = formatTime(seconds);
     if(tot) tot.textContent = formatTime(total);
   }
@@ -1253,10 +1261,11 @@
     }
     var before = FamAudio.position();
     var after = FamAudio.skip(seconds);
-    // Skipping forward can only reach audio that has arrived; a live episode
-    // is still being written, so say so rather than silently doing nothing.
+    // Forward skips run into the end of what has been written so far. Say so
+    // rather than appearing to do nothing - and note that playback continues
+    // from just short of that edge, so it is a limit, not a stall.
     if(seconds > 0 && after - before < seconds - 1 && !FamAudio.isComplete()){
-      toast("That's as far as the episode has been written");
+      toast("Caught up with the writing — it will keep going");
     }
     refreshProgressNow();
   }
@@ -1273,7 +1282,7 @@
     generate(key, "player");
   }
 
-  function speakText(title, captionHtml, onEnd){
+  function speakText(title, captionHtml, onEnd, context){
     var totalSeconds = selectedLengthMinutes * 60;
     FamAudio.play(title, selectedLengthMinutes, {
       onFirstAudio: function(){
@@ -1292,7 +1301,7 @@
         setPlayState(false);
         onGenerationFailed(err && err.message);
       }
-    });
+    }, context);
   }
   function stopSpeech(){ stopProgress(); FamAudio.stop(); }
   function pauseSpeech(){ FamAudio.pause(); }
@@ -1319,14 +1328,15 @@
     // `prompt` is set by Go Deeper and carries what the listener actually
     // typed; the title is only a display label derived from it.
     var query = t.prompt || t.title;
+    var context = t.parentTopic || "";
     if(isFromSearch){
-      speakText(query, t.caption);
+      speakText(query, t.caption, null, context);
     } else {
       speakText(query, t.caption, function(){
         if(myToken === playerSpeechToken && document.querySelector(".screen.active") && document.querySelector(".screen.active").id === "screen-player"){
           playerTapAdvance();
         }
-      });
+      }, context);
     }
     // reset CC to off each time
     var panel = document.getElementById("ccPanel");
@@ -1683,7 +1693,10 @@
       caption: "Picking up where that left off — " + val + "—",
       // The follow-up alone is not a briefing request: "the economics of it"
       // means nothing without the topic it follows. Carry the parent through.
-      prompt: (baseTitle && baseTitle !== "this") ? (val + " (following up on: " + baseTitle + ")") : val,
+      prompt: val,
+      // What the listener already heard. Sent separately so the follow-up can
+      // be told not to repeat it, instead of being one long run-on query.
+      parentTopic: (baseTitle && baseTitle !== "this") ? baseTitle : "",
       titleOverridden: false
     };
     var overlayMap = { player: "player", dailyfam: "dailyfam", playall: "playall" };

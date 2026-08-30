@@ -44,6 +44,8 @@ TOPUP_THRESHOLD = 4.0
 # Cap the number of extra requests, so a model that keeps under-writing cannot
 # turn one episode into an unbounded fan-out of API calls.
 MAX_TOPUPS = 2
+# How many times the opener may be extended while waiting for the main script.
+MAX_OPENER_REFILLS = 2
 # Residual gap after the last top-up, closed with room tone rather than a cut.
 MAX_TAIL_SILENCE = 6.0
 
@@ -232,6 +234,8 @@ class PodcastPipeline:
 
     async def _run_cold_open(
         self,
+        plan: EpisodePlan,
+        cold_open,
         opener: "_Pump",
         body: "_Pump",
         pace: PaceController,
@@ -256,6 +260,7 @@ class PodcastPipeline:
         to endless preamble.
         """
         spoken_any = False
+        refills = 0
         # One task watches for the body's first sentence; its completion is the
         # signal to stop introducing and start briefing.
         waiting = asyncio.create_task(body.prime())
@@ -287,6 +292,17 @@ class PodcastPipeline:
                 if item is None or isinstance(item, Exception):
                     if isinstance(item, Exception):
                         log.warning("cold open failed; continuing", exc_info=item)
+                        break
+                    # The opener ran out while the script is still being
+                    # written. Rather than let the listener fall into silence,
+                    # ask for more. Capped, because past a point more preamble
+                    # is worse than a gap.
+                    if refills < MAX_OPENER_REFILLS and not waiting.done():
+                        refills += 1
+                        log.info("opener ran dry after %.1fs; refilling", pace.elapsed)
+                        await opener.close()
+                        opener = self._start(cold_open(plan))
+                        continue
                     break
 
                 async for chunk in self._speak_one(item, pace, stats):
@@ -325,7 +341,7 @@ class PodcastPipeline:
             canonical = None
             if settings.cache_semantic_key:
                 canonical = await canonical_key(plan.query, self.generator.client)
-            key = cache_key(plan.query, plan.minutes, canonical)
+            key = cache_key(plan.query, plan.minutes, canonical, plan.context)
         if self.cache and shareable:
             cached = self.cache.get(key)
             if cached:
@@ -347,8 +363,9 @@ class PodcastPipeline:
         cold_open = getattr(self.generator, "cold_open", None)
         if settings.enable_cold_open and plan.reserved_words and cold_open:
             opener = self._start(cold_open(plan))
-
-            async for chunk in self._run_cold_open(opener, body, pace, stats):
+            async for chunk in self._run_cold_open(
+                plan, cold_open, opener, body, pace, stats
+            ):
                 yield chunk
 
         async for chunk in self._speak(body, pace, stats):

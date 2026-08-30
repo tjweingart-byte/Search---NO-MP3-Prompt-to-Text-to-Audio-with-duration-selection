@@ -26,6 +26,11 @@ window.FamAudio = (function () {
   // schedule at once. Short slices keep seek and rate changes responsive.
   var LOOKAHEAD = 0.35;
   var SLICE = 0.25;
+  // While the episode is still being written, never seek closer than this to
+  // the end of what has arrived. Landing exactly on the edge starves the
+  // player: nothing is left to schedule, playback stops dead, and further
+  // skips appear to do nothing because the cursor is already pinned there.
+  var TAIL_MARGIN = 2.0;
 
   var ctx = null;
   var controller = null;
@@ -130,7 +135,7 @@ window.FamAudio = (function () {
     tick();
   }
 
-  function play(query, minutes, h) {
+  function play(query, minutes, h, context) {
     handlers = h || {};
     stop();
     var myToken = ++token;
@@ -141,7 +146,8 @@ window.FamAudio = (function () {
     timer = setInterval(tick, 80);
 
     var url = "/api/audio?q=" + encodeURIComponent(query) +
-              "&minutes=" + encodeURIComponent(minutes) + "&fmt=pcm";
+              "&minutes=" + encodeURIComponent(minutes) + "&fmt=pcm" +
+              (context ? "&context=" + encodeURIComponent(context) : "");
 
     ctx.resume().then(function () {
       return fetch(url, { signal: controller.signal });
@@ -205,9 +211,18 @@ window.FamAudio = (function () {
 
   function stop() { token++; reset(); }
 
+  /* The furthest point that can be played right now. Once the whole episode
+     has arrived that is its end; while it is still streaming, stop short so
+     there is always audio left to keep playing. */
+  function seekLimit() {
+    var have = totalSamples / sampleRate;
+    return streamDone ? have : Math.max(0, have - TAIL_MARGIN);
+  }
+
   function seek(seconds) {
     if (!ctx || !totalSamples) return 0;
-    rescheduleFrom(seconds * sampleRate);
+    var target = Math.max(0, Math.min(seconds, seekLimit()));
+    rescheduleFrom(target * sampleRate);
     return cursor / sampleRate;
   }
 
@@ -233,6 +248,8 @@ window.FamAudio = (function () {
     skip: skip,
     seek: seek,
     setRate: setRate,
+    // How far the listener may currently skip to, in seconds.
+    seekLimit: seekLimit,
     getRate: function () { return rate; },
     position: function () { return positionSamples() / sampleRate; },
     // Seconds of audio received so far. Grows while the episode streams.

@@ -100,7 +100,12 @@ def ttl_for(query: str) -> int:
     return settings.cache_ttl_seconds
 
 
-def cache_key(query: str, minutes: int, canonical: Optional[str] = None) -> str:
+def cache_key(
+    query: str,
+    minutes: int,
+    canonical: Optional[str] = None,
+    canonical_context: str = "",
+) -> str:
     """Key on the canonical topic, the duration, and the voice settings.
 
     Duration is part of the key because a 3-minute episode is structured
@@ -112,6 +117,8 @@ def cache_key(query: str, minutes: int, canonical: Optional[str] = None) -> str:
         {
             "q": canonical or normalize_query(query),
             "m": int(minutes),
+            # A follow-up is a different episode from the same words asked cold.
+            "ctx": canonical_context or "",
             "model": settings.model,
             "wpm": settings.target_wpm,
             "v": 1,  # bump to invalidate everything after a prompt change

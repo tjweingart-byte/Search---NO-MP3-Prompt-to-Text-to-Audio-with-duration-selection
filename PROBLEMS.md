@@ -573,3 +573,56 @@ resume advanced it; back-15 from 8.71s clamped to 0s and forward-15 landed on
 and 1x advanced 2.01s; a length change from 2 min to 1 min regenerated and the
 timer showed 1:00; and Go Deeper sent
 `focus on the economics of early radio (following up on: the history of radio)`.
+
+
+---
+
+## 17. Five issues from the 29/08 field notes
+
+**Skipping forward past the written script froze the player.** Reproduced with a
+slow-streaming stand-in server: skipping to the edge of received audio left the
+cursor exactly where no audio existed, so playback stopped dead and further
+skips appeared to do nothing - position pinned at 27.29s across three
+consecutive presses.
+
+The cursor now stops two seconds short of the written edge while an episode is
+still streaming, so there is always audio left to keep playing. After the fix
+the same test clamps at 25.76s and *keeps advancing* (25.76 -> 28.16 -> 30.56)
+as more arrives. The progress bar also grew a faint second track showing how
+much has been written, so the limit is visible rather than only felt, and the
+message changed from "that is as far as the episode has been written" to
+"caught up with the writing - it will keep going", which is what actually
+happens.
+
+**A gap could still open between the opener and the script.** The adaptive
+opener (§15) covers only as much time as the sentences it was given. If the
+script took longer than that, silence returned. The opener is now refilled -
+up to twice - when it runs dry while the script is still being written.
+
+**The opener was generic and repetitive across episodes.** It was prompted only
+to "frame what is about to be covered", which produces the same shape every
+time; a listener working through several episodes hears a template. It is now
+prompted to be specific to the topic - what is unsettled, why someone would ask
+now - and the server keeps the last few openers and instructs the model not to
+reuse their wording, rhythm, or opening move. "Here is your briefing" and
+similar are explicitly banned.
+
+**No sense of time scope.** Asking for "the Tour Championship update" could not
+distinguish this morning's state from this moment's, because *the prompt never
+said what time it was*. The model had no clock. Requests now carry the current
+date and time, with instructions to prefer the newest information, say out loud
+what the picture is as of, describe what changed during the day in order, and
+state plainly when something is still in progress rather than implying a result.
+
+**Go Deeper had the wrong scope.** The follow-up was being glued onto the query
+as one run-on string, so the model treated it as a fresh topic and re-explained
+the ground the listener had just heard. What was already covered now travels as
+a separate `context` parameter, and the prompt tells the model to treat it as
+known, not re-introduce the subject, and spend the whole episode on the narrower
+point. It is also part of the cache key, since a follow-up is a different
+episode from the same words asked cold.
+
+**A bug found while fixing these.** The opener refill called `cold_open(plan)`
+from a method that did not take `plan`. It did not raise cleanly - it hung the
+test suite - which is a good argument for passing dependencies as arguments
+rather than stashing them on `self`, which is what the code now does.
