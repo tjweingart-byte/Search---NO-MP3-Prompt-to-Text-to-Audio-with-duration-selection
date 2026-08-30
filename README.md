@@ -79,6 +79,7 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `audio_utils.py` | Live WAV header, silence, the pacing controller |
 | `cache.py` | Shared script cache: key normalization, TTL policy, SQLite store |
 | `demo_script.py` | Built-in sample script used when there are no credentials |
+| `compare_models.py` | Generate one query on several models and compare cost, speed and text |
 | `config.py` | Every setting, overridable by environment variable |
 | `static/index.html` | The FAM prototype interface, wired to live audio |
 | `static/fam-audio.js` | Streaming player the prototype calls instead of speechSynthesis |
@@ -135,6 +136,21 @@ python -m pytest tests/ -q      # 17 tests, no API key required
 Claude is replaced by a scripted generator and speech by a duration-accurate
 tone, so the part that actually breaks — length control — is tested directly,
 including when the model misses its word budget by ±30%.
+
+## Choosing a model
+
+`MODEL` defaults to `claude-opus-5`. Writing a spoken briefing to a word budget
+is not a hard reasoning task, so a cheaper model is likely indistinguishable —
+but that is a judgement about *your* queries, so measure it rather than take
+anyone's word:
+
+```bash
+python compare_models.py "recap of week 5 of the NFL season" --minutes 3
+```
+
+It reports time to first word, total time, how close each model landed to the
+word budget, and real token cost from the API's own usage figures, then prints
+the scripts so you can read them against each other.
 
 ## Configuration
 
