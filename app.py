@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from anthropic_client import describe_http_version, http2_enabled
 from cache import MemoryScriptCache, SqliteScriptCache, build_cache
 from demo_script import DemoGenerator
 from config import settings
@@ -126,6 +127,7 @@ async def health() -> dict:
         "mode": "demo" if DEMO_MODE else "live",
         "model": settings.model,
         "web_search": settings.enable_web_search,
+        "http": {"version": describe_http_version(), "http2_negotiated": http2_enabled()},
         "api_key_configured": bool(settings.anthropic_api_key),
         "sample_rate": build_engine().sample_rate,
         "min_minutes": settings.min_minutes,

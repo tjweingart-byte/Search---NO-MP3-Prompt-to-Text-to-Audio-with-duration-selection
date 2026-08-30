@@ -22,6 +22,7 @@ from typing import AsyncIterator
 
 import anthropic
 
+from anthropic_client import build_async_client
 from config import settings
 
 log = logging.getLogger(__name__)
@@ -212,9 +213,10 @@ class ScriptGenerator:
 
     def __init__(self, api_key: str | None = None):
         key = api_key if api_key is not None else settings.anthropic_api_key
-        # An empty key still lets the SDK fall back to ANTHROPIC_AUTH_TOKEN or
-        # a stored `ant auth login` profile, so do not force one here.
-        self.client = anthropic.AsyncAnthropic(api_key=key) if key else anthropic.AsyncAnthropic()
+        # Built centrally so the HTTP version is pinned in one place; an empty
+        # key still lets the SDK fall back to ANTHROPIC_AUTH_TOKEN or a stored
+        # `ant auth login` profile.
+        self.client = build_async_client(key)
 
     def _request_kwargs(self, plan: EpisodePlan) -> dict:
         kwargs: dict = {

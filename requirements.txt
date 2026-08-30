@@ -4,4 +4,6 @@ uvicorn[standard]>=0.27
 
 # Development only
 pytest>=8.0
+# For fastapi.testclient only. The Anthropic SDK uses httpx2, which it pulls in
+# itself - do not add httpx expecting the SDK to use it.
 httpx>=0.27

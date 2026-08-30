@@ -626,3 +626,48 @@ episode from the same words asked cold.
 from a method that did not take `plan`. It did not raise cleanly - it hung the
 test suite - which is a good argument for passing dependencies as arguments
 rather than stashing them on `self`, which is what the code now does.
+
+
+---
+
+## 18. Pinning the Anthropic client to HTTP/1.1
+
+Reported: `APIConnectionError: Connection error` on every live request, with
+`curl` succeeding only under `--http1.1`, so HTTP/2 was suspected.
+
+**What the code does now.** All Anthropic clients are built by
+`anthropic_client.build_async_client()`, which passes `http2=False` to
+`anthropic.DefaultAsyncHttpxClient`. The SDK subclass is used rather than a raw
+`httpx2.AsyncClient` so its timeouts, connection limits and TCP keep-alive
+settings survive; only the protocol version is overridden. `/api/health` reports
+the version in force, and `ANTHROPIC_HTTP2=1` opts back in - raising a named
+error if the optional `h2` package is missing, rather than failing as another
+opaque connection error.
+
+**A finding worth stating plainly, because it affects the diagnosis.**
+`anthropic` 1.x runs on **httpx2**, not httpx, and `httpx2.AsyncClient` already
+defaults to `http2=False`. The SDK never sets it. And `h2` is not installed by
+this project, without which httpx2 cannot negotiate HTTP/2 at all. So the Python
+client was almost certainly *already* using HTTP/1.1 before this change, even
+though `curl` was negotiating HTTP/2 by default and failing.
+
+That means pinning is worth doing - it states the requirement in code, survives
+a future default change, and is now asserted by tests - but it should not be
+assumed to be the fix. If the error persists, the cause lies elsewhere.
+
+**So the change ships with a diagnostic.** `diagnose_api.py` reports library
+versions, whether `h2` is present, the pinned protocol, the proxy and CA-bundle
+environment, and - on a real request - the full `__cause__` chain that
+`APIConnectionError` hides, with the common causes named: DNS failure, TLS
+interception (`SSLCertVerificationError`, fixed with `SSL_CERT_FILE`), a proxy
+refusing CONNECT, or a timeout indicating traffic is dropped rather than
+refused.
+
+**Tests** (`tests/test_http_client.py`) assert on the real transport pool
+(`client._transport._pool._http2 is False`), not merely on the flag passed in;
+that the generator used in production is built through the pinned path; that SDK
+defaults are preserved rather than replaced; and that enabling HTTP/2 without
+`h2` fails with a clear message.
+
+Also corrected: `requirements.txt` listed `httpx`, which the Anthropic SDK does
+not use. It is needed only by `fastapi.testclient`, and now says so.

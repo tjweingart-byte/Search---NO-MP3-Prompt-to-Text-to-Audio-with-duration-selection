@@ -80,6 +80,8 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `cache.py` | Shared script cache: key normalization, TTL policy, SQLite store |
 | `demo_script.py` | Built-in sample script used when there are no credentials |
 | `compare_models.py` | Generate one query on several models and compare cost, speed and text |
+| `anthropic_client.py` | Builds the Anthropic client; pins the HTTP version |
+| `diagnose_api.py` | Reports why the API is unreachable when it is |
 | `config.py` | Every setting, overridable by environment variable |
 | `static/index.html` | The FAM prototype interface, wired to live audio |
 | `static/fam-audio.js` | Streaming player the prototype calls instead of speechSynthesis |
@@ -202,6 +204,12 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
 Then `/api/health` reports `"mode": "live"` and the banner names the model.
 
 ## Troubleshooting
+
+**`APIConnectionError` / 502 from `/api/audio`.** Run `python diagnose_api.py`.
+It prints the HTTP configuration in force, the proxy and certificate
+environment, and the full cause chain behind the error, which the SDK otherwise
+hides. The client is pinned to HTTP/1.1 (`ANTHROPIC_HTTP2=0`) because some
+proxies break HTTP/2 to the API; `/api/health` reports which version is in use.
 
 **"It generates an episode but I can't hear anything."** Almost always the
 server failing while the browser still gets a valid-looking response. Check

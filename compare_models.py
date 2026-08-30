@@ -17,8 +17,7 @@ import argparse
 import asyncio
 import time
 
-import anthropic
-
+from anthropic_client import build_async_client
 from config import settings
 from script_generator import SYSTEM_PROMPT, build_prompt, count_words, plan_episode
 
@@ -85,7 +84,7 @@ async def main() -> None:
 
     plan = plan_episode(args.query, args.minutes)
     use_search = settings.enable_web_search and not args.no_search
-    client = anthropic.AsyncAnthropic()
+    client = build_async_client()
 
     print(f'\nQuery   : "{args.query}"')
     print(f"Length  : {plan.minutes} min  (budget {plan.min_words}-{plan.max_words} words)")

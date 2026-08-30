@@ -33,6 +33,13 @@ class Settings:
     # lower-latency script pass; the pipeline is model-agnostic.
     model: str = field(default_factory=lambda: os.environ.get("MODEL", "claude-opus-5"))
     max_output_tokens: int = _env_int("MAX_OUTPUT_TOKENS", 16000)
+    # HTTP/2 to api.anthropic.com is broken by some proxies and TLS-inspecting
+    # middleboxes, which surfaces only as "Connection error". HTTP/1.1 is the
+    # default here and is pinned explicitly in anthropic_client.py. Set
+    # ANTHROPIC_HTTP2=1 (and `pip install h2`) to opt back in.
+    anthropic_http2: bool = field(
+        default_factory=lambda: os.environ.get("ANTHROPIC_HTTP2", "0") not in ("0", "false", "False", "")
+    )
     # low | medium | high | xhigh | max. Script writing is not a hard reasoning
     # task and effort directly costs time-to-first-audio, so keep it low.
     effort: str = field(default_factory=lambda: os.environ.get("EFFORT", "low"))
