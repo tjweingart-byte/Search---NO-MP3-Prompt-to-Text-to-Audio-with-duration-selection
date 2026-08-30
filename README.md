@@ -122,8 +122,12 @@ TTL instead of 24 hours.
 | Endpoint | Description |
 |---|---|
 | `GET /api/health` | Model, selected voice, sample rate, credential status |
+| `GET /api/voices` | Voices this machine can speak in, best first |
 | `POST /api/script` | `{query, minutes}` → the script as JSON, no audio |
 | `GET /api/audio?q=…&minutes=N&fmt=pcm\|wav` | The episode, streamed live |
+
+`/api/audio` also takes `voice=` (an id from `/api/voices`) and `context=` (the
+topic a follow-up is deepening).
 
 `fmt=wav` streams a WAV with an unknown-length header, so it works directly as
 an `<audio src>`. `fmt=pcm` sends bare samples for the built-in player, which
@@ -138,6 +142,21 @@ python -m pytest tests/ -q      # 17 tests, no API key required
 Claude is replaced by a scripted generator and speech by a duration-accurate
 tone, so the part that actually breaks — length control — is tested directly,
 including when the model misses its word budget by ±30%.
+
+## Voices
+
+`GET /api/voices` reports what the machine can actually speak, best-sounding
+first, and the player has a picker under the speed/length pill.
+
+| Engine | Quality | Setup |
+|---|---|---|
+| Piper | Neural, natural | Download a voice, set `PIPER_MODEL` |
+| macOS `say` | Good, many voices | Nothing — built into macOS |
+| espeak-ng | Robotic but instant | `apt-get install espeak-ng` |
+
+Voice is deliberately **not** part of the script cache key: it changes the audio,
+not the words. Switching voice reuses the cached script, so it costs no model
+call and takes about 90 ms.
 
 ## Choosing a model
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -25,7 +26,7 @@ from demo_script import DemoGenerator
 from config import settings
 from pipeline import GenerationStats, PodcastPipeline
 from script_generator import ScriptGenerator, plan_episode
-from tts import TTSUnavailable, build_engine, engine_report
+from tts import TTSUnavailable, build_engine, default_voice, engine_for_voice, engine_report, list_voices
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("podcast")
@@ -69,12 +70,13 @@ SCRIPT_CACHE = build_cache()
 DEMO_MODE = not settings.anthropic_api_key
 
 
-def _make_pipeline() -> PodcastPipeline:
+def _make_pipeline(voice: Optional[str] = None) -> PodcastPipeline:
+    engine = engine_for_voice(voice)
     if DEMO_MODE:
         return PodcastPipeline(
-            generator=DemoGenerator(), engine=build_engine(), cache=None
+            generator=DemoGenerator(), engine=engine, cache=None, voice=voice
         )
-    return PodcastPipeline(engine=build_engine(), cache=SCRIPT_CACHE)
+    return PodcastPipeline(engine=engine, cache=SCRIPT_CACHE, voice=voice)
 
 
 def _cache_report() -> dict:
@@ -141,6 +143,12 @@ async def health() -> dict:
     }
 
 
+@app.get("/api/voices")
+async def voices() -> dict:
+    """Voices this server can speak in, best first."""
+    return {"default": default_voice(), "voices": [v.as_dict() for v in list_voices()]}
+
+
 @app.post("/api/script")
 async def script(req: ScriptRequest, request: Request) -> dict:
     _rate_limit(request)
@@ -163,6 +171,7 @@ async def audio(
     minutes: int = Query(3, ge=1, le=10),
     fmt: str = Query("wav", pattern="^(wav|pcm)$"),
     context: str = Query("", description="Topic the listener just heard, for a follow-up"),
+    voice: str = Query("", description="Voice id from /api/voices"),
 ):
     """Stream the episode.
 
@@ -174,7 +183,7 @@ async def audio(
     plan = _validated_plan(q, minutes, context)
 
     try:
-        pipeline = _make_pipeline()
+        pipeline = _make_pipeline(voice or None)
     except TTSUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

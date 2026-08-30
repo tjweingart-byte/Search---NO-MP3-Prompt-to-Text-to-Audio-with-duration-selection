@@ -671,3 +671,32 @@ defaults are preserved rather than replaced; and that enabling HTTP/2 without
 
 Also corrected: `requirements.txt` listed `httpx`, which the Anthropic SDK does
 not use. It is needed only by `fastapi.testclient`, and now says so.
+
+
+---
+
+## 19. Voice selection
+
+The first step towards a shippable v1: the espeak fallback sounds robotic, and
+for an audio product that is the first thing anyone judges.
+
+`GET /api/voices` enumerates what the machine can actually speak. Each engine
+reports its own: espeak offers a curated six accents (it exposes hundreds of
+variants, and offering all of them is worse for a listener than offering a few
+that sound genuinely different), macOS `say` parses `say -v ?` and puts the
+long-form-friendly voices first, Piper reports its configured model. Voice ids
+carry their engine (`say:Samantha`), so an id alone routes the request.
+
+**Voice is not part of the script cache key, on purpose.** A voice changes the
+audio, not the words, so the same script serves every voice. Measured: two
+voices for one query produced different audio, identical duration, and **one
+model call** - the second request was a cache hit. Switching voice on an
+existing episode takes ~90 ms against ~1.2 s for a fresh topic, and costs
+nothing.
+
+An unavailable voice falls back to the best engine present rather than failing:
+a listener whose chosen voice was uninstalled should still hear their episode.
+
+**Untested here:** the macOS `say` voice list could not be exercised on this
+Linux build machine. The parsing is defensive and the engine falls back if it
+returns nothing, but the first Mac run should be watched.

@@ -135,7 +135,7 @@ window.FamAudio = (function () {
     tick();
   }
 
-  function play(query, minutes, h, context) {
+  function play(query, minutes, h, context, voice) {
     handlers = h || {};
     stop();
     var myToken = ++token;
@@ -147,7 +147,8 @@ window.FamAudio = (function () {
 
     var url = "/api/audio?q=" + encodeURIComponent(query) +
               "&minutes=" + encodeURIComponent(minutes) + "&fmt=pcm" +
-              (context ? "&context=" + encodeURIComponent(context) : "");
+              (context ? "&context=" + encodeURIComponent(context) : "") +
+              (voice ? "&voice=" + encodeURIComponent(voice) : "");
 
     ctx.resume().then(function () {
       return fetch(url, { signal: controller.signal });

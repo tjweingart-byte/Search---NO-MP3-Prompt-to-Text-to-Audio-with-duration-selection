@@ -12,8 +12,11 @@ being loaded into every web worker.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
+import subprocess
 import sys
+from dataclasses import dataclass
 from functools import lru_cache
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -22,8 +25,28 @@ from audio_utils import strip_wav_header
 from config import settings
 
 
+log = logging.getLogger(__name__)
+
+
 class TTSUnavailable(RuntimeError):
     """No usable speech engine is installed."""
+
+
+@dataclass(frozen=True)
+class Voice:
+    """A voice a listener can choose.
+
+    `id` is prefixed with the engine that owns it ("say:Samantha"), so a voice
+    id alone is enough to route a request to the right engine.
+    """
+
+    id: str
+    label: str
+    engine: str
+    detail: str = ""
+
+    def as_dict(self) -> dict:
+        return {"id": self.id, "label": self.label, "engine": self.engine, "detail": self.detail}
 
 
 class TTSEngine(ABC):
@@ -32,8 +55,24 @@ class TTSEngine(ABC):
     nominal_wpm = 165.0
 
     @abstractmethod
-    async def synth(self, text: str, wpm: float) -> bytes:
-        """Return raw PCM for `text` spoken at roughly `wpm`."""
+    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
+        """Return raw PCM for `text` spoken at roughly `wpm`.
+
+        `voice` is an id from `voices()`, or None for the engine's default.
+        """
+
+    @classmethod
+    def voices(cls) -> list[Voice]:
+        """Voices this engine can offer right now. Empty if unavailable."""
+        return []
+
+    @staticmethod
+    def _voice_arg(voice: str | None, engine_name: str) -> str | None:
+        """Strip the "engine:" prefix from a voice id, if present."""
+        if not voice:
+            return None
+        prefix = engine_name + ":"
+        return voice[len(prefix):] if voice.startswith(prefix) else voice
 
     @property
     def sample_rate(self) -> int:
@@ -78,10 +117,32 @@ class EspeakEngine(TTSEngine):
     def __init__(self) -> None:
         self._rate: int | None = None
 
-    async def synth(self, text: str, wpm: float) -> bytes:
+    #: A short curated list. espeak exposes dozens of accents and hundreds of
+    #: variants; offering all of them is worse for a listener than offering a
+    #: few that sound genuinely different from each other.
+    CURATED = [
+        ("en-us", "American"),
+        ("en-us+f2", "American, higher"),
+        ("en-gb", "British"),
+        ("en-gb-x-rp", "British, received pronunciation"),
+        ("en-gb-scotland", "Scottish"),
+        ("en-au", "Australian"),
+    ]
+
+    @classmethod
+    def voices(cls) -> list[Voice]:
+        if not cls.available():
+            return []
+        return [
+            Voice(id=f"espeak:{vid}", label=label, engine="espeak", detail="robotic, instant")
+            for vid, label in cls.CURATED
+        ]
+
+    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
+        chosen = self._voice_arg(voice, "espeak") or settings.espeak_voice
         cmd = [
             settings.espeak_binary,
-            "-v", settings.espeak_voice,
+            "-v", chosen,
             "-s", str(int(round(wpm))),
             "--stdout",
         ]
@@ -134,7 +195,18 @@ class PiperEngine(TTSEngine):
     def sample_rate(self) -> int:
         return self._rate
 
-    async def synth(self, text: str, wpm: float) -> bytes:
+    @classmethod
+    def voices(cls) -> list[Voice]:
+        if not cls.available():
+            return []
+        import pathlib
+
+        stem = pathlib.Path(settings.piper_model).stem.replace(".onnx", "")
+        return [Voice(id=f"piper:{stem}", label=stem.replace("_", " "),
+                      engine="piper", detail="neural, natural")]
+
+    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
+        # One model per process; a voice id selects the configured model only.
         length_scale = max(0.6, min(1.6, self.nominal_wpm / max(wpm, 1.0)))
         cmd = [
             settings.piper_binary,
@@ -167,10 +239,40 @@ class SayEngine(TTSEngine):
     def __init__(self) -> None:
         self._rate: int | None = None
 
-    async def synth(self, text: str, wpm: float) -> bytes:
+    #: Preferred first, when present. macOS ships dozens; these are the ones
+    #: that read long-form prose well.
+    PREFERRED = ["Samantha", "Alex", "Ava", "Tom", "Serena", "Daniel", "Karen", "Moira", "Fiona"]
+
+    @classmethod
+    @lru_cache(maxsize=1)
+    def voices(cls) -> tuple:  # tuple so the cache can hold it
+        if not cls.available():
+            return ()
+        try:
+            out = subprocess.run(
+                [settings.say_binary, "-v", "?"], capture_output=True, text=True, timeout=10
+            ).stdout
+        except Exception:  # pragma: no cover - depends on the host
+            return ()
+        found = {}
+        for line in out.splitlines():
+            # "Samantha            en_US    # Hello, my name is Samantha."
+            parts = line.split()
+            if len(parts) < 2 or not parts[1].startswith("en"):
+                continue
+            found[parts[0]] = parts[1].replace("_", "-")
+        ordered = [v for v in cls.PREFERRED if v in found] + [
+            v for v in sorted(found) if v not in cls.PREFERRED
+        ]
+        return tuple(
+            Voice(id=f"say:{v}", label=v, engine="say", detail=found[v]) for v in ordered
+        )
+
+    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
         import os
         import tempfile
 
+        chosen = self._voice_arg(voice, "say") or settings.say_voice
         fd, path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
         try:
@@ -181,8 +283,8 @@ class SayEngine(TTSEngine):
                 "--file-format=WAVE",
                 "-o", path,
             ]
-            if settings.say_voice:
-                cmd[1:1] = ["-v", settings.say_voice]
+            if chosen:
+                cmd[1:1] = ["-v", chosen]
             await self._run(cmd, stdin_text=text)
             with open(path, "rb") as handle:
                 wav = handle.read()
@@ -237,7 +339,12 @@ class DebugEngine(TTSEngine):
             samples.byteswap()  # the stream is little-endian everywhere
         return samples.tobytes()
 
-    async def synth(self, text: str, wpm: float) -> bytes:
+    @classmethod
+    def voices(cls) -> list[Voice]:
+        return [Voice(id="debug:tone", label="Placeholder tone", engine="debug",
+                      detail="no speech engine installed")]
+
+    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
         words = max(1, len(text.split()))
         seconds = words / (max(wpm, 1.0) / 60.0)
         rate = settings.sample_rate
@@ -274,6 +381,49 @@ def build_engine(preference: str | None = None) -> TTSEngine:
     return DebugEngine()
 
 
+ENGINES = {
+    "piper": PiperEngine,
+    "say": SayEngine,
+    "espeak": EspeakEngine,
+    "debug": DebugEngine,
+}
+
+
+def list_voices() -> list[Voice]:
+    """Every voice available on this machine, best-sounding first.
+
+    Ordered by engine quality rather than alphabetically, because the first
+    entry is what a listener gets by default.
+    """
+    voices: list[Voice] = []
+    for name in ("piper", "say", "espeak"):
+        voices.extend(ENGINES[name].voices())
+    if not voices:
+        voices.extend(DebugEngine.voices())
+    return voices
+
+
+def default_voice() -> str | None:
+    voices = list_voices()
+    return voices[0].id if voices else None
+
+
+def engine_for_voice(voice: str | None) -> TTSEngine:
+    """Route a voice id to the engine that owns it.
+
+    An unknown or unavailable voice falls back to the best engine present
+    rather than failing: a listener choosing a voice that has since been
+    uninstalled should still hear their episode.
+    """
+    if voice and ":" in voice:
+        name = voice.split(":", 1)[0]
+        cls = ENGINES.get(name)
+        if cls is not None and cls.available():
+            return cls()
+        log.warning("voice %r is unavailable; falling back", voice)
+    return build_engine()
+
+
 def engine_report() -> dict:
     """What the server can actually do right now — surfaced in /api/health."""
     return {
@@ -282,4 +432,6 @@ def engine_report() -> dict:
         "espeak": EspeakEngine.available(),
         "say": SayEngine.available(),
         "debug": True,
+        "voices": [v.as_dict() for v in list_voices()],
+        "default_voice": default_voice(),
     }

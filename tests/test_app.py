@@ -36,8 +36,8 @@ def _use(monkeypatch, generator):
     monkeypatch.setattr(
         appmod,
         "_make_pipeline",
-        lambda: pipeline_mod.PodcastPipeline(
-            generator=generator, engine=DebugEngine(), cache=None
+        lambda voice=None: pipeline_mod.PodcastPipeline(
+            generator=generator, engine=DebugEngine(), cache=None, voice=voice
         ),
     )
 
@@ -104,8 +104,8 @@ def test_demo_mode_serves_playable_audio_without_credentials(client, monkeypatch
     monkeypatch.setattr(
         appmod,
         "_make_pipeline",
-        lambda: pipeline_mod.PodcastPipeline(
-            generator=DemoGenerator(), engine=DebugEngine(), cache=None
+        lambda voice=None: pipeline_mod.PodcastPipeline(
+            generator=DemoGenerator(), engine=DebugEngine(), cache=None, voice=voice
         ),
     )
     res = client.get("/api/audio?q=anything&minutes=1&fmt=wav")

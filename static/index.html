@@ -820,6 +820,10 @@
             <div class="gc-label">Length</div>
             <div class="gc-val" id="lengthModalVal" onclick="openLengthMenu()">3 min</div>
           </div>
+          <div class="gc-field">
+            <div class="gc-label">Voice</div>
+            <div class="gc-val" id="voiceModalVal" onclick="openVoiceMenu()">Default</div>
+          </div>
           <div class="modal-btns">
             <button class="modal-btn primary" style="flex:1;" onclick="closeSpeedLengthModal()">Done</button>
           </div>
@@ -1301,7 +1305,7 @@
         setPlayState(false);
         onGenerationFailed(err && err.message);
       }
-    }, context);
+    }, context, selectedVoice);
   }
   function stopSpeech(){ stopProgress(); FamAudio.stop(); }
   function pauseSpeech(){ FamAudio.pause(); }
@@ -1654,9 +1658,52 @@
     });
     showActionSheet(items);
   }
+  // ---- Voices --------------------------------------------------------
+  var AVAILABLE_VOICES = [];
+  var selectedVoice = null;
+
+  function voiceLabel(id){
+    for(var i = 0; i < AVAILABLE_VOICES.length; i++){
+      if(AVAILABLE_VOICES[i].id === id) return AVAILABLE_VOICES[i].label;
+    }
+    return "Default";
+  }
+
+  fetch("/api/voices").then(function(r){ return r.json(); }).then(function(v){
+    AVAILABLE_VOICES = v.voices || [];
+    selectedVoice = v.default || null;
+    var el = document.getElementById("voiceModalVal");
+    if(el) el.textContent = voiceLabel(selectedVoice);
+  }).catch(function(){});
+
+  function openVoiceMenu(){
+    if(!AVAILABLE_VOICES.length){ toast("No voices reported by the server"); return; }
+    var items = AVAILABLE_VOICES.map(function(v){
+      return {
+        label: v.label + (v.detail ? "  ·  " + v.detail : "") + (v.id === selectedVoice ? "  ✓" : ""),
+        action: function(){
+          if(v.id === selectedVoice) return;
+          selectedVoice = v.id;
+          var el = document.getElementById("voiceModalVal");
+          if(el) el.textContent = v.label;
+          // The voice changes the audio but not the script, so re-generating
+          // reuses the cached script: no model call, no cost, near-instant.
+          var onPlayer = document.querySelector(".screen.active")
+                      && document.querySelector(".screen.active").id === "screen-player";
+          if(onPlayer && currentPlayingTopicKey){
+            toast("Switching to " + v.label);
+            generate(currentPlayingTopicKey, "player");
+          }
+        }
+      };
+    });
+    showActionSheet(items);
+  }
+
   function openSpeedLengthModal(){
     document.getElementById("speedModalVal").textContent = selectedSpeed;
     document.getElementById("lengthModalVal").textContent = selectedLengthMinutes + " min";
+    document.getElementById("voiceModalVal").textContent = voiceLabel(selectedVoice);
     document.getElementById("speedLengthOverlay").classList.add("active");
   }
   function closeSpeedLengthModal(){

@@ -103,6 +103,7 @@ class GenerationStats:
     words: int = 0
     sentences: int = 0
     engine: str = ""
+    voice: str = ""
     sample_rate: int = settings.sample_rate
     truncated: bool = False
     topups: int = 0
@@ -124,6 +125,7 @@ class GenerationStats:
             "words": self.words,
             "sentences": self.sentences,
             "engine": self.engine,
+            "voice": self.voice,
             "truncated": self.truncated,
             "topups": self.topups,
             "cache": self.cache,
@@ -137,6 +139,7 @@ class PodcastPipeline:
         generator: Optional[ScriptGenerator] = None,
         engine: Optional[TTSEngine] = None,
         cache: ScriptCache | None | str = AUTO,
+        voice: Optional[str] = None,
     ):
         """`cache` takes a store, or AUTO to build the configured one, or None
         to disable caching.
@@ -149,6 +152,9 @@ class PodcastPipeline:
         self.generator = generator or ScriptGenerator()
         self.engine = engine or build_engine()
         self.cache = build_cache() if cache is AUTO else cache
+        #: Passed to the engine on every sentence. The script is unaffected by
+        #: it, which is why the script cache deliberately ignores voice.
+        self.voice = voice
 
     def _start(self, sentences: AsyncIterator[str]) -> "_Pump":
         """Begin consuming a sentence stream *now*, into a bounded queue.
@@ -222,7 +228,7 @@ class PodcastPipeline:
             stats.truncated = True
             return
 
-        pcm = await self.engine.synth(sentence, wpm)
+        pcm = await self.engine.synth(sentence, wpm, self.voice)
         if not pcm:
             return
         pace.observe(len(pcm) + len(gap), words)
@@ -326,6 +332,7 @@ class PodcastPipeline:
         stats = stats if stats is not None else GenerationStats()
         stats.plan_seconds = plan.target_seconds
         stats.engine = self.engine.name
+        stats.voice = self.voice or ""
         stats.sample_rate = self.engine.sample_rate
 
         pace = PaceController(
