@@ -164,61 +164,167 @@ class EspeakEngine(TTSEngine):
 
 
 class PiperEngine(TTSEngine):
-    """Piper: neural voice, still CPU-only and faster than real time.
+    """Piper: a neural voice that ships *with* the app.
 
-    `--output_raw` writes headerless PCM to stdout, which is exactly the format
-    the rest of the pipeline speaks, so there is no conversion step at all.
-    Rate is controlled by `--length_scale` (higher = slower).
+    This is the voice the product is meant to have. It matters that it is a pip
+    dependency plus a model file in the project, not something the host machine
+    happens to provide: espeak only exists if someone apt-installed it, and
+    macOS `say` does not exist on a Linux server at all, so relying on either
+    means the deployed app sounds different - and worse - than it does on a
+    laptop.
+
+    Two things this must get right:
+
+    * **Load the model once.** A Piper voice takes roughly a second to load.
+      Loading per sentence would dominate everything else in the pipeline, so
+      loaded voices are cached for the life of the process.
+    * **Do not block the event loop.** Inference is synchronous CPU work. Run
+      directly, it would stall every other listener on the server for the
+      duration of every sentence, so it runs in a worker thread.
     """
 
     name = "piper"
 
-    def __init__(self) -> None:
-        # Every piper voice ships a sidecar JSON stating its native rate, and
-        # voices differ (16000 and 22050 are both common). Reading it is the
-        # only way to avoid a chipmunk-or-baritone bug that no test catches
-        # because the byte counts still look plausible.
-        self._rate = 22050
-        try:
-            import json
-            import pathlib
+    #: model path -> loaded voice. Shared by every request in the process.
+    _loaded: dict = {}
 
-            cfg = pathlib.Path(settings.piper_model + ".json")
-            if not cfg.exists():
-                cfg = pathlib.Path(settings.piper_model).with_suffix(".onnx.json")
-            if cfg.exists():
-                self._rate = int(json.loads(cfg.read_text())["audio"]["sample_rate"])
-        except Exception:  # keep the default; surfaced via /api/health
-            pass
+    def __init__(self, model_path: "pathlib.Path | None" = None) -> None:
+        self._model_path = model_path or default_piper_model()
+        self._rate: int | None = None
 
-    @property
-    def sample_rate(self) -> int:
-        return self._rate
+    # -- discovery ---------------------------------------------------------
+
+    @staticmethod
+    def voice_dir() -> "pathlib.Path":
+        import pathlib
+
+        return pathlib.Path(settings.voices_dir)
+
+    @staticmethod
+    def installed_models() -> list:
+        """Every .onnx voice in the project's voices directory."""
+        import pathlib
+
+        directory = pathlib.Path(settings.voices_dir)
+        if not directory.is_dir():
+            return []
+        return sorted(p for p in directory.glob("*.onnx") if p.is_file())
 
     @classmethod
     def voices(cls) -> list[Voice]:
         if not cls.available():
             return []
-        import pathlib
-
-        stem = pathlib.Path(settings.piper_model).stem.replace(".onnx", "")
-        return [Voice(id=f"piper:{stem}", label=stem.replace("_", " "),
-                      engine="piper", detail="neural, natural")]
-
-    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
-        # One model per process; a voice id selects the configured model only.
-        length_scale = max(0.6, min(1.6, self.nominal_wpm / max(wpm, 1.0)))
-        cmd = [
-            settings.piper_binary,
-            "--model", settings.piper_model,
-            "--length_scale", f"{length_scale:.3f}",
-            "--output_raw",
-        ]
-        return await self._run(cmd, stdin_text=text)
+        found = []
+        for path in cls.installed_models():
+            stem = path.stem
+            found.append(
+                Voice(
+                    id=f"piper:{stem}",
+                    label=_prettify_piper_name(stem),
+                    engine="piper",
+                    detail="neural, ships with the app",
+                )
+            )
+        return found
 
     @staticmethod
     def available() -> bool:
-        return bool(settings.piper_model) and shutil.which(settings.piper_binary) is not None
+        try:
+            import piper  # noqa: F401
+        except ImportError:
+            return False
+        return bool(PiperEngine.installed_models())
+
+    # -- synthesis ---------------------------------------------------------
+
+    def _resolve(self, voice: str | None) -> "pathlib.Path | None":
+        wanted = self._voice_arg(voice, "piper")
+        if wanted:
+            for path in self.installed_models():
+                if path.stem == wanted:
+                    return path
+            log.warning("piper voice %r not installed; using the default", wanted)
+        return self._model_path
+
+    @classmethod
+    def _load(cls, path):
+        """Load a voice once and keep it. Model load is ~1s; synthesis is ms."""
+        key = str(path)
+        if key not in cls._loaded:
+            from piper import PiperVoice
+
+            log.info("loading piper voice %s", path.name)
+            cls._loaded[key] = PiperVoice.load(path)
+        return cls._loaded[key]
+
+    def _synth_blocking(self, text: str, wpm: float, path) -> tuple[bytes, int]:
+        from piper import SynthesisConfig
+
+        voice = self._load(path)
+        # length_scale > 1 is slower. Clamped so the pacing controller can hit
+        # the clock without the delivery becoming strange.
+        scale = max(0.6, min(1.6, self.nominal_wpm / max(wpm, 1.0)))
+        config = SynthesisConfig(length_scale=scale)
+
+        buffer = bytearray()
+        rate = settings.sample_rate
+        for chunk in voice.synthesize(text, syn_config=config):
+            buffer += chunk.audio_int16_bytes
+            rate = chunk.sample_rate
+        return bytes(buffer), rate
+
+    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
+        path = self._resolve(voice)
+        if path is None:
+            raise TTSUnavailable("no piper voice is installed")
+        # Off the event loop: inference is blocking CPU work.
+        pcm, rate = await asyncio.to_thread(self._synth_blocking, text, wpm, path)
+        self._rate = rate
+        return pcm
+
+    @property
+    def sample_rate(self) -> int:
+        # Known only after the model is consulted; read it up front so the
+        # stream header is right on the very first chunk.
+        if self._rate is None and self._model_path is not None:
+            self._rate = _piper_model_rate(self._model_path)
+        return self._rate or 22050
+
+
+def _prettify_piper_name(stem: str) -> str:
+    """en_US-lessac-medium -> Lessac (US, medium)."""
+    parts = stem.split("-")
+    locale = parts[0].replace("_", "-") if parts else stem
+    speaker = parts[1].title() if len(parts) > 1 else stem
+    quality = parts[2] if len(parts) > 2 else ""
+    region = locale.split("-")[-1] if "-" in locale else locale
+    return f"{speaker} ({region}{', ' + quality if quality else ''})"
+
+
+def _piper_model_rate(path) -> int:
+    """Read a voice's sample rate from its sidecar JSON, without loading it."""
+    import json
+    import pathlib
+
+    for candidate in (pathlib.Path(str(path) + ".json"), pathlib.Path(path).with_suffix(".json")):
+        try:
+            if candidate.exists():
+                return int(json.loads(candidate.read_text())["audio"]["sample_rate"])
+        except Exception:  # pragma: no cover - malformed sidecar
+            continue
+    return 22050
+
+
+def default_piper_model():
+    """The configured voice, or the first installed one."""
+    import pathlib
+
+    if settings.piper_model:
+        path = pathlib.Path(settings.piper_model)
+        if path.exists():
+            return path
+    models = PiperEngine.installed_models()
+    return models[0] if models else None
 
 
 class SayEngine(TTSEngine):

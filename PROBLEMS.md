@@ -700,3 +700,51 @@ a listener whose chosen voice was uninstalled should still hear their episode.
 **Untested here:** the macOS `say` voice list could not be exercised on this
 Linux build machine. The parsing is defensive and the engine falls back if it
 returns nothing, but the first Mac run should be watched.
+
+
+---
+
+## 20. Making the voice part of the app rather than the host
+
+Until now the voice was whatever the machine happened to have: macOS `say` on a
+laptop, espeak-ng on Linux if someone apt-installed it, a placeholder tone
+otherwise. That is fine for a prototype and wrong for a product, and it breaks
+in a specific way at exactly the wrong moment: **deploying to a Linux container
+would have made the app sound worse than it does locally**, because `say` does
+not exist there.
+
+Piper is now a real dependency (`piper-tts` in `requirements.txt`) with voice
+models installed into `voices/` by `python setup_voices.py`. The engine ships
+with the app; only the model files are fetched, and they are fetched by a
+command in the project rather than assumed to exist.
+
+**Two things the implementation has to get right.**
+
+*Load the model once.* A Piper voice takes about a second to load. The old
+implementation shelled out to a `piper` binary per sentence, which would have
+reloaded the model roughly 170 times in a ten-minute episode. Loaded voices are
+now cached for the life of the process. (§9 measured subprocess spawn as 62% of
+espeak's per-sentence cost while being irrelevant in absolute terms; for Piper
+the same mistake would have been fatal.)
+
+*Do not block the event loop.* Inference is synchronous CPU work. Run directly
+it would stall every other listener for the duration of every sentence, so it
+runs via `asyncio.to_thread`. There is a test asserting synthesis does not
+happen on the main thread.
+
+**Hosted neural voices were considered and not adopted.** They sound best, but
+bill per character, which can dwarf the model cost, and add a network dependency
+to the one part of the pipeline that is currently free and instant.
+
+### What is not verified
+
+The build machine cannot reach huggingface.co, where the voice models are
+hosted, so **the ONNX inference itself has never been run here.** Everything
+around it is tested against a stub: discovery, naming, routing, model caching,
+rate control, sample rate, thread offloading, and fallback when a voice is
+missing. `python verify_voice.py` closes the gap on a real machine - it
+synthesises a sentence with every installed voice and reports duration, sample
+rate and realtime factor, with `--save` to write a WAV to listen to.
+
+If the models cannot be downloaded on the target machine either, the app keeps
+working on the existing fallbacks and says so; it does not fail.

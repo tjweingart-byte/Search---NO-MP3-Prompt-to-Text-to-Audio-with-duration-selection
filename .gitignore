@@ -5,3 +5,8 @@ __pycache__/
 venv/
 .pytest_cache/
 *.wav
+
+# Voice models: tens of MB each, installed by setup_voices.py
+voices/
+*.onnx
+*.onnx.json

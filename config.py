@@ -108,7 +108,11 @@ class Settings:
     # --- TTS --------------------------------------------------------------
     # auto | piper | espeak | debug
     tts_engine: str = field(default_factory=lambda: os.environ.get("TTS_ENGINE", "auto"))
-    piper_binary: str = field(default_factory=lambda: os.environ.get("PIPER_BIN", "piper"))
+    # Voices that ship with the app. Populated by `python setup_voices.py`;
+    # every .onnx in here becomes selectable. Kept in the project rather than
+    # relying on the host OS, so a deployed server sounds like the laptop.
+    voices_dir: str = field(default_factory=lambda: os.environ.get("VOICES_DIR", "voices"))
+    # Pin one of them as the default; otherwise the first installed is used.
     piper_model: str = field(default_factory=lambda: os.environ.get("PIPER_MODEL", ""))
     espeak_binary: str = field(
         default_factory=lambda: os.environ.get("ESPEAK_BIN", "espeak-ng")

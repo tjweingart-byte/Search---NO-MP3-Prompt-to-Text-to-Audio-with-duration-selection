@@ -1,4 +1,7 @@
 anthropic>=1.2.0
+# The neural voice ships with the app rather than relying on the host OS.
+# Voice models are installed by `python setup_voices.py` into voices/.
+piper-tts>=1.7.0
 fastapi>=0.110
 uvicorn[standard]>=0.27
 

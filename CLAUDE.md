@@ -42,10 +42,16 @@ extend it to the browse surfaces. Prefetch there instead.
 
 ## Open problems, in the order they hurt
 
-1. **Voice quality.** espeak-ng sounds robotic. Piper (local, free, much better)
-   is already supported — set `PIPER_MODEL`. macOS `say` is auto-detected.
-   Hosted neural voices sound best but bill per character, which can dwarf the
-   model cost; price it before adopting.
+1. ~~**Voice quality**~~ — *addressed, needs verifying on a real machine.* Piper
+   is now a pip dependency (`piper-tts`) with voice models in `voices/`,
+   installed by `python setup_voices.py`. It ships **with the app** rather than
+   depending on the host OS: espeak only exists if apt-installed and macOS `say`
+   does not exist on a Linux server, so relying on either means the deployed app
+   sounds worse than the laptop it was built on. Hosted neural voices were not
+   adopted: they bill per character, which can dwarf the model cost.
+   *The ONNX inference could not be exercised on the build machine (the models
+   are hosted somewhere it cannot reach) — `python verify_voice.py` is the check
+   that closes that gap.*
 2. ~~**Voice selection**~~ — *done*. `/api/voices` lists what the machine can
    speak; `voice=` on `/api/audio` selects one; the player has a picker.
    Note: voice is deliberately **not** part of the script cache key, because a

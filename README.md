@@ -79,6 +79,8 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `audio_utils.py` | Live WAV header, silence, the pacing controller |
 | `cache.py` | Shared script cache: key normalization, TTL policy, SQLite store |
 | `demo_script.py` | Built-in sample script used when there are no credentials |
+| `setup_voices.py` | Installs the neural voices the app ships with |
+| `verify_voice.py` | Proves the voices work on this machine, and how fast |
 | `compare_models.py` | Generate one query on several models and compare cost, speed and text |
 | `anthropic_client.py` | Builds the Anthropic client; pins the HTTP version |
 | `diagnose_api.py` | Reports why the API is unreachable when it is |
@@ -148,11 +150,26 @@ including when the model misses its word budget by ±30%.
 `GET /api/voices` reports what the machine can actually speak, best-sounding
 first, and the player has a picker under the speed/length pill.
 
-| Engine | Quality | Setup |
+```bash
+pip install -r requirements.txt
+python setup_voices.py       # installs the neural voices into voices/
+python verify_voice.py       # proves they work, and how fast
+```
+
+| Engine | Quality | Where it comes from |
 |---|---|---|
-| Piper | Neural, natural | Download a voice, set `PIPER_MODEL` |
-| macOS `say` | Good, many voices | Nothing — built into macOS |
-| espeak-ng | Robotic but instant | `apt-get install espeak-ng` |
+| **Piper** | Neural, natural | **Ships with the app** — a pip dependency plus models in `voices/` |
+| macOS `say` | Good | Fallback: built into macOS only |
+| espeak-ng | Robotic | Last resort: only if apt-installed |
+
+Piper is the voice the product is meant to have, and it is deliberately part of
+the project rather than something the host provides. espeak only exists if
+someone installed it and macOS `say` does not exist on a Linux server at all, so
+an app relying on either sounds different — and worse — once deployed.
+
+`setup_voices.py` fetches four voices (two US, two UK) into `voices/`. They are
+a few tens of MB each and are not committed; run it once after cloning, and as a
+build step when deploying.
 
 Voice is deliberately **not** part of the script cache key: it changes the audio,
 not the words. Switching voice reuses the cached script, so it costs no model
