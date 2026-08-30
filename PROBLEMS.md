@@ -472,3 +472,59 @@ badge. The engine is wired in; only the credentials were missing.
 The lesson worth keeping: a fallback that is *useful* is also a fallback that is
 *confusable*, and the label belongs where the user's attention is, not where it
 was convenient to put it.
+
+
+---
+
+## 15. Five seconds of audio, then five seconds of dead air
+
+Reported from the first real generated episode. Playback started almost
+instantly, ran for about five seconds, went silent for about five, then resumed
+and completed normally.
+
+**Cause: buffer underrun between the cold open and the main script.** The
+opener (§9) exists to cover research latency, but it was a single sentence -
+roughly five seconds of speech - while a researched Claude call can take ten
+seconds or more to produce its first sentence. When the opener ended, there was
+nothing left to play, so the listener heard the shortfall as silence. Audio,
+gap, audio sounds broken in a way that simply waiting does not.
+
+**Reproduced deterministically** with a stand-in API that stalls a configurable
+number of seconds before responding, and a detector that compares audio arrival
+against audio consumption - a listener hears a gap exactly when the audio
+delivered so far is shorter than the time elapsed since playback began:
+
+```
+BEFORE  research takes 15s
+  time to first audio : 0.20s
+  GAP: 9.9s of dead air, 5.2s into playback
+```
+
+**First attempt, rejected.** Holding the opener until the main script was ready
+removed the gap completely - and pushed time to first audio from 0.2s to 15.3s.
+That trades away the property the whole architecture exists for.
+
+**The fix: an adaptive opener.** The opener is now written as up to four short
+framing sentences, released one at a time, with a check before each one for
+whether the main script has arrived. The moment it has, the opener stops and the
+briefing takes over seamlessly. Slow research gets more introduction; fast
+research gets almost none; unused sentences are discarded. Each sentence is
+prompted to stand alone, since playback may cut away after any of them.
+
+```
+AFTER   research takes 2s / 8s / 15s
+  time to first audio : 0.51s / 0.49s / 0.48s
+  no gaps in any case
+```
+
+Three guards around it: at least one sentence always plays (the main script is
+written on the understanding that the episode has already been opened, so
+without it the briefing starts mid-thought); nothing is spoken at all until the
+script has had a moment to fail, so a bad key still produces a clean 502 rather
+than an introduction to an episode that never comes; and the opener will not run
+past `COLD_OPEN_MAX_SECONDS`, after which a gap is better than endless preamble.
+
+**Still open.** There is no client-side jitter buffer. On localhost the server
+now guarantees continuity, but across a real network a stalled connection can
+still starve the player. A pre-roll of a few hundred milliseconds in
+`fam-audio.js` would absorb that, at a small cost to time-to-first-audio.

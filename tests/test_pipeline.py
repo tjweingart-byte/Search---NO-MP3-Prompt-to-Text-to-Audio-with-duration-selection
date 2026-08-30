@@ -322,3 +322,91 @@ def test_a_broken_cache_never_breaks_an_episode(tmp_path):
     stats = GenerationStats()
     _run_episode(PodcastPipeline(generator=FakeGenerator(), engine=DebugEngine(), cache=cache), plan, stats)
     assert stats.audio_seconds > 0, "a cache failure must degrade to normal generation"
+
+
+# --------------------------------------------------------------------------
+# Cold open continuity
+#
+# Regression for a reported bug: five seconds of audio, then five seconds of
+# dead air, then the rest. The opener covered only part of the research wait,
+# and the listener heard the shortfall as silence.
+# --------------------------------------------------------------------------
+
+OPENER_SENTENCES = ["Opener one.", "Opener two.", "Opener three.", "Opener four."]
+
+
+class SlowResearchGenerator:
+    """A model whose main script takes `delay` seconds to start arriving."""
+
+    def __init__(self, delay: float):
+        self.delay = delay
+
+    async def cold_open(self, plan):
+        for sentence in OPENER_SENTENCES:
+            yield sentence
+
+    async def stream_sentences(self, plan):
+        await asyncio.sleep(self.delay)
+        for i in range(60):
+            yield f"Body sentence {i} of the real briefing."
+
+    async def top_up(self, plan, spoken_so_far, words_needed):
+        for i in range(30):
+            yield f"Extra sentence {i}."
+
+
+def _episode(delay, minutes=2):
+    plan = plan_episode("a topic", minutes)
+    stats = GenerationStats()
+    pipeline = PodcastPipeline(
+        generator=SlowResearchGenerator(delay), engine=DebugEngine(), cache=None
+    )
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    opener_spoken = [s for s in stats.script if s.startswith("Opener")]
+    return stats, opener_spoken
+
+
+def test_opener_grows_to_cover_slow_research():
+    """The listener must never run out of audio while the script is written."""
+    _, quick = _episode(0.0)
+    _, slow = _episode(3.0)
+    assert len(quick) < len(slow), "a slower model should get more introduction"
+    assert len(slow) > 1, "one sentence cannot cover a multi-second wait"
+
+
+def test_opener_is_not_wasted_when_research_is_fast():
+    _, quick = _episode(0.0)
+    assert len(quick) <= 2, "fast research should cut over almost immediately"
+    assert len(quick) >= 1, "something should still open the episode"
+
+
+@pytest.mark.parametrize("delay", [0.0, 1.0, 3.0])
+def test_duration_holds_whatever_the_research_latency(delay):
+    stats, _ = _episode(delay)
+    assert abs(stats.audio_seconds - 120) <= 3.0
+
+
+def test_no_opener_is_spoken_when_the_script_fails():
+    """Never introduce an episode that is not coming."""
+
+    class Failing(SlowResearchGenerator):
+        async def stream_sentences(self, plan):
+            raise RuntimeError("model is down")
+            yield ""  # pragma: no cover
+
+    plan = plan_episode("a topic", 1)
+    stats = GenerationStats()
+    pipeline = PodcastPipeline(generator=Failing(0.0), engine=DebugEngine(), cache=None)
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    with pytest.raises(RuntimeError, match="model is down"):
+        asyncio.run(run())
+    assert stats.sentences == 0

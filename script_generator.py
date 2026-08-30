@@ -102,7 +102,9 @@ def plan_episode(query: str, minutes: int) -> EpisodePlan:
             "what to watch next",
         ]
     # The cold open speaks first, so its words come out of the body's budget.
-    reserved = settings.cold_open_words if settings.enable_cold_open else 0
+    # Reserve roughly one opener sentence: usually only one or two play, and
+    # the pacing controller absorbs the difference either way.
+    reserved = 18 if settings.enable_cold_open else 0
     return EpisodePlan(query, minutes, target_seconds, word_budget, sections, reserved)
 
 
@@ -230,8 +232,11 @@ class ScriptGenerator:
         prompt = (
             "A listener asked for a spoken briefing on this topic:\n"
             f"<topic>{plan.query}</topic>\n\n"
-            f"Write ONE sentence of at most {settings.cold_open_words} words that opens "
-            "the episode by framing what is about to be covered.\n\n"
+            f"Write up to four short sentences, {settings.cold_open_words} words in total, "
+            "that open the episode by framing what is about to be covered. Each "
+            "sentence must stand alone and make sense as the last thing said "
+            "before the briefing proper begins, because playback may cut over to "
+            "the main script after any one of them.\n\n"
             "Critical constraints:\n"
             "- State NO facts, figures, dates, names, results or opinions about the "
             "topic. You have done no research and anything you assert could be wrong.\n"
@@ -249,14 +254,18 @@ class ScriptGenerator:
             )
             if message.stop_reason == "refusal":
                 return
-            text = " ".join(b.text for b in message.content if b.type == "text")
-            sentence = clean_for_speech(text).strip()
-            # One sentence only, however chatty the model was.
-            match = _SENTENCE_END.search(sentence)
-            if match:
-                sentence = sentence[: match.end()].strip()
-            if sentence:
-                yield sentence
+            text = clean_for_speech(" ".join(b.text for b in message.content if b.type == "text"))
+            # Yield sentence by sentence: the pipeline stops taking them the
+            # moment the real script is ready, so later ones are often unused.
+            while text:
+                match = _SENTENCE_END.search(text)
+                if not match:
+                    break
+                piece, text = text[: match.end()].strip(), text[match.end() :]
+                if piece:
+                    yield piece
+            if text.strip():
+                yield text.strip()
         except Exception:
             # A missing cold open costs a second of latency, not the episode.
             log.warning("cold open failed; falling back to the main script", exc_info=True)

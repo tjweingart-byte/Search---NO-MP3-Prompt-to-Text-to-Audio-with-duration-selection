@@ -51,7 +51,16 @@ class Settings:
     cold_open_model: str = field(
         default_factory=lambda: os.environ.get("COLD_OPEN_MODEL", "claude-haiku-4-5")
     )
-    cold_open_words: int = _env_int("COLD_OPEN_WORDS", 18)
+    # Several short framing sentences, released only as long as the main script
+    # is still being written. Unused ones are discarded, so this is an upper
+    # bound on preamble, not a fixed cost.
+    cold_open_words: int = _env_int("COLD_OPEN_WORDS", 70)
+    # Longest the opener may keep talking while waiting for the main script.
+    # Past this a gap is preferable to endless preamble.
+    cold_open_max_seconds: float = _env_float("COLD_OPEN_MAX_SECONDS", 25.0)
+    # How long to let the main script fail before any opener is spoken, so a
+    # bad key produces a clean error rather than an intro to nothing.
+    cold_open_grace: float = _env_float("COLD_OPEN_GRACE", 0.35)
 
     # --- Shared script cache ---------------------------------------------
     cache_enabled: bool = field(
