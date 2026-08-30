@@ -325,6 +325,12 @@
 
   /* -------- player -------- */
   .player-top{ flex:none; display:flex; align-items:center; justify-content:space-between; padding:14px 18px 0; }
+  .mini-ctrl-btn{ position:relative; }
+  .skip-num{
+    position:absolute; bottom:-11px; left:50%; transform:translateX(-50%);
+    font-family:'JetBrains Mono', monospace; font-size:7.5px; color:var(--text-muted);
+  }
+
   .go-deeper-pill{
     display:block; margin:10px auto 0; padding:8px 22px; border-radius:999px;
     background:var(--surface); border:1px solid var(--border-strong); color:var(--text);
@@ -635,9 +641,9 @@
         </div>
         <div class="player-controls-2row">
           <div class="pc-row1">
-            <div class="mini-ctrl-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--paper)"><path d="M11 18l-8-6 8-6v4h9v4h-9z"/></svg></div>
+            <div class="mini-ctrl-btn" onclick="skipAudio(-15)" title="Back 15 seconds"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--paper)"><path d="M11 18l-8-6 8-6v4h9v4h-9z"/></svg><span class="skip-num">15</span></div>
             <div class="mini-play-btn" onclick="togglePlay()"><div id="playIcon2"><svg width="15" height="15" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg></div></div>
-            <div class="mini-ctrl-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--paper)"><path d="M13 18l8-6-8-6v4H4v4h9z"/></svg></div>
+            <div class="mini-ctrl-btn" onclick="skipAudio(15)" title="Forward 15 seconds"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--paper)"><path d="M13 18l8-6-8-6v4H4v4h9z"/></svg><span class="skip-num">15</span></div>
           </div>
           <div class="pc-row2">
             <div class="speed-len-pill" id="speedLenPill" onclick="openSpeedLengthModal()">1.2× · 3 min</div>
@@ -1210,19 +1216,61 @@
   }
 
   // Drives the player's own progress bar and timer off real playback position.
-  function startProgress(totalSeconds){
-    stopProgress();
+  var progressTotal = 0;
+  function refreshProgressNow(){
     var wrap = document.querySelector("#screen-player .progress-bar");
     var fill = wrap ? wrap.querySelector(".fill") : null;
     var knob = wrap ? wrap.querySelector(".knob") : null;
     var cur  = document.getElementById("curTime");
-    progressTimer = setInterval(function(){
-      var seconds = Math.min(FamAudio.elapsed(), totalSeconds);
-      var pct = totalSeconds ? (seconds / totalSeconds) * 100 : 0;
-      if(fill) fill.style.width = pct + "%";
-      if(knob) knob.style.left = pct + "%";
-      if(cur) cur.textContent = formatTime(seconds);
-    }, 250);
+    var tot  = document.getElementById("totalTime");
+    // Once the episode has fully arrived its real length is authoritative;
+    // until then fall back to the requested length.
+    var total = FamAudio.isComplete() ? FamAudio.duration() : progressTotal;
+    var seconds = Math.min(FamAudio.position(), total);
+    var pct = total ? (seconds / total) * 100 : 0;
+    if(fill) fill.style.width = pct + "%";
+    if(knob) knob.style.left = pct + "%";
+    if(cur) cur.textContent = formatTime(seconds);
+    if(tot) tot.textContent = formatTime(total);
+  }
+
+  function startProgress(totalSeconds){
+    stopProgress();
+    progressTotal = totalSeconds;
+    progressTimer = setInterval(refreshProgressNow, 200);
+  }
+
+  // ---- Transport -----------------------------------------------------
+  function parseSpeed(label){
+    var n = parseFloat(String(label).replace(/[^\d.]/g, ""));
+    return isNaN(n) ? 1 : n;
+  }
+
+  function skipAudio(seconds){
+    if(!FamAudio.isActive() && !FamAudio.isComplete()){
+      toast("Nothing playing yet");
+      return;
+    }
+    var before = FamAudio.position();
+    var after = FamAudio.skip(seconds);
+    // Skipping forward can only reach audio that has arrived; a live episode
+    // is still being written, so say so rather than silently doing nothing.
+    if(seconds > 0 && after - before < seconds - 1 && !FamAudio.isComplete()){
+      toast("That's as far as the episode has been written");
+    }
+    refreshProgressNow();
+  }
+
+  function applyPlaybackSpeed(){
+    FamAudio.setRate(parseSpeed(selectedSpeed));
+  }
+
+  // Changing length is not a playback setting - it needs a different episode.
+  function regenerateAtNewLength(){
+    var key = currentPlayingTopicKey;
+    if(!key || !TOPICS[key]){ return; }
+    toast("Rebuilding at " + selectedLengthMinutes + " min");
+    generate(key, "player");
   }
 
   function speakText(title, captionHtml, onEnd){
@@ -1230,10 +1278,13 @@
     FamAudio.play(title, selectedLengthMinutes, {
       onFirstAudio: function(){
         startProgress(totalSeconds);
+        applyPlaybackSpeed();   // honour the speed already chosen in the pill
         onGenerationStarted();
       },
       onEnd: function(){
+        refreshProgressNow();
         stopProgress();
+        setPlayState(false);
         if(onEnd) onEnd();
       },
       onError: function(err){
@@ -1265,10 +1316,13 @@
     pendingFromSearch = false;
     playerSpeechToken++;
     var myToken = playerSpeechToken;
+    // `prompt` is set by Go Deeper and carries what the listener actually
+    // typed; the title is only a display label derived from it.
+    var query = t.prompt || t.title;
     if(isFromSearch){
-      speakText(t.title, t.caption);
+      speakText(query, t.caption);
     } else {
-      speakText(t.title, t.caption, function(){
+      speakText(query, t.caption, function(){
         if(myToken === playerSpeechToken && document.querySelector(".screen.active") && document.querySelector(".screen.active").id === "screen-player"){
           playerTapAdvance();
         }
@@ -1376,6 +1430,11 @@
 
   var isPlaying = true;
   function setPlayState(playing){
+    // Pressing play on a finished episode should replay it, not do nothing.
+    if(playing && FamAudio.isComplete() && FamAudio.position() >= FamAudio.duration() - 0.3){
+      FamAudio.seek(0);
+      startProgress(selectedLengthMinutes * 60);
+    }
     isPlaying = playing;
     document.getElementById("playIcon2").innerHTML = playing
       ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>'
@@ -1549,6 +1608,7 @@
         items.push({
           label: minutes + " min" + (minutes === selectedLengthMinutes ? "  ✓" : ""),
           action: function(){
+            var changed = (minutes !== selectedLengthMinutes);
             selectedLengthMinutes = minutes;
             var homeVal = document.getElementById("lengthVal");
             if(homeVal) homeVal.firstChild.textContent = minutes + " min";
@@ -1557,6 +1617,11 @@
               if(el) el.textContent = minutes + " min";
             });
             updateSpeedLenPillText();
+            // Length is a property of the script, not of playback, so a change
+            // made while listening means a different episode.
+            var onPlayer = document.querySelector(".screen.active")
+                        && document.querySelector(".screen.active").id === "screen-player";
+            if(changed && onPlayer){ regenerateAtNewLength(); }
           }
         });
       })(m);
@@ -1573,6 +1638,7 @@
           var el = document.getElementById("speedModalVal");
           if(el) el.textContent = opt;
           updateSpeedLenPillText();
+          applyPlaybackSpeed();   // takes effect on the audio already playing
         }
       };
     });
@@ -1615,7 +1681,9 @@
       title: deriveTitleFromPrompt(val),
       source: "Following up on " + baseTitle,
       caption: "Picking up where that left off — " + val + "—",
-      prompt: val,
+      // The follow-up alone is not a briefing request: "the economics of it"
+      // means nothing without the topic it follows. Carry the parent through.
+      prompt: (baseTitle && baseTitle !== "this") ? (val + " (following up on: " + baseTitle + ")") : val,
       titleOverridden: false
     };
     var overlayMap = { player: "player", dailyfam: "dailyfam", playall: "playall" };
@@ -2045,7 +2113,7 @@
     var t = TOPICS[key];
     document.getElementById("pa-title").textContent = t.title;
     document.getElementById("pa-src").textContent = "from " + t.source;
-    speakText(t.title, t.caption);
+    speakText(t.prompt || t.title, t.caption);
     document.getElementById("pa-index").textContent = "Topic " + (paIndex + 1) + " of " + b.topics.length;
     var totalSeconds = selectedLengthMinutes * 60;
     document.getElementById("pa-totaltime").textContent = formatTime(totalSeconds);
@@ -2362,7 +2430,7 @@
       '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
     dfSpeechToken++;
     var myToken = dfSpeechToken;
-    speakText(t.title, t.caption, function(){
+    speakText(t.prompt || t.title, t.caption, function(){
       if(myToken === dfSpeechToken && dfActive){ dfNext(); }
     });
   }

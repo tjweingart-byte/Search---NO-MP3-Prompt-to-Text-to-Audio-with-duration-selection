@@ -528,3 +528,48 @@ past `COLD_OPEN_MAX_SECONDS`, after which a gap is better than endless preamble.
 now guarantees continuity, but across a real network a stalled connection can
 still starve the player. A pre-roll of a few hundred milliseconds in
 `fam-audio.js` would absorb that, at a small cost to time-to-first-audio.
+
+
+---
+
+## 16. Transport controls: why skip needed a different player
+
+Requested: working pause, playback speed, skip forward/back 15 seconds, length
+changes from inside the player, and a working Go Deeper.
+
+**Skip was the one that forced a redesign.** The player scheduled each incoming
+chunk onto the audio clock and then forgot it, which is the cheapest way to play
+a live stream and makes seeking impossible: there is nothing behind you to go
+back to, and nothing to re-schedule differently.
+
+The player now keeps every sample it has received in a growing buffer and drives
+playback from a position cursor. Skip, scrub and speed all become the same
+operation - stop what is queued, move the cursor, re-schedule from there.
+Samples are kept as Int16 (~2.6 MB per minute) and converted to float only for
+the quarter-second slice being scheduled, which halves what a long episode
+holds.
+
+Position is derived from the audio clock rather than counted separately, so it
+stays correct across pauses for free: suspending an `AudioContext` stops its
+clock advancing.
+
+**Length is not a playback setting.** Speed changes what is already playing;
+length changes what the episode *is*. Changing it from the player therefore
+regenerates rather than adjusting anything locally.
+
+**Go Deeper was already carrying the typed prompt** - the pipeline was just
+ignoring it in favour of the display title. It also needed the parent topic
+attached: "focus on the economics" is not a briefing request on its own, so the
+query sent is now `<follow-up> (following up on: <parent topic>)`.
+
+**Forward skip has a real limit** and says so. The episode is still being
+written, so you cannot skip into audio that does not exist yet; skipping past
+the end of what has arrived reports "that is as far as the episode has been
+written" rather than silently doing nothing.
+
+Verified in Chromium against a live server: pause froze position at 7.27s and
+resume advanced it; back-15 from 8.71s clamped to 0s and forward-15 landed on
+14.98s with playback continuing; 2x advanced 4.02s of audio in 2s of wall clock
+and 1x advanced 2.01s; a length change from 2 min to 1 min regenerated and the
+timer showed 1:00; and Go Deeper sent
+`focus on the economics of early radio (following up on: the history of radio)`.

@@ -156,7 +156,15 @@ functions changed and nothing else:
 | `generate()` | Holds the "FAMiliarizing you…" overlay until real audio arrives, instead of a fixed 900 ms |
 
 The player's progress bar and timer, previously fixed at 44%, now track actual
-playback position. `selectedLengthMinutes` already existed and is passed
+playback position, and the transport controls are live:
+
+| Control | Behaviour |
+|---|---|
+| Play / pause | Suspends the audio clock, so position freezes exactly. Pressing play on a finished episode replays it |
+| Skip ±15s | Seeks within audio already received; forward is clamped to what has been written so far, and says so |
+| Speed pill | 1x–2x, applied to audio already playing without restarting it |
+| Length | Not a playback setting — changing it while listening regenerates the episode at the new length |
+| Go Deeper | Generates a new episode from what you type, carrying the parent topic as context | `selectedLengthMinutes` already existed and is passed
 straight through, so the 1–10 minute picker drives real episode length.
 
 ## Demo mode vs live mode
