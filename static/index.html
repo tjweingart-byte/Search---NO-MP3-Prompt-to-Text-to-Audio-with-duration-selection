@@ -1,44 +1,2430 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Search &rarr; Podcast</title>
-<link rel="stylesheet" href="/style.css">
+<meta charset="UTF-8">
+<title>FAM — Clickable Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#18151F; --paper:#F4EFE4;
+    --page-bg:#1E1B27; --bg:#2A2733; --surface:#38334A; --surface-2:#423C56;
+    --copper:#E0B563; --coral:#E2694F; --sage:#8FAE9A; --gold:#E0B563;
+    --text:#F4EFE4; --text-muted:#ABA3C4; --text-faint:#8A83A0;
+    --border:rgba(244,239,228,0.10); --border-strong:rgba(244,239,228,0.20);
+    --muted:rgba(244,239,228,0.56); --ink-muted:#ABA3C4;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0; min-height:100vh;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(224,181,99,0.10), transparent 60%),
+      radial-gradient(900px 500px at 90% 10%, rgba(143,174,154,0.08), transparent 55%),
+      var(--page-bg);
+    color:var(--paper); font-family:'Space Grotesk', sans-serif;
+    padding:48px 20px 70px; display:flex; flex-direction:column; align-items:center;
+  }
+  .top{ text-align:center; max-width:520px; margin-bottom:30px; }
+  .top .eyebrow{ font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.16em; text-transform:uppercase; color:var(--copper); margin-bottom:10px; }
+  .top h1{ font-family:'Fraunces', serif; font-weight:500; font-size:34px; margin:0 0 8px; color:var(--copper); display:flex; align-items:baseline; justify-content:center; gap:1px; }
+  .top h1 .logo-a{ color:var(--copper); }
+  .top p{ font-size:13.5px; color:var(--muted); line-height:1.5; margin:0; }
+  .restart{
+    margin-top:14px; display:inline-flex; align-items:center; gap:6px;
+    background:var(--surface); border:1px solid var(--border-strong); color:var(--paper);
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; padding:7px 13px; border-radius:20px; cursor:pointer;
+  }
+  .restart:hover{ border-color:var(--copper); color:var(--copper); }
+
+  .phone{
+    width:340px; height:716px; background:#0A0912; border-radius:48px; padding:14px;
+    box-shadow:0 40px 90px -30px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05) inset;
+    position:relative;
+  }
+  .phone::before{
+    content:""; position:absolute; top:14px; left:50%; transform:translateX(-50%);
+    width:126px; height:26px; background:#0A0912; border-radius:0 0 16px 16px; z-index:20;
+  }
+  .frame{
+    width:100%; height:100%; background:var(--bg); border-radius:34px; overflow:hidden;
+    position:relative; color:var(--text); display:flex; flex-direction:column;
+  }
+  .statusbar{
+    flex:none; height:38px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 26px; font-size:11.5px; font-weight:600; color:var(--text);
+  }
+  .splash{
+    position:absolute; top:38px; left:0; right:0; bottom:0; z-index:500;
+    background:var(--bg); display:flex; align-items:center; justify-content:center;
+    transition:opacity .35s ease;
+  }
+  .splash.hide{ opacity:0; pointer-events:none; }
+
+  .screen{ display:none; flex-direction:column; flex:1; min-height:0; }
+  .screen.active{ display:flex; }
+  .scroll{ flex:1; min-height:0; overflow-y:auto; padding:2px 18px 18px; }
+  .home-hero{ display:flex; flex-direction:column; }
+  .scroll::-webkit-scrollbar{ width:0; }
+
+  /* -------- shared header patterns -------- */
+  .home-header{ display:flex; align-items:center; justify-content:space-between; padding:4px 0 2px; }
+  .brandrow{ display:flex; align-items:center; gap:6px; }
+  .brandrow .hand{ font-size:14px; }
+  .brandrow .badge{ font-family:'JetBrains Mono', monospace; font-size:9.5px; font-weight:700; letter-spacing:0.1em; background:var(--copper); color:var(--ink); padding:4px 8px; border-radius:6px; }
+  .avatar-mini{ width:28px; height:28px; border-radius:50%; background:var(--copper); color:var(--ink); display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; cursor:pointer; }
+  .fam-logo{ display:flex; align-items:center; justify-content:center; gap:1px; padding:0 0 22px; }
+  .fam-logo .fl-f, .fam-logo .fl-m{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:30px; color:var(--text); letter-spacing:-0.01em; }
+  .fam-logo svg{ margin:0 -1px; position:relative; top:1px; }
+  .icon-btn{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border-strong); display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; background:none; }
+  .icon-btn:active{ background:rgba(244,239,228,0.06); }
+
+  .back-row{ flex:none; display:flex; align-items:center; gap:10px; padding:16px 18px 10px; }
+  .back-row .back{ display:flex; align-items:center; opacity:0.85; cursor:pointer; padding:4px 8px 4px 0; color:var(--text); }
+  .back-row .back:active{ opacity:1; }
+  .back-row h2{ font-family:'Fraunces', serif; font-weight:500; font-size:19px; margin:0; flex:1; }
+  .head-dots{ display:flex; gap:3px; padding:8px; border-radius:10px; cursor:pointer; }
+  .head-dots span{ width:3.5px; height:3.5px; border-radius:50%; background:var(--text-muted); }
+
+  /* -------- Home -------- */
+  .greeting{ font-family:'Fraunces', serif; font-weight:500; font-size:20px; margin:8px 0 2px; }
+  .greeting-sub{ font-size:11px; color:var(--text-muted); margin-bottom:14px; }
+  .fam-input-box{ background:var(--surface); border-radius:16px; padding:14px 16px; border:1px solid var(--border); min-height:96px; display:flex; }
+  .fam-input-box textarea{
+    flex:1; border:none; outline:none; background:transparent; resize:none;
+    font-family:'Space Grotesk',sans-serif; font-size:13px; color:var(--text); line-height:1.5;
+    padding:0; margin:0;
+  }
+  .fam-input-box textarea::placeholder{ color:var(--text-muted); opacity:0.8; }
+  .go-btn{ width:36px; height:36px; border-radius:50%; background:var(--copper); color:var(--ink); border:none; display:flex; align-items:center; justify-content:center; flex:none; cursor:pointer; }
+  .go-btn:active{ transform:scale(0.94); }
+  .fam-controls{ display:flex; align-items:center; justify-content:space-between; margin:9px 2px 0; }
+  .length-chip{ display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono', monospace; font-size:10px; color:var(--text-muted); }
+  .length-chip .val{ display:inline-flex; align-items:center; gap:4px; background:var(--surface-2); border-radius:7px; padding:3px 7px 3px 9px; color:var(--text); font-weight:600; cursor:pointer; }
+
+  .section{ margin-top:20px; }
+  .section-kicker{ display:flex; align-items:center; justify-content:space-between; font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-muted); margin-bottom:9px; }
+  .section-kicker .see-all{ color:var(--copper); text-transform:none; letter-spacing:0; font-weight:700; cursor:pointer; }
+
+  .h-scroll{ display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
+  .h-scroll::-webkit-scrollbar{ display:none; }
+
+  .continue-card{ display:flex; align-items:center; gap:11px; background:var(--surface); border-radius:15px; padding:11px 12px; border:1px solid var(--border); cursor:pointer; }
+  .continue-card:active{ background:var(--surface-2); }
+  .continue-card .cplay{ width:38px; height:38px; border-radius:50%; background:var(--ink); flex:none; display:flex; align-items:center; justify-content:center; }
+  .continue-card .ctxt{ flex:1; min-width:0; }
+  .continue-card .ctitle{ font-size:12px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .continue-card .cbar{ height:3px; background:rgba(244,239,228,0.12); border-radius:3px; margin-top:6px; position:relative; }
+  .continue-card .cbar .fill{ position:absolute; left:0; top:0; bottom:0; width:62%; background:var(--copper); border-radius:3px; }
+  .continue-card .cleft{ font-family:'JetBrains Mono', monospace; font-size:8.5px; color:var(--text-faint); margin-top:4px; }
+
+  .branch-tile{ flex:none; width:78px; height:78px; border-radius:16px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; cursor:pointer; }
+  .branch-tile:active{ transform:scale(0.96); }
+  .branch-tile .tname{ font-size:9.5px; font-weight:700; color:var(--text); text-align:center; padding:0 4px; }
+  .branch-tile.daily{ background:linear-gradient(160deg,#2E3B4A,#37475A); }
+  .branch-tile.daily svg{ stroke:#8FB4D9; }
+  .branch-tile.morning{ background:linear-gradient(160deg,#4A3527,#5C4530); }
+  .branch-tile.morning svg{ stroke:#E0A563; }
+  .branch-tile.culture{ background:linear-gradient(160deg,#3B2E4A,#4A3960); }
+  .branch-tile.culture svg{ stroke:#C3A8E0; }
+  .branch-tile.aiupd{ background:linear-gradient(160deg,#1F3B45,#274954); }
+  .branch-tile.aiupd svg{ stroke:#7FC4D4; }
+  .branch-tile.add{ background:transparent; border:1.4px dashed var(--border-strong); }
+  .branch-tile.add .plus{ font-size:17px; color:var(--text-faint); }
+  .mini-wave{ display:flex; align-items:flex-end; gap:2px; height:16px; }
+  .mini-wave span{ width:2.4px; background:currentColor; border-radius:2px; display:block; }
+
+  .trend-pill,.reco-pill{ flex:none; width:150px; border-radius:13px; padding:10px 11px; cursor:pointer; }
+  .trend-pill{ background:var(--surface); border:1px solid var(--border); }
+  .trend-pill:active,.reco-pill:active{ transform:scale(0.97); }
+  .reco-pill{ background:rgba(224,181,99,0.10); border:1px solid rgba(224,181,99,0.3); }
+  .pill-top{ display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .pill-tag{ font-family:'JetBrains Mono', monospace; font-size:7.5px; letter-spacing:0.06em; text-transform:uppercase; padding:2px 6px; border-radius:8px; font-weight:700; }
+  .pill-tag.sports{ background:rgba(143,174,154,0.16); color:#B9D8C7; }
+  .pill-tag.markets{ background:rgba(224,181,99,0.16); color:#EAD1A0; }
+  .pill-tag.fantasy{ background:rgba(226,105,79,0.16); color:#F0B4A0; }
+  .pill-tag.culture{ background:rgba(171,163,196,0.18); color:#D3CDE8; }
+  .pill-tag.weather{ background:rgba(143,174,154,0.16); color:#B9D8C7; }
+  .pill-tag.foryou{ background:var(--copper); color:var(--ink); }
+  .pill-icon{ color:var(--copper); flex:none; }
+  .pill-title{ font-size:11px; font-weight:700; line-height:1.3; color:var(--text); }
+  .pill-sub{ font-size:8.5px; color:#C9A876; margin-top:4px; line-height:1.3; }
+
+  /* -------- myFAM home (renamed Branches) -------- */
+  .myfam-header{ padding:6px 20px 4px; display:flex; align-items:center; justify-content:space-between; }
+  .myfam-add-btn{
+    width:34px; height:34px; border-radius:50%; background:var(--copper); color:var(--ink);
+    border:none; font-size:20px; font-weight:600; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; line-height:1; padding:0 0 2px;
+  }
+  .myfam-add-btn:active{ transform:scale(0.94); }
+  .myfam-menu-btn{
+    width:34px; height:34px; border-radius:50%; background:none; color:var(--text);
+    border:1px solid var(--border-strong); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; flex:none;
+  }
+  .myfam-menu-btn:active{ background:var(--surface); }
+  .myfam-header h2{ font-family:'Fraunces', serif; font-weight:500; font-size:28px; margin:0; }
+  .search-bar{ margin:12px 18px 0; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:11px 14px; display:flex; align-items:center; gap:9px; color:var(--text-muted); font-size:13px; }
+  .myfam-searchrow{ display:flex; align-items:center; gap:8px; padding:8px 18px 0; }
+  .search-bar-lg{ flex:1; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:12px 14px; display:flex; align-items:center; gap:9px; color:var(--text-muted); font-size:13px; cursor:pointer; }
+  .playfam-btn{
+    flex:none; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    background:var(--copper); color:var(--ink); border:none; border-radius:14px; width:58px; height:48px;
+    cursor:pointer;
+  }
+  .playfam-btn span{ font-family:'JetBrains Mono', monospace; font-size:7.5px; font-weight:700; letter-spacing:0.02em; }
+  .playfam-btn:active{ transform:scale(0.95); }
+
+  .myfam-dots-btn{ background:none; border:none; color:var(--text-muted); font-size:15px; letter-spacing:1px; cursor:pointer; padding:6px; line-height:1; }
+
+  .seeds-grid{ display:grid; grid-template-columns:1fr 1fr; gap:11px; }
+  .seed-card{ background:var(--surface); border:1px solid var(--border); border-radius:13px; overflow:hidden; cursor:pointer; }
+  .seed-card:active{ transform:scale(0.98); }
+  .seed-thumb{ width:100%; aspect-ratio:4/3; background:#EDE6D6; position:relative; overflow:hidden; }
+  .seed-thumb svg{ position:absolute; inset:0; width:100%; height:100%; }
+  .seed-card-body{ padding:10px 11px 12px; }
+  .seed-card-title{ font-family:'Fraunces', serif; font-weight:600; font-size:12.5px; line-height:1.28; color:var(--text); margin-bottom:5px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .seed-card-sub{ font-size:9.5px; line-height:1.4; color:var(--text-muted); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .seeds-refresh{ display:flex; align-items:center; justify-content:center; gap:7px; padding:16px 0 6px; color:var(--copper); font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; cursor:pointer; }
+  .seeds-refresh:active{ opacity:0.7; }
+
+  .grid4{ padding:14px 18px 0; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .tile-big{ aspect-ratio:1/1; border-radius:18px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid var(--border); cursor:pointer; }
+  .tile-big:active{ transform:scale(0.97); }
+  .tile-big .tname{ font-size:12.5px; font-weight:600; color:var(--text); }
+  .waveform{ display:flex; align-items:flex-end; gap:2.5px; height:22px; }
+  .waveform span{ width:3px; background:currentColor; border-radius:2px; display:block; }
+
+  .connect-section{ margin:20px 18px 0; }
+  .connect-sub{ font-size:10.5px; color:var(--text-muted); line-height:1.5; margin-bottom:10px; }
+  .connect-row{
+    display:flex; align-items:center; justify-content:space-between; background:var(--surface);
+    border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:8px;
+  }
+  .connect-row .cr-name{ font-size:12.5px; font-weight:600; color:var(--text); }
+  .cr-toggle{
+    width:40px; height:23px; border-radius:20px; background:var(--surface-2); border:1px solid var(--border-strong);
+    position:relative; cursor:pointer; flex:none; transition:background .2s;
+  }
+  .cr-toggle .knob{
+    position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%;
+    background:var(--text-muted); transition:all .2s;
+  }
+  .cr-toggle.on{ background:var(--copper); border-color:var(--copper); }
+  .cr-toggle.on .knob{ left:19px; background:var(--ink); }
+
+  .recommended{ margin:16px 18px 0; background:var(--surface-2); border-radius:16px; padding:14px; border:1px solid var(--border); transition:opacity .3s; }
+  .recommended .rk{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px; }
+  .recommended .rrow{ display:flex; align-items:center; justify-content:space-between; }
+  .recommended .rtitle{ font-weight:600; font-size:14px; color:var(--text); }
+  .recommended .rsub{ font-size:10.5px; color:var(--text-muted); margin-top:2px; line-height:1.4; }
+  .rbtns{ display:flex; gap:6px; }
+  .rbtns button{ width:26px; height:26px; border-radius:50%; border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .rbtns .yes{ background:var(--sage); color:var(--ink); }
+  .rbtns .no{ background:rgba(244,239,228,0.1); color:var(--text-muted); }
+
+  /* -------- detail (topic list) -------- */
+  .topic-row{ display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:10px; margin-bottom:8px; cursor:pointer; }
+  .topic-row:active{ transform:scale(0.98); }
+  .topic-row.active{ background:linear-gradient(90deg,rgba(224,181,99,0.18),rgba(224,181,99,0.08)); border:1px solid rgba(224,181,99,0.4); }
+  .play{ width:26px; height:26px; border-radius:50%; background:var(--ink); flex:none; display:flex; align-items:center; justify-content:center; }
+  .topic-row.active .play{ background:var(--copper); }
+  .t-body{ flex:1; min-width:0; color:var(--text); }
+  .t-body .tt{ font-size:12.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .t-body .ts{ font-size:9.5px; color:var(--text-muted); margin-top:1px; font-family:'JetBrains Mono', monospace; }
+  .t-body .tsrc{ font-size:9px; color:#C9A876; margin-top:1px; font-family:'JetBrains Mono', monospace; }
+  .menu-dots{ display:flex; flex-direction:column; gap:2.5px; padding:6px; flex:none; cursor:pointer; }
+  .menu-dots span{ width:3.2px; height:3.2px; border-radius:50%; background:var(--text-faint); }
+
+  .playall-btn{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    background:var(--surface-2); border:1px solid var(--border-strong); color:var(--text);
+    border-radius:14px; padding:13px; font-size:12.5px; font-weight:700; margin-bottom:10px; cursor:pointer;
+  }
+  .playall-btn svg{ color:var(--copper); flex:none; }
+  .add-topic-bar{ background:var(--copper); color:var(--ink); border:none; border-radius:14px; padding:13px; text-align:center; font-size:12.5px; font-weight:700; margin-bottom:6px; cursor:pointer; }
+  .np-save-btn{ width:100%; background:var(--copper); color:var(--ink); border:none; border-radius:14px; padding:15px; text-align:center; font-size:13.5px; font-weight:700; cursor:pointer; }
+  .np-save-btn:active{ transform:scale(0.98); }
+
+  /* -------- generate config modal -------- */
+  .gc-field{ margin-bottom:14px; }
+  .gc-label{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px; }
+  .gc-val{
+    display:flex; align-items:center; justify-content:space-between; background:var(--bg);
+    border:1px solid var(--border-strong); border-radius:10px; padding:10px 12px; color:var(--text);
+    font-size:13px; font-weight:600; cursor:pointer;
+  }
+
+  .share-toggle{ display:flex; background:var(--bg); border-radius:20px; padding:3px; margin-bottom:16px; }
+  .st-btn{ flex:1; background:none; border:none; border-radius:17px; padding:8px 0; font-family:'Space Grotesk',sans-serif; font-size:12px; font-weight:700; color:var(--text-muted); cursor:pointer; }
+  .st-btn.active{ background:var(--copper); color:var(--ink); }
+
+  .share-contacts{ display:flex; gap:12px; overflow-x:auto; padding-bottom:2px; }
+  .share-contact{ flex:none; display:flex; flex-direction:column; align-items:center; gap:5px; cursor:pointer; width:56px; }
+  .share-contact:active{ transform:scale(0.95); }
+  .share-contact .av{ width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--ink); font-weight:700; font-size:12px; }
+  .share-contact .nm{ font-size:9px; color:var(--text-muted); text-align:center; line-height:1.25; }
+
+  /* -------- Messages inbox + thread -------- */
+  .thread-row{ display:flex; align-items:center; gap:12px; padding:12px 4px; border-bottom:1px solid var(--border); cursor:pointer; }
+  .thread-row:active{ background:var(--surface); }
+  .thread-row .av{ width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--ink); font-weight:700; font-size:14px; flex:none; }
+  .thread-row .tr-body{ flex:1; min-width:0; }
+  .thread-row .tr-name{ font-size:13.5px; font-weight:700; color:var(--text); }
+  .thread-row .tr-preview{ font-size:11.5px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; max-width:220px; }
+  .thread-row .tr-time{ font-family:'JetBrains Mono', monospace; font-size:9px; color:var(--text-faint); flex:none; }
+
+  .back-row .thread-who{ display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
+  .back-row .thread-who .av{ width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--ink); font-weight:700; font-size:11px; flex:none; }
+  .back-row .thread-who h2{ font-size:16px; margin:0; }
+
+  .msg-row{ display:flex; margin-bottom:10px; }
+  .msg-row.out{ justify-content:flex-end; }
+  .msg-bubble{ max-width:75%; padding:9px 13px; border-radius:14px; font-size:12.5px; line-height:1.4; }
+  .msg-row.in .msg-bubble{ background:var(--surface); color:var(--text); border-bottom-left-radius:4px; }
+  .msg-row.out .msg-bubble{ background:var(--copper); color:var(--ink); font-weight:600; border-bottom-right-radius:4px; }
+  .msg-fam-card{ max-width:78%; background:var(--surface-2); border:1px solid var(--border-strong); border-radius:14px; padding:10px 12px; display:flex; align-items:center; gap:10px; cursor:pointer; }
+  .msg-row.out .msg-fam-card{ background:rgba(224,181,99,0.14); border-color:rgba(224,181,99,0.35); }
+  .msg-fam-card .mf-play{ width:28px; height:28px; border-radius:50%; background:var(--ink); flex:none; display:flex; align-items:center; justify-content:center; }
+  .msg-fam-card .mf-body{ min-width:0; }
+  .msg-fam-card .mf-title{ font-size:11.5px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .msg-fam-card .mf-src{ font-family:'JetBrains Mono', monospace; font-size:8.5px; color:var(--copper); margin-top:1px; }
+
+  /* -------- Play All segmented player -------- */
+  .df-top{ flex:none; display:flex; align-items:center; justify-content:space-between; padding:12px 18px 0; }
+  .df-date{ font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-muted); }
+  .df-stage{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:0 30px; cursor:pointer; position:relative; -webkit-user-select:none; user-select:none; }
+  .df-art{ width:170px; height:170px; margin-bottom:22px; box-shadow:0 24px 55px -16px rgba(0,0,0,0.6); pointer-events:none; }
+  .df-art .playbtn{ width:58px; height:58px; }
+  .df-title{ font-family:'Fraunces', serif; font-weight:500; font-size:21px; color:var(--text); text-align:center; margin-bottom:6px; pointer-events:none; }
+  .df-src{ font-family:'JetBrains Mono', monospace; font-size:9.5px; color:var(--copper); letter-spacing:0.08em; text-transform:uppercase; margin-bottom:34px; pointer-events:none; }
+  .df-daypicker{
+    flex:none; display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:8px 18px 14px; cursor:pointer; color:var(--text-muted);
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; letter-spacing:0.04em;
+  }
+  .df-daypicker svg{ color:var(--copper); }
+  .df-daypicker:active{ opacity:0.7; }
+
+  .segbar{ display:flex; gap:4px; padding:14px 18px 0; flex:none; }
+  .segbar .seg{ flex:1; height:3px; border-radius:3px; background:rgba(244,239,228,0.14); overflow:hidden; }
+  .segbar .seg .fill{ height:100%; width:0%; background:var(--copper); border-radius:3px; }
+  .segbar .seg.done .fill{ width:100%; }
+  .segbar .seg.current .fill{ width:100%; }
+  .pa-controls{ flex:none; display:flex; align-items:center; justify-content:center; gap:26px; padding:14px 20px 18px; }
+  .pa-side{ display:flex; flex-direction:column; align-items:center; gap:5px; cursor:pointer; }
+  .pa-side .cc{ width:46px; height:46px; border-radius:50%; background:var(--surface); border:1px solid var(--border-strong); color:var(--text); display:flex; align-items:center; justify-content:center; }
+  .pa-side .lbl{ font-family:'JetBrains Mono', monospace; font-size:8px; color:var(--text-muted); text-align:center; max-width:64px; line-height:1.3; }
+  .pa-topic-index{ font-family:'JetBrains Mono', monospace; font-size:9px; color:var(--text-muted); text-align:center; margin-top:4px; }
+  .reco-branch{ margin-top:16px; }
+  .reco-branch .label{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-muted); padding:0 4px 8px; }
+  .reco-row{ display:flex; align-items:center; gap:10px; background:transparent; border:1.4px dashed var(--border-strong); border-radius:12px; padding:9px 10px; margin-bottom:8px; cursor:pointer; }
+  .reco-row .play{ background:transparent; border:1.4px solid var(--border-strong); }
+  .reco-row .t-body{ color:var(--text); }
+  .add-plus{ width:22px; height:22px; border-radius:50%; border:1.4px solid var(--copper); color:var(--copper); display:flex; align-items:center; justify-content:center; flex:none; font-size:14px; }
+
+  /* -------- player -------- */
+  .player-top{ flex:none; display:flex; align-items:center; justify-content:space-between; padding:14px 18px 0; }
+  .go-deeper-pill{
+    display:block; margin:10px auto 0; padding:8px 22px; border-radius:999px;
+    background:var(--surface); border:1px solid var(--border-strong); color:var(--text);
+    font-family:'Space Grotesk',sans-serif; font-size:11.5px; font-weight:700; cursor:pointer; flex:none;
+  }
+  .go-deeper-pill:active{ transform:scale(0.96); }
+  .pt-icons{ display:flex; align-items:center; gap:10px; }
+  .pt-icon{ width:32px; height:32px; border-radius:50%; background:var(--surface); border:1px solid var(--border-strong); display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; flex:none; flex-shrink:0; }
+  .pt-icon.on{ background:var(--copper); color:var(--ink); border-color:var(--copper); }
+  .mini-stage{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:0 30px; text-align:center; }
+  .mini-title{ font-family:'Fraunces', serif; font-weight:500; font-size:22px; color:var(--text); margin-bottom:8px; }
+  .mini-src{ font-family:'JetBrains Mono', monospace; font-size:10px; color:var(--copper); letter-spacing:0.08em; text-transform:uppercase; }
+  .player-controls-2row{ flex:none; display:flex; flex-direction:column; align-items:center; gap:12px; padding:14px 18px 20px; }
+  .pc-row1{ display:flex; align-items:center; gap:16px; }
+  .pc-row2{ display:flex; align-items:center; gap:10px; }
+  .mini-ctrl-btn{ width:34px; height:34px; border-radius:50%; background:var(--surface); border:1px solid var(--border-strong); display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
+  .mini-ctrl-btn:active{ transform:scale(0.94); }
+  .mini-play-btn{ width:44px; height:44px; border-radius:50%; background:var(--copper); display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
+  .mini-play-btn:active{ transform:scale(0.94); }
+  .speed-len-pill{ background:var(--surface); border:1px solid var(--border-strong); border-radius:14px; padding:8px 10px; font-family:'JetBrains Mono', monospace; font-size:9.5px; font-weight:700; color:var(--text); cursor:pointer; white-space:nowrap; flex:none; }
+
+  .mini-controls{ flex:none; display:flex; align-items:center; justify-content:center; gap:14px; padding:16px 20px 22px; }
+  .df-controls-grid{ display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:14px; padding:16px 18px 22px; }
+  .df-controls-side{ display:flex; align-items:center; gap:14px; min-width:0; }
+  .mc-toggle{ width:46px; height:46px; border-radius:50%; background:var(--copper); display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
+  .mc-toggle:active{ transform:scale(0.95); }
+  .mc-extra{ display:none; align-items:center; gap:14px; }
+  .mc-extra.show{ display:flex; }
+  .player-top .kicker{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--copper); }
+  .player-top .x{ font-size:18px; color:var(--text); opacity:0.6; cursor:pointer; }
+  .player-body{ flex:none; display:flex; padding:10px 18px 0; }
+  .player-main{ flex:1; display:flex; flex-direction:column; align-items:center; }
+  .art{ width:126px; height:126px; border-radius:50%; background:radial-gradient(circle at 35% 30%, #C9A876, #8A6E3F 70%); display:flex; align-items:center; justify-content:center; margin-bottom:12px; box-shadow:0 12px 30px -12px rgba(0,0,0,0.5); cursor:pointer; }
+  .art .playbtn{ width:50px; height:50px; border-radius:50%; background:var(--ink); display:flex; align-items:center; justify-content:center; }
+  .p-meta{ text-align:center; padding:0 6px; }
+  .p-meta .ttl{ font-family:'Fraunces', serif; font-weight:500; font-size:16px; margin:0; line-height:1.25; color:var(--text); }
+  .p-meta .src{ font-family:'JetBrains Mono', monospace; font-size:9px; color:#C9A876; margin-top:5px; }
+
+  .sidebar{ width:50px; flex:none; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:0 6px; border-left:1px dashed var(--border); }
+  .sb-icon{ display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer; }
+  .sb-icon .circ{ width:30px; height:30px; border-radius:50%; background:var(--surface); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; transition:all .15s; }
+  .sb-icon.on .circ{ background:var(--copper); border-color:var(--copper); }
+  .sb-icon .lbl{ font-family:'JetBrains Mono', monospace; font-size:7.2px; color:var(--text-muted); text-align:center; line-height:1.2; }
+
+  .captions-panel{ margin:12px 18px 0; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:12px 14px; min-height:60px; flex:none; }
+  .cc-toprow{ display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .captions-panel .cc-label{ font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-muted); }
+  .cc-copybtn{ width:20px; height:20px; border-radius:6px; border:1px solid var(--border-strong); color:var(--text-muted); display:flex; align-items:center; justify-content:center; flex:none; cursor:pointer; }
+  .captions-panel.off .cc-text{ font-size:12px; color:var(--text-faint); font-style:italic; line-height:1.5; }
+  .captions-panel.on{ background:var(--ink); border-color:var(--ink); }
+  .captions-panel.on .cc-label{ color:var(--copper); }
+  .captions-panel.on .cc-copybtn{ border-color:rgba(244,239,228,0.22); color:var(--paper); opacity:0.85; }
+  .captions-panel.on .cc-text{ font-size:12px; color:var(--paper); line-height:1.55; }
+  .captions-panel.on .cc-text mark{ background:var(--copper); color:var(--ink); border-radius:3px; padding:0 3px; }
+
+  .progress-wrap{ flex:none; padding:12px 20px 4px; }
+  .progress-bar{ height:4px; border-radius:4px; background:rgba(244,239,228,0.12); position:relative; margin-bottom:6px; }
+  .progress-bar .fill{ position:absolute; left:0; top:0; bottom:0; width:44%; background:var(--copper); border-radius:4px; }
+  .progress-bar .knob{ position:absolute; left:44%; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; border-radius:50%; background:var(--copper); box-shadow:0 0 0 3px rgba(224,181,99,0.25); }
+  .time-row{ display:flex; justify-content:space-between; font-family:'JetBrains Mono', monospace; font-size:9.5px; color:var(--text-muted); }
+  .controls-row{ flex:none; display:flex; align-items:center; justify-content:center; gap:22px; padding:10px 20px 18px; }
+  .ctrl-btn{ display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; }
+  .ctrl-btn .cc{ width:44px; height:44px; border-radius:50%; background:var(--ink); color:var(--paper); display:flex; align-items:center; justify-content:center; }
+  .ctrl-btn.mid .cc{ width:52px; height:52px; background:var(--copper); color:var(--ink); }
+  .ctrl-btn .lbl{ font-family:'JetBrains Mono', monospace; font-size:8.5px; color:var(--text-muted); }
+  .speed-pill{ font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:600; background:var(--surface-2); border-radius:20px; padding:5px 10px; color:var(--text); cursor:pointer; }
+
+  /* -------- tabbar -------- */
+  .tabbar{ flex:none; display:flex; align-items:center; justify-content:space-around; padding:10px 10px 14px; border-top:1px solid var(--border); background:var(--bg); }
+  .tabbar .tab{ display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; }
+  .tabbar .tab .lbl{ font-family:'JetBrains Mono', monospace; font-size:8.5px; color:var(--text-muted); }
+  .tabbar .tab.active .lbl{ color:var(--copper); font-weight:700; }
+  .tabbar .tab .dot{ width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; }
+  .tabbar .tab.active .dot{ background:var(--copper); }
+  .tabbar .tab .dot svg{ stroke:var(--text-muted); }
+  .tabbar .tab.active .dot svg{ stroke:var(--ink); }
+
+  .next-hint{
+    flex:none; display:none; align-items:center; justify-content:center; gap:6px;
+    padding:2px 18px 6px; font-family:'JetBrains Mono', monospace; font-size:9px;
+    letter-spacing:0.04em; color:var(--copper); text-align:center;
+  }
+  .next-hint.show{ display:flex; }
+  .next-hint svg{ animation:bob 1.4s infinite ease-in-out; }
+  @keyframes bob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-3px); } }
+
+  /* -------- generating overlay -------- */
+  .generating{
+    position:absolute; inset:0; background:var(--bg); z-index:30;
+    display:none; align-items:center; justify-content:center; flex-direction:column; gap:14px;
+    border-radius:34px;
+  }
+  .generating.active{ display:flex; }
+  .gen-dots{ display:flex; gap:7px; }
+  .gen-dots span{ width:9px; height:9px; border-radius:50%; background:var(--copper); animation:pulse 1s infinite ease-in-out; }
+  .gen-dots span:nth-child(2){ animation-delay:.15s; }
+  .gen-dots span:nth-child(3){ animation-delay:.3s; }
+  @keyframes pulse{ 0%,80%,100%{ transform:scale(0.6); opacity:.5; } 40%{ transform:scale(1); opacity:1; } }
+  .gen-text{ font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--text-muted); }
+
+  /* -------- toast -------- */
+  .toast{
+    position:fixed; bottom:26px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:var(--surface); color:var(--paper); font-family:'JetBrains Mono', monospace; font-size:11.5px;
+    padding:11px 18px; border-radius:24px; opacity:0; pointer-events:none; transition:all .25s ease;
+    box-shadow:0 20px 40px -14px rgba(0,0,0,0.6); z-index:999; white-space:nowrap;
+    border:1px solid var(--border-strong);
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  .chat-input-row{ flex:none; display:flex; gap:8px; padding:10px 16px 18px; border-top:1px solid var(--border); }
+  .chat-input-row input{
+    flex:1; background:var(--surface); border:1px solid var(--border-strong); border-radius:20px;
+    padding:10px 14px; color:var(--text); font-family:'Space Grotesk',sans-serif; font-size:12.5px; outline:none;
+  }
+  .chat-input-row input::placeholder{ color:var(--text-faint); }
+  .chat-input-row button{
+    width:38px; height:38px; border-radius:50%; background:var(--copper); color:var(--ink); border:none;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none;
+  }
+  .chat-input-row button:active{ transform:scale(0.94); }
+
+  /* -------- modal + action sheet -------- */
+  .modal-overlay, .sheet-overlay{
+    position:absolute; inset:0; background:rgba(10,9,15,0.62); z-index:50;
+    display:none; align-items:center; justify-content:center; border-radius:34px;
+  }
+  .modal-overlay.active, .sheet-overlay.active{ display:flex; }
+  .modal-card{
+    background:var(--surface); border-radius:18px; padding:20px; width:80%;
+    border:1px solid var(--border-strong); box-shadow:0 30px 60px -20px rgba(0,0,0,0.6);
+  }
+  .modal-title{ font-family:'Fraunces', serif; font-weight:500; font-size:16px; color:var(--text); margin-bottom:12px; }
+  .modal-input{
+    width:100%; background:var(--bg); border:1px solid var(--border-strong); border-radius:10px;
+    padding:11px 12px; color:var(--text); font-family:'Space Grotesk',sans-serif; font-size:13px;
+    outline:none; margin-bottom:16px;
+  }
+  .modal-input::placeholder{ color:var(--text-faint); }
+  .modal-btns{ display:flex; gap:8px; justify-content:flex-end; }
+  .modal-btn{ border:none; border-radius:20px; padding:9px 16px; font-family:'Space Grotesk',sans-serif; font-size:12px; font-weight:700; cursor:pointer; }
+  .modal-btn.ghost{ background:transparent; color:var(--text-muted); }
+  .modal-btn.primary{ background:var(--copper); color:var(--ink); }
+
+  .sheet-overlay{ align-items:flex-end; z-index:55; }
+  .sheet-card{
+    background:var(--surface); border-radius:20px 20px 0 0; padding:10px 0 22px; width:100%;
+    border-top:1px solid var(--border-strong);
+  }
+  .sheet-item{ padding:14px 22px; font-size:13.5px; font-weight:600; color:var(--text); cursor:pointer; }
+  .sheet-item.danger{ color:var(--coral); }
+  .sheet-item:active{ background:var(--surface-2); }
+  .sheet-cancel{
+    margin:8px 16px 0; padding:12px; text-align:center; border-radius:14px; background:var(--bg);
+    color:var(--text-muted); font-weight:700; font-size:13px; cursor:pointer;
+  }
+
+  .footnote{ max-width:340px; margin-top:22px; text-align:center; font-family:'JetBrains Mono', monospace; font-size:10px; color:var(--muted); line-height:1.6; }
+</style>
 </head>
 <body>
-<main>
-  <h1>Ask anything. Hear the answer.</h1>
-  <p class="sub">A spoken briefing, written on demand and read aloud as it is written.</p>
 
-  <form id="form" autocomplete="off">
-    <input id="query" name="query" type="text" maxlength="500"
-           placeholder="What would you like a briefing on?" required>
+  <div class="top">
+    <div class="eyebrow">Clickable prototype</div>
+    <p>Everything below is live — tap the search arrow, a topic, a branch tile, or the tab bar. Episodes are written and spoken in real time; audio starts before the script is finished.</p>
+    <p id="audioMode" style="font-family:'JetBrains Mono',monospace;font-size:10.5px;margin-top:8px;"></p>
+    <button class="restart" onclick="showSplash(); openMyFamTab();">↺ Restart demo</button>
+  </div>
 
-    <div class="length">
-      <label for="minutes">Length</label>
-      <input id="minutes" type="range" min="1" max="10" step="1" value="3">
-      <output id="minutesOut">3 minutes</output>
+  <div class="phone">
+    <div class="frame">
+      <div class="statusbar"><span>9:41</span><span>●●●</span></div>
+
+      <div class="splash" id="splashScreen">
+        <div class="fam-logo" style="padding:0;">
+          <span class="fl-f">F</span>
+          <svg width="21" height="26" viewBox="0 0 60 74" fill="none" stroke="var(--copper)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 32 L30 8 L46 32 M14 66 L30 42 L46 66"/></svg>
+          <span class="fl-m">M</span>
+        </div>
+      </div>
+
+      <!-- ============ HOME ============ -->
+      <section class="screen" id="screen-home">
+        <div class="scroll" style="display:flex; flex-direction:column;">
+          <div style="flex:0 0 25%;"></div>
+          <div class="fam-logo">
+            <span class="fl-f">F</span>
+            <svg width="21" height="26" viewBox="0 0 60 74" fill="none" stroke="var(--copper)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 32 L30 8 L46 32 M14 66 L30 42 L46 66"/></svg>
+            <span class="fl-m">M</span>
+          </div>
+          <div class="home-hero">
+          <div class="fam-input-box">
+            <textarea id="searchInput" placeholder="FAMiliarize me about…" onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); runSearch(); }"></textarea>
+          </div>
+          <div class="fam-controls">
+            <div class="length-chip">Length <span class="val" id="lengthVal" onclick="openLengthMenu()">3 min<svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg></span></div>
+            <button class="go-btn" onclick="runSearch()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+          </div>
+          </div>
+        </div>
+
+        <div class="tabbar">
+          <div class="tab active" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
+          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
+          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+        </div>
+        <div class="generating" id="gen-home"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
+      </section>
+
+      <!-- ============ MYFAM HOME (renamed Branches) ============ -->
+      <section class="screen active" id="screen-myfam">
+        <div class="scroll">
+          <div class="myfam-header">
+            <h2>myFAM</h2>
+            <button class="myfam-dots-btn" onclick="toast('More options (concept)')">•••</button>
+          </div>
+          <div class="myfam-searchrow">
+            <div class="search-bar-lg" onclick="openSearchFAM()">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <span>Search FAM</span>
+            </div>
+            <button class="playfam-btn" onclick="openPlayFAM()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg>
+              <span>playFAMs</span>
+            </button>
+          </div>
+          <div class="section-kicker" style="margin:18px 0 9px;">For you</div>
+          <div class="seeds-grid" id="seedsFeed"></div>
+          <div class="seeds-refresh" onclick="refreshSeedsFeed()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 12a10 10 0 0116-7.7M22 12a10 10 0 01-16 7.7M2 4v6h6M22 20v-6h-6"/></svg>
+            <span>Different picks</span>
+          </div>
+        </div>
+
+        <div class="tabbar">
+          <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
+          <div class="tab active" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
+          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+        </div>
+      </section>
+
+      <!-- ============ PLAYFAM (past playlists) ============ -->
+      <section class="screen" id="screen-playfam">
+        <div class="back-row">
+          <span class="back" onclick="goBack()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <h2>playFAMs</h2>
+        </div>
+        <div class="scroll">
+          <div class="connect-sub" style="margin:0 0 14px;">Your playlists — tap one to play or edit it.</div>
+          <div class="grid4" id="playfamGrid"></div>
+        </div>
+        <div class="generating" id="gen-playfam"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
+      </section>
+
+      <!-- ============ NEW PLAYLIST — add topics ============ -->
+      <section class="screen" id="screen-newplaylist">
+        <div class="back-row">
+          <span class="back" onclick="cancelNewPlaylist()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <h2 id="npTitle">Add Topics</h2>
+        </div>
+        <div class="connect-sub" style="margin:0 18px 12px;">Add every topic you want in this playlist, then save.</div>
+        <div class="scroll" id="npBody"></div>
+        <div style="padding:0 18px 18px;">
+          <button class="np-save-btn" onclick="saveNewPlaylist()">Save Playlist</button>
+        </div>
+      </section>
+
+      <!-- ============ DETAIL (branch topic list) ============ -->
+      <section class="screen" id="screen-detail">
+        <div class="back-row">
+          <span class="back" onclick="goBack()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <h2 id="detail-title">Market Watch</h2>
+          <div class="head-dots" onclick="openAlbumMenu()"><span></span><span></span><span></span></div>
+        </div>
+        <div class="scroll" id="detail-body"></div>
+        <div class="generating" id="gen-detail"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
+      </section>
+
+      <!-- ============ PLAYER ============ -->
+      <section class="screen" id="screen-player">
+        <div class="player-top">
+          <span class="kicker">Now playing</span>
+          <span class="x" onclick="goBack()">✕</span>
+        </div>
+        <button class="go-deeper-pill" onclick="openGoDeeper('player')">Go Deeper</button>
+        <div class="mini-stage" id="playerStage" onclick="playerTapAdvance(event)">
+          <div class="mini-title" id="p-title">Title</div>
+          <div class="mini-src" id="p-src">Source</div>
+          <div class="next-hint" id="nextHint"></div>
+        </div>
+        <div class="captions-panel off" id="ccPanel">
+          <div class="cc-toprow"><span class="cc-label">Live captions</span><div class="cc-copybtn" onclick="toast('Transcript copied ✓')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 8h10v10H8zM6 6v10"/></svg></div></div>
+          <div class="cc-text" id="cc-text">Displayed here when captions are turned on.</div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-bar"><div class="fill"></div><div class="knob"></div></div>
+          <div class="time-row"><span id="curTime">1:24</span><span id="totalTime">3:00</span></div>
+        </div>
+        <div class="player-controls-2row">
+          <div class="pc-row1">
+            <div class="mini-ctrl-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--paper)"><path d="M11 18l-8-6 8-6v4h9v4h-9z"/></svg></div>
+            <div class="mini-play-btn" onclick="togglePlay()"><div id="playIcon2"><svg width="15" height="15" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg></div></div>
+            <div class="mini-ctrl-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--paper)"><path d="M13 18l8-6-8-6v4H4v4h9z"/></svg></div>
+          </div>
+          <div class="pc-row2">
+            <div class="speed-len-pill" id="speedLenPill" onclick="openSpeedLengthModal()">1.2× · 3 min</div>
+            <span class="pt-icon" onclick="openShareModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/></svg></span>
+            <span class="pt-icon" id="ccIcon" onclick="toggleCC()"><span style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;">CC</span></span>
+          </div>
+        </div>
+        <div class="generating" id="gen-player"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
+      </section>
+
+      <!-- ============ PLAY ALL (segmented continuous player) ============ -->
+      <section class="screen" id="screen-playall">
+        <div class="player-top"><span class="kicker" id="pa-kicker">Playing all</span><span class="x" onclick="goBack()">✕</span></div>
+        <button class="go-deeper-pill" onclick="openGoDeeper('playall')">Go Deeper</button>
+        <div class="segbar" id="paSegbar"></div>
+        <div class="player-body">
+          <div class="player-main">
+            <div class="art" onclick="paTogglePlay()"><div class="playbtn" id="paPlayIcon"><svg width="17" height="17" viewBox="0 0 24 24" fill="var(--paper)"><path d="M8 5v14l11-7z"/></svg></div></div>
+            <div class="p-meta"><div class="ttl" id="pa-title">Title</div><div class="src" id="pa-src">Source</div></div>
+            <div class="pa-topic-index" id="pa-index">Topic 1 of 5</div>
+          </div>
+          <div class="sidebar">
+            <div class="sb-icon" onclick="toggleFavorite(this)"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M12 21s-7.5-4.9-10-9.3C.4 8.5 2 5 5.6 5c2 0 3.5 1.1 4.4 2.6C11 6.1 12.4 5 14.4 5 18 5 19.6 8.5 18 11.7 15.5 16.1 12 21 12 21z"/></svg></div><div class="lbl">Favorite</div></div>
+            <div class="sb-icon" onclick="openShareModal()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/></svg></div><div class="lbl">Share</div></div>
+            <div class="sb-icon" id="paCcIcon" onclick="paToggleCC()"><div class="circ"><span style="font-family:'JetBrains Mono',monospace;font-size:8.5px;font-weight:700;color:var(--paper);opacity:0.55;">CC</span></div><div class="lbl">Captions<br>off</div></div>
+          </div>
+        </div>
+        <div class="captions-panel off" id="paCcPanel">
+          <div class="cc-toprow"><span class="cc-label">Live captions</span><div class="cc-copybtn" onclick="toast('Transcript copied ✓')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 8h10v10H8zM6 6v10"/></svg></div></div>
+          <div class="cc-text" id="pa-cc-text">Displayed here when captions are turned on.</div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-bar"><div class="fill"></div><div class="knob"></div></div>
+          <div class="time-row"><span id="pa-curtime">1:24</span><span id="pa-totaltime">3:00</span></div>
+        </div>
+        <div class="pa-controls">
+          <div class="pa-side" onclick="paRegenerate()"><div class="cc"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12a10 10 0 0116-7.7M22 12a10 10 0 01-16 7.7M2 4v6h6M22 20v-6h-6"/></svg></div><div class="lbl">Tap to regenerate topic</div></div>
+          <div class="pa-side" onclick="paTogglePlay()" style="cursor:pointer;"><div class="cc" id="paPlayIcon2" style="background:var(--copper); color:var(--ink); width:52px; height:52px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg></div><div class="lbl">pause</div></div>
+          <div class="pa-side" onclick="paSkip()"><div class="cc"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4l10 8-10 8V4zM19 5v14"/></svg></div><div class="lbl">Tap to skip topic</div></div>
+        </div>
+        <div class="speed-len-pill" id="paSpeedLenPill" style="margin:0 auto 16px; display:table;" onclick="toast('1x / 1.2x / 1.5x / 2x (demo)')">1.2× · 3 min</div>
+        <div class="generating" id="gen-playall"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
+      </section>
+
+      <!-- ============ DAILY FAM (Stories-style feed) ============ -->
+      <section class="screen" id="screen-dailyfam">
+        <div class="df-top">
+          <div class="df-date" id="df-date">Today</div>
+          <span class="x" onclick="dfClose()">✕</span>
+        </div>
+        <button class="go-deeper-pill" onclick="openGoDeeper('dailyfam')">Go Deeper</button>
+        <div class="df-stage" id="dfStage" onclick="dfHandleTap(event)">
+          <div class="df-title" id="df-title">Title</div>
+          <div class="df-src">Daily FAM</div>
+        </div>
+        <div class="mini-controls df-controls-grid">
+          <div class="df-controls-side" style="justify-content:flex-end;">
+            <span class="pt-icon" onclick="openShareModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/></svg></span>
+            <div class="mc-extra show" id="dfMcBack">
+              <div class="ctrl-btn"><div class="cc"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--paper)"><path d="M11 18l-8-6 8-6v4h9v4h-9z"/></svg></div><div class="lbl">15</div></div>
+            </div>
+          </div>
+          <div class="mc-toggle" onclick="dfTogglePlay()"><div id="dfPlayIcon2"><svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg></div></div>
+          <div class="df-controls-side" style="justify-content:flex-start;">
+            <div class="mc-extra show" id="dfMcForward">
+              <div class="ctrl-btn"><div class="cc"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--paper)"><path d="M13 18l8-6-8-6v4H4v4h9z"/></svg></div><div class="lbl">15</div></div>
+              <div class="speed-pill" onclick="toast('1x / 1.2x / 1.5x / 2x (demo)')">1.2×</div>
+            </div>
+          </div>
+        </div>
+        <div class="df-daypicker" onclick="openDayPicker()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+          <span id="df-daylabel">Today</span>
+        </div>
+        <div class="generating" id="gen-dailyfam"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
+        <div class="tabbar">
+          <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
+          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab active" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
+          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+        </div>
+      </section>
+
+      <!-- ============ MESSAGES (inbox) ============ -->
+      <section class="screen" id="screen-messages">
+        <div class="scroll">
+          <div class="myfam-header">
+            <h2>Messages</h2>
+            <button class="myfam-add-btn" onclick="openNewChatModal()">+</button>
+          </div>
+          <div class="search-bar" onclick="toast('Search messages (demo only)')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <span>Search messages</span>
+          </div>
+          <div id="threadList"></div>
+        </div>
+        <div class="tabbar">
+          <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
+          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
+          <div class="tab active" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+        </div>
+      </section>
+
+      <!-- ============ THREAD (conversation view) ============ -->
+      <section class="screen" id="screen-thread">
+        <div class="back-row">
+          <span class="back" onclick="goBack()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <div class="thread-who">
+            <div class="av" id="thread-av">BS</div>
+            <h2 id="thread-name">Name</h2>
+          </div>
+        </div>
+        <div class="scroll" id="thread-body"></div>
+        <div class="chat-input-row" style="display:flex; border-top:1px solid var(--border);">
+          <input type="text" id="threadInput" placeholder="Message…">
+          <button onclick="sendThreadMessage()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </section>
+
+      <div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this) closeModal()">
+        <div class="modal-card">
+          <div class="modal-title" id="modalTitle">Title</div>
+          <input class="modal-input" id="modalInput" type="text" placeholder="">
+          <div class="modal-btns">
+            <button class="modal-btn ghost" onclick="closeModal()">Cancel</button>
+            <button class="modal-btn primary" id="modalConfirmBtn">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sheet-overlay" id="sheetOverlay" onclick="if(event.target===this) closeSheet()">
+        <div class="sheet-card" id="sheetCard"></div>
+      </div>
+
+      <div class="modal-overlay" id="gcOverlay" onclick="if(event.target===this) closeGenerateConfig()">
+        <div class="modal-card">
+          <div class="modal-title">Generate</div>
+          <div class="gc-field">
+            <div class="gc-label">Length</div>
+            <div class="gc-val" id="gcLengthVal" onclick="openLengthMenu()">3 min</div>
+          </div>
+          <div class="gc-field">
+            <div class="gc-label">From</div>
+            <div class="gc-val" id="gcFromVal" onclick="openFromMenu()">Yesterday</div>
+          </div>
+          <div class="modal-btns">
+            <button class="modal-btn ghost" onclick="closeGenerateConfig()">Cancel</button>
+            <button class="modal-btn primary" onclick="confirmGenerateConfig()">Generate</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="cpOverlay" onclick="if(event.target===this) closeCreatePlaylist()">
+        <div class="modal-card">
+          <div class="modal-title">Create Playlist</div>
+          <input class="modal-input" id="cpNameInput" type="text" placeholder="Playlist name">
+          <div class="modal-btns">
+            <button class="modal-btn ghost" onclick="closeCreatePlaylist()">Cancel</button>
+            <button class="modal-btn primary" onclick="confirmCreatePlaylist()">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="speedLengthOverlay" onclick="if(event.target===this) closeSpeedLengthModal()">
+        <div class="modal-card">
+          <div class="modal-title">Playback</div>
+          <div class="gc-field">
+            <div class="gc-label">Speed</div>
+            <div class="gc-val" id="speedModalVal" onclick="openSpeedMenu()">1.2×</div>
+          </div>
+          <div class="gc-field">
+            <div class="gc-label">Length</div>
+            <div class="gc-val" id="lengthModalVal" onclick="openLengthMenu()">3 min</div>
+          </div>
+          <div class="modal-btns">
+            <button class="modal-btn primary" style="flex:1;" onclick="closeSpeedLengthModal()">Done</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="goDeeperOverlay" onclick="if(event.target===this) closeGoDeeper()">
+        <div class="modal-card">
+          <div class="modal-title">Go deeper</div>
+          <div class="gc-label" style="margin-bottom:8px;">Ask a follow-up, or steer where this goes next</div>
+          <input class="modal-input" id="goDeeperInput" type="text" placeholder="e.g. &quot;explain the market impact&quot;">
+          <div class="modal-btns">
+            <button class="modal-btn ghost" onclick="closeGoDeeper()">Cancel</button>
+            <button class="modal-btn primary" onclick="confirmGoDeeper()">Continue</button>
+          </div>
+        </div>
+      </div>
+
+
+      <div class="modal-overlay" id="shareOverlay" onclick="if(event.target===this) closeShareModal()">
+        <div class="modal-card">
+          <div class="modal-title">Share this FAM</div>
+          <div class="share-toggle">
+            <button class="st-btn active" id="stAudio" onclick="setShareMode('audio')">Audio</button>
+            <button class="st-btn" id="stTranscript" onclick="setShareMode('transcript')">Transcript</button>
+          </div>
+          <div class="gc-label" style="margin-bottom:8px;">Your FAM contacts</div>
+          <div class="share-contacts" id="shareContacts"></div>
+          <div class="modal-btns" style="margin-top:16px;">
+            <button class="modal-btn ghost" style="flex:1;" onclick="closeShareModal()">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="newChatOverlay" onclick="if(event.target===this) closeNewChatModal()">
+        <div class="modal-card">
+          <div class="modal-title">New message</div>
+          <div class="gc-label" style="margin-bottom:8px;">Your FAM contacts</div>
+          <div class="share-contacts" id="newChatContacts"></div>
+          <div class="gc-label" style="margin:16px 0 8px;">Or start a new conversation</div>
+          <input class="modal-input" id="newChatInput" type="text" placeholder="Name or phone number">
+          <div class="modal-btns">
+            <button class="modal-btn ghost" onclick="closeNewChatModal()">Cancel</button>
+            <button class="modal-btn primary" onclick="confirmNewChat()">Start chat</button>
+          </div>
+        </div>
+      </div>
+
     </div>
+  </div>
 
-    <button id="go" type="submit">Listen</button>
-    <button id="stop" type="button" class="ghost" hidden>Stop</button>
-  </form>
+  <div class="footnote">Prototype scope: episodes are generated live and streamed as raw audio — no file is created and nothing is converted to MP3 — and myFAM here refers to the renamed Branches feature — the separate social layer (posts, friends, comments) isn't wired up since it isn't part of the initial rollout.</div>
 
-  <section id="status" class="status" aria-live="polite"></section>
+  <div class="toast" id="toast"></div>
 
-  <section class="meter" hidden id="meterWrap">
-    <div class="bar"><div id="bar"></div></div>
-    <div class="times"><span id="elapsed">0:00</span><span id="total">3:00</span></div>
-  </section>
 
-  <details id="transcriptWrap" hidden>
-    <summary>Transcript</summary>
-    <div id="transcript"></div>
-  </details>
+<script src="/fam-audio.js"></script>
+<script>
+  var TOPICS = {
+    spacex:{title:"SpaceX Starship: This Week's Test Flight", source:"Market Watch", caption:'…and this time, the heat shield tiles held through <mark>re-entry</mark>, which is the milestone engineers were watching for—'},
+    tesla:{title:"Tesla Q2 Delivery Numbers", source:"Market Watch", caption:'…deliveries came in ahead of estimates, even as <mark>price cuts</mark> kept squeezing margin—'},
+    nvidia:{title:"Nvidia Earnings Preview", source:"Market Watch", caption:"…all eyes on <mark>data center revenue</mark> heading into Thursday's print—"},
+    google:{title:"Google AI Announcements", source:"Market Watch", caption:'…the new model card shows big gains on <mark>reasoning benchmarks</mark>—'},
+    amazon:{title:"Amazon Q2 Moves", source:"Market Watch", caption:'…AWS growth reaccelerated, driven mostly by <mark>enterprise AI workloads</mark>—'},
+    crypto:{title:"Crypto Market Outlook", source:"Market Watch", caption:'…bitcoin dominance is climbing again as <mark>altcoin liquidity</mark> thins out—'},
+    waiver:{title:"Waiver Wire Analytics 101", source:"Fantasy Sports", caption:'…target share is a better predictor than <mark>raw yardage</mark> this early in the season—'},
+    sleepers:{title:"Week 1 Sleepers", source:"Fantasy Sports", caption:'…this backup running back is one injury away from <mark>a top-12 workload</mark>—'},
+    dynasty:{title:"Dynasty Rankings Update", source:"Fantasy Sports", caption:'…rookie wide receivers are climbing fast after a strong <mark>summer camp</mark>—'},
+    tradevalue:{title:"Trade Value Chart: Week 1", source:"Fantasy Sports", caption:"…tier breaks matter more than exact rank when you're <mark>negotiating trades</mark>—"},
+    injuryreport:{title:"Injury Report Roundup", source:"Fantasy Sports", caption:'…handcuff value spikes the moment a starter is listed as <mark>questionable</mark>—'},
+    worldcup:{title:"World Cup: Round of 16 Recaps", source:"Trending · Sports", caption:'…a stoppage-time equalizer forced <mark>extra time</mark> in the day\'s biggest upset—'},
+    chipselloff:{title:"AI Chip Stocks Selloff, Explained", source:"Trending · Markets", caption:'…the selloff followed a surprise <mark>export restriction</mark> announced overnight—'},
+    rankingsdrop:{title:"2026 Fantasy Football Rankings Drop", source:"Trending · Fantasy", caption:'…early ADP already shows a shift at <mark>the running back position</mark>—'},
+    nasdaq100:{title:"SpaceX Joins the Nasdaq 100", source:"Trending · Markets", caption:'…the inclusion triggers billions in <mark>passive index buying</mark> over coming weeks—'},
+    f1:{title:"F1: Silverstone Recap", source:"Trending · Sports", caption:'…a late safety car completely reshuffled the <mark>podium order</mark>—'},
+    wimbledon:{title:"Wimbledon: Semifinal Upsets", source:"Trending · Sports", caption:'…the top seed was broken twice in a row as the crowd sensed <mark>a genuine shock</mark>—'},
+    fedpause:{title:"Fed Signals a Rate Pause", source:"Trending · Markets", caption:'…the statement dropped one key word, and markets read it as <mark>a dovish pivot</mark>—'},
+    nbafa:{title:"NBA Free Agency: Day One Moves", source:"Trending · Sports", caption:'…three teams reshuffled their cores within the first <mark>two hours</mark> of the window opening—'},
+    modelrelease:{title:"New Model Tops the Leaderboard", source:"Trending · Markets", caption:'…it jumped past the field on reasoning benchmarks, but <mark>the real test</mark> is everyday use—'},
+    boxoffice:{title:"Box Office: Surprise Weekend Winner", source:"Trending · Culture", caption:'…word of mouth carried it past the tentpole release, and <mark>theater chains</mark> are taking notice—'},
+    heatwave:{title:"Heat Wave Grips the Midwest", source:"Trending · Weather", caption:'…forecasters say the ridge stalls for another week, keeping <mark>record highs</mark> in play—'},
 
-  <p class="engine" id="engine"></p>
-</main>
-<script src="/app.js"></script>
+    guidedmed:{title:"Guided Meditation", source:"myMorning", caption:'…breathe in for four counts, hold, and let the <mark>tension</mark> leave your shoulders as you exhale—'},
+    motivmin:{title:"Motivational Minute", source:"myMorning", caption:"…the hardest part is always the first five minutes, and you've already <mark>started</mark>—"},
+    lanews:{title:"LA News Roundup", source:"myMorning", caption:'…a new transit line broke ground downtown, cutting the commute by <mark>twenty minutes</mark>—'},
+    dodgers:{title:"Dodgers Game Recap", source:"myMorning", caption:'…the bullpen held a one-run lead into the ninth, and the crowd could feel <mark>a save coming</mark>—'},
+    dailylearn:{title:"Daily Learning: Something New", source:"myMorning", caption:'…octopuses can taste through their skin, which changes how they <mark>hunt in the dark</mark>—'},
+    historystory:{title:"Historical Story of the Day", source:"myMorning", caption:'…the telegram arrived six minutes before the deadline, and it <mark>changed everything</mark>—'},
+    dailyintent:{title:"Set Your Daily Intention", source:"myMorning", caption:'…pick one thing you\'ll say no to today, so you have room to say <mark>yes</mark> to what matters—'},
+    sciencediscovery:{title:"Science Discovery of the Week", source:"myMorning", caption:'…researchers found the ice sheet is regrowing in one section, which nobody <mark>expected</mark>—'},
+    psychfact:{title:"Psychology Fact of the Day", source:"myMorning", caption:'…we remember interruptions better than completions, which is why <mark>cliffhangers</mark> work—'},
+
+    topmovies:{title:"Top Movies Right Now", source:"Culture Trends", caption:'…the sleeper hit of the month knocked the tentpole release out of <mark>the top spot</mark>—'},
+    topmusic:{title:"Top Music Right Now", source:"Culture Trends", caption:'…the surprise deluxe edition dropped at midnight and broke <mark>streaming records</mark> by noon—'},
+    topinfluencers:{title:"Top Influencers to Know", source:"Culture Trends", caption:'…she went from a hundred followers to a million by posting <mark>one honest video</mark> a day—'},
+    topadcampaigns:{title:"Top Ad Campaigns Everyone's Talking About", source:"Culture Trends", caption:"…the campaign never mentioned the product once, and that's exactly why <mark>it worked</mark>—"},
+    toppodcasts:{title:"Top Podcasts Right Now", source:"Culture Trends", caption:'…the two-person show passed the network giant this week on <mark>weekly downloads</mark>—'},
+    topshows:{title:"Top Shows Right Now", source:"Culture Trends", caption:"…the finale broke the platform's single-day record for <mark>concurrent viewers</mark>—"},
+    topbrands:{title:"Top Brands Right Now", source:"Culture Trends", caption:'…the century-old brand out-trended three startups this week after <mark>one viral repost</mark>—'},
+    viralmoments:{title:"This Week's Viral Moments", source:"Culture Trends", caption:'…nobody expected the mic-drop moment to get clipped <mark>forty million times</mark> by Friday—'},
+
+    nvidiaupdate:{title:"Nvidia: Latest Updates", source:"AI Updates", caption:'…the new chip architecture ships a quarter early, and <mark>data centers</mark> are already lining up—'},
+    openaiupdate:{title:"OpenAI: Latest Updates", source:"AI Updates", caption:'…the update focuses on reasoning over raw speed, which changes how it handles <mark>multi-step tasks</mark>—'},
+    anthropicupdate:{title:"Anthropic: Latest Updates", source:"AI Updates", caption:'…the new release leans further into long-context work, useful for <mark>entire codebases</mark> at once—'},
+    geminiupdate:{title:"Gemini: Latest Updates", source:"AI Updates", caption:'…tighter integration across the whole suite means fewer copy-paste steps between <mark>tools</mark>—'},
+    metaupdate:{title:"Meta AI: Latest Updates", source:"AI Updates", caption:"…it's now built directly into the messaging apps, which changes <mark>who actually uses it</mark>—"},
+    xaiupdate:{title:"xAI: Latest Updates", source:"AI Updates", caption:'…the new model leans into real-time data, pulling from <mark>the live feed</mark> as it answers—'},
+    msaiupdate:{title:"Microsoft AI: Latest Updates", source:"AI Updates", caption:'…it\'s rolling into the office suite by default, no separate <mark>download</mark> required—'},
+
+    truecrime:{title:"True Crime", source:"Storytelling", caption:'…the case had been closed for thirty years, until someone found <mark>a single fingerprint</mark> nobody had tested—'},
+    scifi:{title:"Sci-Fi", source:"Storytelling", caption:"…the ship's AI goes quiet halfway through the jump, and nobody agrees on whether that's <mark>a malfunction or a choice</mark>—"},
+    fantasy:{title:"Fantasy", source:"Storytelling", caption:'…the map was wrong on purpose, which means someone wanted them to find <mark>exactly this place</mark>—'},
+    romance:{title:"Romance", source:"Storytelling", caption:"…they'd agreed it was just pretend, right up until neither of them could remember <mark>who started it</mark>—"},
+    comedy:{title:"Comedy", source:"Storytelling", caption:'…the plan only had one flaw, which nobody noticed until it was already <mark>too late to stop</mark>—'},
+    historicalfiction:{title:"Historical Fiction", source:"Storytelling", caption:'…she rewrote the letter four times, knowing the wrong words could start <mark>a war</mark>—'},
+
+    igreels:{title:"Reels You'd Like", source:"Instagram Trends", caption:'…the algorithm noticed you keep pausing on this genre, so here\'s more of <mark>exactly that</mark>—'},
+    igfollows:{title:"Accounts You Follow: Weekly Recap", source:"Instagram Trends", caption:"…three of your closest follows posted the same story within an hour, and that's not <mark>a coincidence</mark>—"},
+    igtrend:{title:"Trending on Instagram", source:"Instagram Trends", caption:'…the format only works if the first two seconds hook you, and this one <mark>absolutely does</mark>—'},
+    xtrend:{title:"What's Trending on X", source:"X Trends", caption:'…the thread started as a joke and turned into <mark>an actual policy debate</mark> by hour two—'},
+    xfollows:{title:"Accounts You Follow: Recap", source:"X Trends", caption:'…the people you follow mostly agreed on this one, which almost <mark>never happens</mark>—'},
+    xthreads:{title:"This Week's Biggest Threads", source:"X Trends", caption:'…it started as a single reply and somehow ended up <mark>quote-tweeted by everyone</mark>—'},
+    ttsounds:{title:"Viral Sounds This Week", source:"TikTok For You", caption:'…nobody can explain why this specific clip became the sound of the week, but <mark>here we are</mark>—'},
+    ttcreators:{title:"Creators You Follow", source:"TikTok For You", caption:'…she posted twice today instead of her usual once, and the second one is <mark>the better video</mark>—'},
+    tttrend:{title:"TikTok Trends Right Now", source:"TikTok For You", caption:'…the trend format is simple, which is exactly why <mark>everyone can join in</mark>—'},
+    localnews:{title:"Local News Near You", source:"Local Updates", caption:'…the city council vote came down to a single tiebreaker, and it affects <mark>your commute directly</mark>—'},
+    localevents:{title:"Weekend Events Nearby", source:"Local Updates", caption:'…tickets for the smaller show sold out faster than the headliner, which tells you <mark>something</mark>—'},
+    localweather:{title:"Weather Outlook This Week", source:"Local Updates", caption:'…the forecast flips midweek, so today\'s plans might need <mark>a backup</mark>—'},
+    myteamsscores:{title:"Scores & Highlights", source:"My Teams", caption:'…the fourth quarter looked over until it <mark>very much wasn\'t</mark>—'},
+    myteamstrades:{title:"Trade Rumors & Roster Moves", source:"My Teams", caption:'…nobody saw this trade coming, least of all <mark>the player himself</mark>—'},
+    myteamsmatchups:{title:"This Week's Matchups", source:"My Teams", caption:'…on paper this is a blowout, but the last time these two played, <mark>paper was wrong</mark>—'},
+    adventure:{title:"Adventure", source:"Storytelling", caption:"…the trail ended at a cliff, but the old map showed a path <mark>that wasn't supposed to exist</mark>—"}
+  };
+  // Pre-built topics keep their curated titles locked, so editing their prompt
+  // later won't silently overwrite a title that was written on purpose.
+  Object.keys(TOPICS).forEach(function(k){
+    TOPICS[k].titleOverridden = true;
+    TOPICS[k].prompt = TOPICS[k].prompt || TOPICS[k].title;
+  });
+  var TRENDING_POOL = [
+    { key:"worldcup", cat:"sports", label:"Sports" },
+    { key:"chipselloff", cat:"markets", label:"Markets" },
+    { key:"rankingsdrop", cat:"fantasy", label:"Fantasy" },
+    { key:"nasdaq100", cat:"markets", label:"Markets" },
+    { key:"f1", cat:"sports", label:"Sports" },
+    { key:"wimbledon", cat:"sports", label:"Sports" },
+    { key:"fedpause", cat:"markets", label:"Markets" },
+    { key:"nbafa", cat:"sports", label:"Sports" },
+    { key:"modelrelease", cat:"markets", label:"Markets" },
+    { key:"boxoffice", cat:"culture", label:"Culture" },
+    { key:"heatwave", cat:"weather", label:"Weather" }
+  ];
+  var BRANCHES = {
+    morning:{ name:"myMorning", topics:["guidedmed","motivmin","lanews","dodgers","dailylearn","historystory","dailyintent"], reco:["sciencediscovery","psychfact"] },
+    culture:{ name:"Culture Trends", topics:["topmovies","topmusic","topinfluencers","topadcampaigns","toppodcasts"], reco:["topshows","topbrands","viralmoments"] },
+    aiupd:{ name:"AI Updates", topics:["nvidiaupdate","openaiupdate","anthropicupdate","geminiupdate"], reco:["metaupdate","xaiupdate","msaiupdate"] }
+  };
+
+  // myDaily FAM — topics are the current date plus the previous 7 days, computed
+  // fresh whenever the demo loads, with today always first (and "active").
+  var CONTENT_POOL = [
+    "guidedmed","motivmin","lanews","dodgers","dailylearn","historystory","dailyintent",
+    "sciencediscovery","psychfact","topmovies","topmusic","topinfluencers","topadcampaigns",
+    "toppodcasts","topshows","topbrands","viralmoments","nvidiaupdate","openaiupdate",
+    "anthropicupdate","geminiupdate","metaupdate","xaiupdate","msaiupdate","worldcup",
+    "chipselloff","rankingsdrop","nasdaq100","f1","wimbledon","fedpause","nbafa",
+    "modelrelease","boxoffice","heatwave","igreels","igtrend","xtrend","ttsounds",
+    "localnews","localevents","myteamsscores","myteamsmatchups"
+  ];
+  function shuffledPool(arr){
+    var a = arr.slice();
+    for(var i = a.length - 1; i > 0; i--){
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+    }
+    return a;
+  }
+
+  // ---------------- Daily FAM's approved title list (only these are used) ----------------
+  var DAILYFAM_TITLES = [
+    { title:"Why Founders Are Taking Back Control", caption:"Boards used to push founders out at this stage — now they're begging them to stay in the seat." },
+    { title:"The New College Football Arms Race", caption:"NIL money, facilities, and recruiting are reshaping who actually has power in college sports." },
+    { title:"How Great Leaders Actually Make Decisions", caption:"The best decision-makers aren't the fastest — they're the ones who know which calls actually matter." },
+    { title:"The Psychology of People Who Always Seem in Control", caption:"Some people never seem rattled, and the research on why is more specific than just \"confidence.\"" },
+    { title:"Why Luxury Brands Keep Getting Simpler", caption:"The maximalist era is fading, and the world's biggest luxury houses are betting on restraint instead." },
+    { title:"The Business Behind College Sports", caption:"Media rights, conference realignment, and NIL have turned college athletics into a real industry overnight." },
+    { title:"What Makes a Company Feel Culturally Important", caption:"Some brands become part of the culture and others just sell products — the difference is rarely an accident." },
+    { title:"How Elite Teams Build Winning Cultures", caption:"The best locker rooms share a few specific habits that have nothing to do with talent." },
+    { title:"Why Some People Become Obsessed With Mastery", caption:"For some people, good enough is never enough — here's what separates mastery from ordinary ambition." },
+    { title:"The Hidden Economics of the NFL", caption:"Behind every Sunday game is a business built on scarcity, media deals, and a salary cap that shapes everything." },
+    { title:"What Makes a Brand Feel Expensive", caption:"Price is only part of it — the real signals of luxury are quieter than most brands realize." },
+    { title:"Why Great Companies Feel Like Movements", caption:"The best companies don't just sell a product, they make people feel like they're part of something." },
+    { title:"How Athletes Train Their Minds Differently", caption:"Elite athletes treat mental preparation as seriously as physical training, and it shows." },
+    { title:"The Business of Being Cool", caption:"Coolness has quietly become one of the most valuable and most fragile assets a brand can have." },
+    { title:"Why Some Cities Feel More Ambitious Than Others", caption:"Some cities just feel hungrier than others, and it's not only about the economy." },
+    { title:"The People Keeping Old Crafts Alive", caption:"As mass production took over everything, a small group of people refused to let certain crafts disappear." },
+    { title:"How Billion-Dollar Companies Create Taste", caption:"The biggest companies in the world don't just follow trends, they quietly decide what good taste looks like." },
+    { title:"What Makes Someone Naturally Persuasive", caption:"Persuasion isn't about being the loudest voice in the room — the most convincing people do something different." },
+    { title:"The New Rules of Building a Startup", caption:"The old startup playbook is being rewritten, and most founders haven't caught up yet." },
+    { title:"Why Certain Movies Become Cultural Events", caption:"Some films are just movies, and others somehow become something the whole culture has to see." },
+    { title:"Is LIV Golf Actually Falling Apart?", caption:"LIV's future is suddenly in serious doubt after its season finale and funding turmoil." },
+    { title:"Why Everyone Is Watching the Tour Championship Differently This Year", caption:"The 2026 finale has a revamped format, a $40M purse, and no starting strokes." },
+    { title:"OpenAI vs. Anthropic Is Becoming a Real Business War", caption:"New enterprise data shows the two increasingly fighting for the same customers." },
+    { title:"What Happens When AI Agents Start Fighting Each Other?", caption:"Anthropic's recent experiments produced surprisingly adversarial behavior between agents." },
+    { title:"Why AI Companies Are Suddenly Worried About Their Own Models", caption:"Frontier labs are confronting models becoming capable enough to create serious cybersecurity concerns." },
+    { title:"The Two-Month-Old AI Startup That Just Raised $1.1 Billion", caption:"River AI is trying to rethink how personal AI assistants are built from the ground up." },
+    { title:"Why Companies Are Starting to Build Their Own AI Models", caption:"Thomson Reuters' new model is part of a broader shift away from relying entirely on OpenAI and Anthropic." },
+    { title:"Christopher Nolan Just Got Even Bigger", caption:"The Odyssey has become Nolan's highest-grossing film, making its success a fascinating story about spectacle and theatrical movies." },
+    { title:"Why AI Is Moving From Chatbots Into Actual Companies", caption:"Firms like Thrive are using agents inside accounting, IT, and other real businesses rather than just building standalone AI products." },
+    { title:"The AI Startup Nobody Was Talking About Just Beat the Giants at One Thing", caption:"DeepMind alumni startup Inherent says its small research agent outperformed larger OpenAI and Anthropic systems on replicating scientific findings." }
+  ];
+  DAILYFAM_TITLES.forEach(function(item, i){
+    TOPICS["dailyfam_" + i] = { title: item.title, source: "Daily FAM", caption: item.caption, prompt: item.title, titleOverridden: true };
+  });
+
+  var DAILY_FAM_DAYS = [];
+  (function setupDailyFam(){
+    var MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    function formatLong(d){ return MONTHS[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear(); }
+    function relLabel(i){ if(i === 0) return "Today"; if(i === 1) return "Yesterday"; return i + " days ago"; }
+
+    var keys = [];
+    for(var k = 0; k < DAILYFAM_TITLES.length; k++){ keys.push("dailyfam_" + k); }
+    var shuffledKeys = shuffledPool(keys);
+
+    var today = new Date();
+    for(var i = 0; i < 8; i++){
+      var d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+      var label = formatLong(d);
+      var picks = shuffledKeys.slice(i * 3, i * 3 + 3);
+      DAILY_FAM_DAYS.push({ label: label, rel: relLabel(i), topics: picks });
+    }
+  })();
+
+  var ALBUM_COLORS = [
+    ["#3B3550","#463F60"],
+    ["#2C3B45","#354655"],
+    ["#493D24","#5A4B2C"],
+    ["#2B3B34","#33453D"],
+    ["#4A2E37","#5B3641"]
+  ];
+  var customAlbumCounter = 0;
+
+  var stack = ["home"];
+  var lastDetailBranch = null;
+  var pendingNewPlaylistKey = null;
+  function refreshTopicList(key){
+    var activeId = document.querySelector(".screen.active") ? document.querySelector(".screen.active").id : "";
+    if(activeId === "screen-newplaylist"){
+      renderNewPlaylistTopics();
+    } else {
+      renderBranch(key);
+    }
+  }
+  var currentAlbumForPlayer = null;
+  var currentTopicIndexInAlbum = -1;
+  var scrollLocked = false;
+  var selectedLengthMinutes = 3;
+
+  function showScreen(id){
+    document.querySelectorAll(".screen").forEach(function(s){ s.classList.remove("active"); });
+    document.getElementById("screen-"+id).classList.add("active");
+  }
+  function updateTabs(root){
+    document.querySelectorAll(".tab").forEach(function(t){
+      t.classList.toggle("active", t.getAttribute("data-tab") === root);
+    });
+  }
+  var dfActive = false;
+  function setTab(root){
+    dfActive = (root === "dailyfam");
+    stopSpeech();
+    stack = [root];
+    showScreen(root);
+    updateTabs(root);
+  }
+  function navigate(id){
+    stack.push(id);
+    showScreen(id);
+  }
+  function goBack(){
+    stopSpeech();
+    stack.pop();
+    var prev = stack[stack.length-1] || "home";
+    showScreen(prev);
+    if(prev === "home" || prev === "myfam"){ updateTabs(prev); }
+  }
+
+  function toast(msg){
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function(){ t.classList.remove("show"); }, 2200);
+  }
+
+  var pendingFromSearch = false;
+  // Tell the viewer whether briefings are coming from Claude or from the
+  // built-in sample script, so demo output is never mistaken for the real thing.
+  fetch("/api/health").then(function(r){ return r.json(); }).then(function(h){
+    var el = document.getElementById("audioMode");
+    if(!el) return;
+    if(h.mode === "demo"){
+      el.style.color = "var(--copper)";
+      el.textContent = "Demo mode — a built-in sample script stands in for Claude. "
+                     + "Streaming, timing and playback are real. Add ANTHROPIC_API_KEY to .env for live briefings.";
+    } else {
+      el.style.color = "var(--sage)";
+      el.textContent = "Live — briefings written by " + h.model + ", voice: " + h.tts.selected + ".";
+    }
+    if(h.tts.selected === "debug"){
+      el.textContent += "  No speech engine found: you will hear a placeholder tone.";
+      el.style.color = "var(--coral)";
+    }
+  }).catch(function(){
+    var el = document.getElementById("audioMode");
+    if(el){ el.style.color = "var(--coral)"; el.textContent = "Audio server unreachable — start it with ./run.sh"; }
+  });
+
+  function runSearch(){
+    var val = document.getElementById("searchInput").value.trim();
+    if(val){
+      TOPICS["_custom"] = { title: val, source: "Your search", caption: "Generating your live transcript as this plays—" };
+      pendingFromSearch = true;
+      generate("_custom", "home");
+      document.getElementById("searchInput").value = "";
+    } else {
+      generate("spacex", "home");
+    }
+  }
+
+  // The "FAMiliarizing you…" overlay used to run for a fixed 900ms and then
+  // reveal the player regardless. Generation is now real, so the overlay stays
+  // up until the first audio actually arrives - which is the honest signal that
+  // there is something to listen to.
+  var activeGenOverlay = null;
+  var genTimeout = null;
+
+  function clearGenOverlay(){
+    if(genTimeout){ clearTimeout(genTimeout); genTimeout = null; }
+    if(activeGenOverlay){ activeGenOverlay.classList.remove("active"); activeGenOverlay = null; }
+  }
+
+  function onGenerationStarted(){
+    clearGenOverlay();
+    var activeId = document.querySelector(".screen.active") ? document.querySelector(".screen.active").id : "";
+    if(activeId !== "screen-player"){ navigate("player"); }
+  }
+
+  function onGenerationFailed(message){
+    clearGenOverlay();
+    toast(message || "Could not generate that briefing");
+  }
+
+  function generate(key, overlayScreen, albumContext){
+    var overlayId = overlayScreen ? "gen-" + overlayScreen : (stack[stack.length-1] === "detail" ? "gen-detail" : "gen-home");
+    var overlay = document.getElementById(overlayId);
+    if(overlay) overlay.classList.add("active");
+    clearGenOverlay();
+    activeGenOverlay = overlay;
+    if(overlay) overlay.classList.add("active");
+
+    // Never spin forever if the server is unreachable or wedged.
+    genTimeout = setTimeout(function(){
+      FamAudio.stop();
+      onGenerationFailed("That is taking longer than expected. Is the server running?");
+    }, 45000);
+
+    populatePlayer(key, albumContext);
+  }
+
+  function formatTime(totalSeconds){
+    var m = Math.floor(totalSeconds / 60);
+    var s = Math.round(totalSeconds % 60);
+    if(s === 60){ m += 1; s = 0; }
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+
+  // ---------------- Real audio, streamed from the briefing server ----------------
+  // Previously this read a canned caption aloud with window.speechSynthesis.
+  // Now the topic title becomes a real query: the server writes a briefing of
+  // the selected length and streams it back as sound, which starts playing
+  // before the script has finished being written. See /fam-audio.js.
+
+  var progressTimer = null;
+
+  function stopProgress(){
+    if(progressTimer){ clearInterval(progressTimer); progressTimer = null; }
+  }
+
+  // Drives the player's own progress bar and timer off real playback position.
+  function startProgress(totalSeconds){
+    stopProgress();
+    var wrap = document.querySelector("#screen-player .progress-bar");
+    var fill = wrap ? wrap.querySelector(".fill") : null;
+    var knob = wrap ? wrap.querySelector(".knob") : null;
+    var cur  = document.getElementById("curTime");
+    progressTimer = setInterval(function(){
+      var seconds = Math.min(FamAudio.elapsed(), totalSeconds);
+      var pct = totalSeconds ? (seconds / totalSeconds) * 100 : 0;
+      if(fill) fill.style.width = pct + "%";
+      if(knob) knob.style.left = pct + "%";
+      if(cur) cur.textContent = formatTime(seconds);
+    }, 250);
+  }
+
+  function speakText(title, captionHtml, onEnd){
+    var totalSeconds = selectedLengthMinutes * 60;
+    FamAudio.play(title, selectedLengthMinutes, {
+      onFirstAudio: function(){
+        startProgress(totalSeconds);
+        onGenerationStarted();
+      },
+      onEnd: function(){
+        stopProgress();
+        if(onEnd) onEnd();
+      },
+      onError: function(err){
+        stopProgress();
+        setPlayState(false);
+        onGenerationFailed(err && err.message);
+      }
+    });
+  }
+  function stopSpeech(){ stopProgress(); FamAudio.stop(); }
+  function pauseSpeech(){ FamAudio.pause(); }
+  function resumeSpeech(){ FamAudio.resume(); }
+
+  var currentPlayingTopicKey = null;
+  var playerSpeechToken = 0;
+  function populatePlayer(key, albumContext){
+    var t = TOPICS[key];
+    // An unknown key used to throw here, which - now that generation is real -
+    // would leave the "FAMiliarizing you…" overlay spinning forever.
+    if(!t){
+      onGenerationFailed("That topic isn't available yet");
+      return;
+    }
+    currentPlayingTopicKey = key;
+    document.getElementById("p-title").textContent = t.title;
+    document.getElementById("p-src").textContent = "from " + t.source;
+    document.getElementById("cc-text").innerHTML = t.caption;
+    var isFromSearch = pendingFromSearch;
+    pendingFromSearch = false;
+    playerSpeechToken++;
+    var myToken = playerSpeechToken;
+    if(isFromSearch){
+      speakText(t.title, t.caption);
+    } else {
+      speakText(t.title, t.caption, function(){
+        if(myToken === playerSpeechToken && document.querySelector(".screen.active") && document.querySelector(".screen.active").id === "screen-player"){
+          playerTapAdvance();
+        }
+      });
+    }
+    // reset CC to off each time
+    var panel = document.getElementById("ccPanel");
+    panel.classList.remove("on"); panel.classList.add("off");
+    document.getElementById("cc-text").innerHTML = "Displayed here when captions are turned on.";
+    panel.dataset.key = key;
+    document.getElementById("ccIcon").classList.remove("on");
+    // reset play state to "playing"
+    setPlayState(true);
+
+    // duration reflects the chosen Length setting
+    var totalSeconds = selectedLengthMinutes * 60;
+    document.getElementById("totalTime").textContent = formatTime(totalSeconds);
+    // Starts at zero and is advanced by startProgress() from real playback
+    // position, rather than the prototype's fixed 44% placeholder.
+    document.getElementById("curTime").textContent = formatTime(0);
+    (function(){
+      var wrap = document.querySelector("#screen-player .progress-bar");
+      if(!wrap) return;
+      var fill = wrap.querySelector(".fill"), knob = wrap.querySelector(".knob");
+      if(fill) fill.style.width = "0%";
+      if(knob) knob.style.left = "0%";
+    })();
+    document.getElementById("speedLenPill").textContent = selectedSpeed + " · " + selectedLengthMinutes + " min";
+
+    // album context, for scroll-to-next
+    var hint = document.getElementById("nextHint");
+    currentAlbumForPlayer = albumContext || null;
+    currentTopicIndexInAlbum = -1;
+    if(currentAlbumForPlayer && BRANCHES[currentAlbumForPlayer]){
+      currentTopicIndexInAlbum = BRANCHES[currentAlbumForPlayer].topics.indexOf(key);
+    }
+    if(currentAlbumForPlayer && BRANCHES[currentAlbumForPlayer] && BRANCHES[currentAlbumForPlayer].topics.length > 1){
+      hint.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg> scroll up for next in ' + BRANCHES[currentAlbumForPlayer].name;
+      hint.classList.add("show");
+    } else {
+      hint.classList.remove("show");
+    }
+  }
+
+  function playNextInAlbum(){
+    if(!currentAlbumForPlayer || !BRANCHES[currentAlbumForPlayer]) return;
+    var topics = BRANCHES[currentAlbumForPlayer].topics;
+    if(topics.length <= 1){ toast("That's the only topic in this album"); return; }
+    var nextIndex = (currentTopicIndexInAlbum + 1) % topics.length;
+    var nextKey = topics[nextIndex];
+    generate(nextKey, "player", currentAlbumForPlayer);
+  }
+  function playerTapAdvance(e){
+    if(currentAlbumForPlayer && BRANCHES[currentAlbumForPlayer]){
+      playNextInAlbum();
+      return;
+    }
+    var idx = Math.floor(Math.random() * MYFAM_CARDS.length);
+    startSeedJourney(idx);
+  }
+
+  (function(){
+    var playerScreen = document.getElementById("screen-player");
+    playerScreen.addEventListener("wheel", function(e){
+      if(scrollLocked || !currentAlbumForPlayer) return;
+      if(e.deltaY < -12){
+        scrollLocked = true;
+        playNextInAlbum();
+        setTimeout(function(){ scrollLocked = false; }, 1300);
+      }
+    }, { passive: true });
+
+    var touchStartY = null;
+    playerScreen.addEventListener("touchstart", function(e){
+      touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    playerScreen.addEventListener("touchend", function(e){
+      if(touchStartY === null || scrollLocked || !currentAlbumForPlayer) return;
+      var dy = touchStartY - e.changedTouches[0].clientY;
+      if(dy > 40){
+        scrollLocked = true;
+        playNextInAlbum();
+        setTimeout(function(){ scrollLocked = false; }, 1300);
+      }
+      touchStartY = null;
+    }, { passive: true });
+  })();
+
+  function toggleCC(){
+    var panel = document.getElementById("ccPanel");
+    var icon = document.getElementById("ccIcon");
+    var on = panel.classList.contains("on");
+    if(on){
+      panel.classList.remove("on"); panel.classList.add("off");
+      document.getElementById("cc-text").innerHTML = "Displayed here when captions are turned on.";
+      icon.classList.remove("on");
+    } else {
+      var key = panel.dataset.key;
+      var t = TOPICS[key];
+      panel.classList.remove("off"); panel.classList.add("on");
+      document.getElementById("cc-text").innerHTML = t.caption;
+      icon.classList.add("on");
+    }
+  }
+
+  var isPlaying = true;
+  function setPlayState(playing){
+    isPlaying = playing;
+    document.getElementById("playIcon2").innerHTML = playing
+      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>'
+      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><path d="M8 5v14l11-7z"/></svg>';
+    if(playing){ resumeSpeech(); } else { pauseSpeech(); }
+  }
+  function togglePlay(){ setPlayState(!isPlaying); }
+
+  function toggleFavorite(el){
+    var circ = el.querySelector(".circ");
+    var filled = circ.dataset.filled === "1";
+    if(filled){
+      circ.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M12 21s-7.5-4.9-10-9.3C.4 8.5 2 5 5.6 5c2 0 3.5 1.1 4.4 2.6C11 6.1 12.4 5 14.4 5 18 5 19.6 8.5 18 11.7 15.5 16.1 12 21 12 21z"/></svg>';
+      circ.dataset.filled = "0";
+      toast("Removed from Favorites");
+    } else {
+      circ.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="var(--coral)" stroke="var(--coral)" stroke-width="2"><path d="M12 21s-7.5-4.9-10-9.3C.4 8.5 2 5 5.6 5c2 0 3.5 1.1 4.4 2.6C11 6.1 12.4 5 14.4 5 18 5 19.6 8.5 18 11.7 15.5 16.1 12 21 12 21z"/></svg>';
+      circ.dataset.filled = "1";
+      toast("Added to Favorites ✓");
+    }
+  }
+
+  function topicRowHTML(key, active, branchKey){
+    var t = TOPICS[key];
+    return '<div class="topic-row'+(active?' active':'')+'" onclick="generate(\''+key+'\',\'detail\',\''+branchKey+'\')">'
+      + '<div class="play"><svg width="10" height="10" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg></div>'
+      + '<div class="t-body"><div class="tt">'+t.title+'</div>'
+      + (active ? '<div class="ts">tap to generate new episode</div>' : '')
+      + '</div>'
+      + '<div class="menu-dots" onclick="event.stopPropagation(); openTopicMenu(\''+key+'\')"><span></span><span></span><span></span></div>'
+      + '</div>';
+  }
+  function favTopicRowHTML(key, branchKey){
+    var t = TOPICS[key];
+    return '<div class="topic-row" onclick="generate(\''+key+'\',\'detail\',\''+branchKey+'\')">'
+      + '<div class="play"><svg width="10" height="10" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg></div>'
+      + '<div class="t-body"><div class="tt">'+t.title+'</div><div class="tsrc">from '+t.source+'</div></div>'
+      + '<div class="menu-dots" onclick="event.stopPropagation(); openTopicMenu(\''+key+'\')"><span></span><span></span><span></span></div>'
+      + '</div>';
+  }
+  function recoRowHTML(key, branchKey){
+    var t = TOPICS[key];
+    return '<div class="reco-row" onclick="generate(\''+key+'\',\'detail\')">'
+      + '<div class="play"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M8 5v14l11-7z"/></svg></div>'
+      + '<div class="t-body"><div class="tt">'+t.title+'</div></div>'
+      + '<div class="add-plus" onclick="event.stopPropagation(); promoteRecoTopic(\''+key+'\',\''+branchKey+'\');">+</div>'
+      + '</div>';
+  }
+
+  function promoteRecoTopic(key, branchKey){
+    var b = BRANCHES[branchKey];
+    var idx = b.reco.indexOf(key);
+    if(idx > -1) b.reco.splice(idx, 1);
+    b.topics.push(key);
+    renderBranch(branchKey);
+    toast("Added ✓");
+  }
+
+  function renderBranch(key){
+    lastDetailBranch = key;
+    var b = BRANCHES[key];
+    document.getElementById("detail-title").textContent = b.name;
+    var html = "";
+    html += '<div class="playall-btn" onclick="openGenerateConfig(\''+key+'\')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Play All · '+b.topics.length+' topics</div>';
+    b.topics.forEach(function(tk, i){
+      html += key === "favorites" ? favTopicRowHTML(tk, key) : topicRowHTML(tk, i === 0, key);
+    });
+    if(key !== "favorites"){
+      html += '<div class="add-topic-bar" onclick="openAddTopicModal()">+ Add a topic</div>';
+    }
+    if(b.reco && b.reco.length){
+      html += '<div class="reco-branch"><div class="label">Recommended · AI-suggested</div>';
+      b.reco.forEach(function(rk){ html += recoRowHTML(rk, key); });
+      html += '</div>';
+    }
+    document.getElementById("detail-body").innerHTML = html;
+  }
+  function openBranch(key){
+    renderBranch(key);
+    navigate("detail");
+  }
+
+  function collapseRecoCard(){
+    var card = document.getElementById("myfam-reco");
+    card.style.opacity = 0;
+    card.style.pointerEvents = "none";
+    setTimeout(function(){
+      card.style.display = "none";
+    }, 300);
+  }
+
+  function acceptReco(){
+    if(!BRANCHES["investing"]){
+      var color = ALBUM_COLORS[customAlbumCounter % ALBUM_COLORS.length];
+      customAlbumCounter++;
+      BRANCHES["investing"] = { name:"Investing & Markets", topics:["tesla","amazon","nasdaq100"], reco:null, color: color };
+      document.getElementById("homeCreateTile").insertAdjacentHTML("beforebegin", smallTileHTML("investing"));
+      document.getElementById("myfamGrid").insertAdjacentHTML("beforeend", bigTileHTML("investing"));
+    }
+    collapseRecoCard();
+    toast("Investing & Markets added to myFAM ✓");
+  }
+  function dismissReco(){
+    collapseRecoCard();
+    toast("Dismissed");
+  }
+
+  // ---------------- Modal (create / rename / add topic) ----------------
+  var _modalConfirmHandler = null;
+  function showModal(opts){
+    document.getElementById("modalTitle").textContent = opts.title;
+    var input = document.getElementById("modalInput");
+    input.placeholder = opts.placeholder || "";
+    input.value = opts.value || "";
+    document.getElementById("modalConfirmBtn").textContent = opts.confirmLabel || "Save";
+    _modalConfirmHandler = opts.onConfirm;
+    document.getElementById("modalOverlay").classList.add("active");
+    setTimeout(function(){ input.focus(); }, 60);
+  }
+  function closeModal(){
+    document.getElementById("modalOverlay").classList.remove("active");
+    _modalConfirmHandler = null;
+  }
+  document.getElementById("modalConfirmBtn").addEventListener("click", function(){
+    var input = document.getElementById("modalInput");
+    var val = input.value.trim();
+    if(!val) { input.focus(); return; }
+    var handler = _modalConfirmHandler;
+    if(!handler) return;
+    _modalConfirmHandler = null;
+    closeModal();
+    handler(val);
+  });
+  document.getElementById("modalInput").addEventListener("keydown", function(e){
+    if(e.key === "Enter"){ document.getElementById("modalConfirmBtn").click(); }
+  });
+
+  // ---------------- Action sheet (album menu) ----------------
+  function showActionSheet(items){
+    var card = document.getElementById("sheetCard");
+    var html = "";
+    items.forEach(function(it, i){
+      html += '<div class="sheet-item'+(it.danger ? ' danger' : '')+'" data-idx="'+i+'">'+it.label+'</div>';
+    });
+    html += '<div class="sheet-cancel" onclick="closeSheet()">Cancel</div>';
+    card.innerHTML = html;
+    card.querySelectorAll(".sheet-item").forEach(function(el){
+      el.onclick = function(){
+        var idx = +el.dataset.idx;
+        closeSheet();
+        items[idx].action();
+      };
+    });
+    document.getElementById("sheetOverlay").classList.add("active");
+  }
+  function closeSheet(){
+    document.getElementById("sheetOverlay").classList.remove("active");
+  }
+
+  // ---------------- Length dropdown ----------------
+  var SPEED_OPTIONS = ["1x", "1.2x", "1.5x", "2x"];
+  var selectedSpeed = "1.2x";
+  function updateSpeedLenPillText(){
+    var pill = document.getElementById("speedLenPill");
+    if(pill) pill.textContent = selectedSpeed + " · " + selectedLengthMinutes + " min";
+  }
+  function openLengthMenu(){
+    var items = [];
+    for(var m = 1; m <= 10; m++){
+      (function(minutes){
+        items.push({
+          label: minutes + " min" + (minutes === selectedLengthMinutes ? "  ✓" : ""),
+          action: function(){
+            selectedLengthMinutes = minutes;
+            var homeVal = document.getElementById("lengthVal");
+            if(homeVal) homeVal.firstChild.textContent = minutes + " min";
+            ["gcLengthVal","lengthModalVal"].forEach(function(id){
+              var el = document.getElementById(id);
+              if(el) el.textContent = minutes + " min";
+            });
+            updateSpeedLenPillText();
+          }
+        });
+      })(m);
+    }
+    showActionSheet(items);
+  }
+
+  function openSpeedMenu(){
+    var items = SPEED_OPTIONS.map(function(opt){
+      return {
+        label: opt + (opt === selectedSpeed ? "  ✓" : ""),
+        action: function(){
+          selectedSpeed = opt;
+          var el = document.getElementById("speedModalVal");
+          if(el) el.textContent = opt;
+          updateSpeedLenPillText();
+        }
+      };
+    });
+    showActionSheet(items);
+  }
+  function openSpeedLengthModal(){
+    document.getElementById("speedModalVal").textContent = selectedSpeed;
+    document.getElementById("lengthModalVal").textContent = selectedLengthMinutes + " min";
+    document.getElementById("speedLengthOverlay").classList.add("active");
+  }
+  function closeSpeedLengthModal(){
+    document.getElementById("speedLengthOverlay").classList.remove("active");
+  }
+
+  // ---------------- Go deeper (follow-up / steer the next episode) ----------------
+  var goDeeperContext = null;
+  function getGoDeeperBaseKey(context){
+    if(context === "playall") return BRANCHES[paAlbumKey] ? BRANCHES[paAlbumKey].topics[paIndex] : null;
+    if(context === "dailyfam") return DAILY_FAM_DAYS[dfDayIndex].topics[dfEpisodeIndex];
+    return currentPlayingTopicKey;
+  }
+  function openGoDeeper(context){
+    goDeeperContext = context;
+    stopSpeech();
+    document.getElementById("goDeeperInput").value = "";
+    document.getElementById("goDeeperOverlay").classList.add("active");
+    setTimeout(function(){ document.getElementById("goDeeperInput").focus(); }, 60);
+  }
+  function closeGoDeeper(){
+    document.getElementById("goDeeperOverlay").classList.remove("active");
+  }
+  function confirmGoDeeper(){
+    var val = document.getElementById("goDeeperInput").value.trim();
+    if(!val){ document.getElementById("goDeeperInput").focus(); return; }
+    var baseKey = getGoDeeperBaseKey(goDeeperContext);
+    var baseTitle = baseKey && TOPICS[baseKey] ? TOPICS[baseKey].title : "this";
+    closeGoDeeper();
+    var newKey = "deeper_" + Date.now();
+    TOPICS[newKey] = {
+      title: deriveTitleFromPrompt(val),
+      source: "Following up on " + baseTitle,
+      caption: "Picking up where that left off — " + val + "—",
+      prompt: val,
+      titleOverridden: false
+    };
+    var overlayMap = { player: "player", dailyfam: "dailyfam", playall: "playall" };
+    generate(newKey, overlayMap[goDeeperContext] || "home");
+  }
+
+  var FROM_OPTIONS = ["Today","Yesterday","This Week","This Month"];
+  var selectedFromRange = "Yesterday";
+  function openFromMenu(){
+    var items = FROM_OPTIONS.map(function(opt){
+      return {
+        label: opt + (opt === selectedFromRange ? "  ✓" : ""),
+        action: function(){
+          selectedFromRange = opt;
+          ["gcFromVal"].forEach(function(id){
+            var el = document.getElementById(id);
+            if(el) el.textContent = opt;
+          });
+        }
+      };
+    });
+    showActionSheet(items);
+  }
+
+  // ---------------- Album tile rendering ----------------
+  function smallTileHTML(key){
+    var b = BRANCHES[key];
+    return '<div class="branch-tile" data-album-tile="'+key+'" style="background:linear-gradient(160deg,'+b.color[0]+','+b.color[1]+');" onclick="openBranch(\''+key+'\')">'
+      + '<div class="mini-wave" style="color:var(--copper);"><span style="height:8px"></span><span style="height:14px"></span><span style="height:9px"></span><span style="height:16px"></span></div>'
+      + '<div class="tname">'+b.name+'</div></div>';
+  }
+  function bigTileHTML(key){
+    var b = BRANCHES[key];
+    return '<div class="tile-big" data-album-tile="'+key+'" style="background:linear-gradient(160deg,'+b.color[0]+','+b.color[1]+');" onclick="openBranch(\''+key+'\')">'
+      + '<div class="waveform" style="color:var(--copper);"><span style="height:8px"></span><span style="height:16px"></span><span style="height:10px"></span><span style="height:20px"></span><span style="height:12px"></span></div>'
+      + '<div class="tname">'+b.name+'</div></div>';
+  }
+
+  // ---------------- Create / Rename / Delete album ----------------
+  function openCreateAlbumModal(){
+    showModal({
+      title: "Create new album",
+      placeholder: "Album name",
+      confirmLabel: "Create",
+      onConfirm: function(value){
+        var key = "custom_" + (++customAlbumCounter);
+        var color = ALBUM_COLORS[customAlbumCounter % ALBUM_COLORS.length];
+        BRANCHES[key] = { name: value, topics: [], reco: null, color: color };
+        document.getElementById("homeCreateTile").insertAdjacentHTML("beforebegin", smallTileHTML(key));
+        document.getElementById("myfamGrid").insertAdjacentHTML("beforeend", bigTileHTML(key));
+        toast("Album created ✓");
+        openBranch(key);
+      }
+    });
+  }
+
+  function openRenameAlbumModal(key){
+    var b = BRANCHES[key];
+    showModal({
+      title: "Rename album",
+      placeholder: "Album name",
+      value: b.name,
+      confirmLabel: "Save",
+      onConfirm: function(value){
+        b.name = value;
+        document.getElementById("detail-title").textContent = value;
+        document.querySelectorAll('[data-album-tile="'+key+'"] .tname').forEach(function(el){ el.textContent = value; });
+        toast("Renamed ✓");
+      }
+    });
+  }
+
+  function deleteAlbum(key){
+    document.querySelectorAll('[data-album-tile="'+key+'"]').forEach(function(el){ el.remove(); });
+    delete BRANCHES[key];
+    toast("Album deleted");
+    goBack();
+  }
+
+  function openAlbumMenu(){
+    var key = lastDetailBranch;
+    if(key === "favorites"){
+      showActionSheet([
+        { label: "Share album", action: function(){ toast("Share (demo only)"); } }
+      ]);
+      return;
+    }
+    showActionSheet([
+      { label: "Rename album", action: function(){ openRenameAlbumModal(key); } },
+      { label: "Share album", action: function(){ toast("Share (demo only)"); } },
+      { label: "Delete album", danger: true, action: function(){ deleteAlbum(key); } }
+    ]);
+  }
+
+  // ---------------- Add topic ----------------
+  function deriveTitleFromPrompt(promptText){
+    var words = promptText.trim().replace(/\s+/g, " ").split(" ");
+    var take = words.slice(0, 7);
+    var title = take.map(function(w){ return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
+    if(words.length > 7) title += "…";
+    return title;
+  }
+
+
+
+  function openAddTopicModal(){
+    var key = lastDetailBranch;
+    showModal({
+      title: "Add a topic",
+      placeholder: "FAMiliarize me about…",
+      confirmLabel: "Add",
+      onConfirm: function(value){
+        var tkey = "customtopic_" + Date.now();
+        TOPICS[tkey] = {
+          title: deriveTitleFromPrompt(value),
+          prompt: value,
+          titleOverridden: false,
+          source: BRANCHES[key].name,
+          caption: "Live captions will appear here as this plays—"
+        };
+        BRANCHES[key].topics.push(tkey);
+        refreshTopicList(key);
+        toast("Topic added ✓");
+      }
+    });
+  }
+
+  // ---------------- Edit / remove individual episode (topic) ----------------
+  function openTopicMenu(topicKey){
+    var albumKey = lastDetailBranch;
+    var inFavorites = (albumKey === "favorites");
+    showActionSheet([
+      { label: "Edit prompt", action: function(){ openEditPromptModal(topicKey); } },
+      { label: "Edit title", action: function(){ openEditTitleModal(topicKey); } },
+      { label: inFavorites ? "Remove from Favorites" : "Remove topic", danger: true,
+        action: function(){ removeTopicFromAlbum(topicKey, albumKey); } }
+    ]);
+  }
+
+  function openEditPromptModal(topicKey){
+    var t = TOPICS[topicKey];
+    showModal({
+      title: "Edit prompt",
+      placeholder: "FAMiliarize me about…",
+      value: t.prompt || t.title,
+      confirmLabel: "Save",
+      onConfirm: function(value){
+        t.prompt = value;
+        if(!t.titleOverridden){
+          t.title = deriveTitleFromPrompt(value);
+        }
+        refreshTopicList(lastDetailBranch);
+        toast(t.titleOverridden ? "Prompt updated ✓" : "Prompt updated — title regenerated ✓");
+      }
+    });
+  }
+
+  function openEditTitleModal(topicKey){
+    var t = TOPICS[topicKey];
+    showModal({
+      title: "Edit title",
+      placeholder: "Topic title",
+      value: t.title,
+      confirmLabel: "Save",
+      onConfirm: function(value){
+        t.title = value;
+        t.titleOverridden = true;
+        refreshTopicList(lastDetailBranch);
+        toast("Title updated ✓");
+      }
+    });
+  }
+
+  function removeTopicFromAlbum(topicKey, albumKey){
+    var list = BRANCHES[albumKey].topics;
+    var idx = list.indexOf(topicKey);
+    if(idx > -1) list.splice(idx, 1);
+    refreshTopicList(albumKey);
+    toast(albumKey === "favorites" ? "Removed from Favorites" : "Topic removed");
+  }
+
+
+  // ---------------- Play All (segmented continuous playback) ----------------
+  var pendingPlayAllAlbum = null;
+  var paAlbumKey = null;
+  var paIndex = 0;
+  var paIsPlaying = true;
+  var paCcOn = false;
+
+  function openGenerateConfig(albumKey){
+    if(BRANCHES[albumKey].topics.length === 0){
+      toast("Add a topic first");
+      return;
+    }
+    pendingPlayAllAlbum = albumKey;
+    document.getElementById("gcLengthVal").textContent = selectedLengthMinutes + " min";
+    document.getElementById("gcFromVal").textContent = selectedFromRange;
+    document.getElementById("gcOverlay").classList.add("active");
+  }
+  function closeGenerateConfig(){
+    document.getElementById("gcOverlay").classList.remove("active");
+  }
+  function confirmGenerateConfig(){
+    var albumKey = pendingPlayAllAlbum;
+    closeGenerateConfig();
+    var overlay = document.getElementById("gen-detail");
+    if(overlay) overlay.classList.add("active");
+    setTimeout(function(){
+      if(overlay) overlay.classList.remove("active");
+      startPlayAll(albumKey);
+    }, 900);
+  }
+
+  function renderSegbar(){
+    var b = BRANCHES[paAlbumKey];
+    var html = "";
+    b.topics.forEach(function(tk, i){
+      var cls = i < paIndex ? "done" : (i === paIndex ? "current" : "");
+      html += '<div class="seg '+cls+'"><div class="fill"></div></div>';
+    });
+    document.getElementById("paSegbar").innerHTML = html;
+  }
+
+  function startPlayAll(albumKey){
+    paAlbumKey = albumKey;
+    paIndex = 0;
+    lastDetailBranch = albumKey;
+    document.getElementById("pa-kicker").textContent = BRANCHES[albumKey].name;
+    populatePlayAllTopic();
+    navigate("playall");
+  }
+
+  // ---------------- PlayFAM (past playlists) ----------------
+  var PLAYFAM_COLORS = {
+    morning: ["#4A3527","#5C4530"],
+    culture: ["#3B2E4A","#4A3960"],
+    aiupd: ["#1F3B45","#274954"]
+  };
+  var PLAYFAM_COLOR_ROTATION = [["#3B3550","#463F60"],["#2C3B45","#354655"],["#2B3B34","#33453D"],["#4A2E37","#5B3641"]];
+  var playfamColorCounter = 0;
+
+  function renderPlayfamGrid(){
+    var html = "";
+    Object.keys(BRANCHES).forEach(function(key){
+      var b = BRANCHES[key];
+      var color = PLAYFAM_COLORS[key];
+      if(!color){
+        color = PLAYFAM_COLOR_ROTATION[playfamColorCounter % PLAYFAM_COLOR_ROTATION.length];
+        playfamColorCounter++;
+        PLAYFAM_COLORS[key] = color;
+      }
+      html += '<div class="tile-big" onclick="openPlaylistMenu(\''+key+'\')" style="background:linear-gradient(160deg,'+color[0]+','+color[1]+');">'
+        + '<div class="waveform" style="color:#D8CFC0;"><span style="height:9px"></span><span style="height:17px"></span><span style="height:6px"></span><span style="height:15px"></span><span style="height:10px"></span></div>'
+        + '<div class="tname">'+b.name+'</div></div>';
+    });
+    html += '<div class="tile-big" style="background:transparent; border:1.5px dashed var(--border-strong);" onclick="openCreatePlaylistModal()">'
+      + '<div class="plus" style="font-size:22px;color:var(--text-faint);">+</div>'
+      + '<div class="tname" style="color:var(--text-muted);">Create Playlist</div></div>';
+    document.getElementById("playfamGrid").innerHTML = html;
+  }
+  function openPlayFAM(){
+    renderPlayfamGrid();
+    navigate("playfam");
+  }
+  function openPlaylistMenu(key){
+    showActionSheet([
+      { label: "Play", action: function(){ playPlaylistDirect(key); } },
+      { label: "Edit", action: function(){ openBranch(key); } }
+    ]);
+  }
+  function playPlaylistDirect(key){
+    if(BRANCHES[key].topics.length === 0){
+      toast("Add a topic first");
+      openBranch(key);
+      return;
+    }
+    var overlay = document.getElementById("gen-playfam");
+    overlay.classList.add("active");
+    setTimeout(function(){
+      overlay.classList.remove("active");
+      startPlayAll(key);
+    }, 900);
+  }
+  function openCreatePlaylistModal(){
+    document.getElementById("cpNameInput").value = "";
+    document.getElementById("cpOverlay").classList.add("active");
+    setTimeout(function(){ document.getElementById("cpNameInput").focus(); }, 60);
+  }
+  function closeCreatePlaylist(){
+    document.getElementById("cpOverlay").classList.remove("active");
+  }
+  function confirmCreatePlaylist(){
+    var name = document.getElementById("cpNameInput").value.trim();
+    if(!name){ document.getElementById("cpNameInput").focus(); return; }
+    closeCreatePlaylist();
+    var key = "playlist_" + Date.now();
+    BRANCHES[key] = { name: name, topics: [], reco: null };
+    pendingNewPlaylistKey = key;
+    lastDetailBranch = key;
+    document.getElementById("npTitle").textContent = name;
+    renderNewPlaylistTopics();
+    navigate("newplaylist");
+  }
+  function renderNewPlaylistTopics(){
+    var key = pendingNewPlaylistKey;
+    var b = BRANCHES[key];
+    var html = "";
+    b.topics.forEach(function(tk){
+      html += topicRowHTML(tk, false, key);
+    });
+    html += '<div class="add-topic-bar" onclick="openAddTopicModal()">+ Add a topic</div>';
+    document.getElementById("npBody").innerHTML = html;
+  }
+  var savingPlaylist = false;
+  function saveNewPlaylist(){
+    if(savingPlaylist) return;
+    var key = pendingNewPlaylistKey;
+    if(!key || !BRANCHES[key] || !BRANCHES[key].topics.length){
+      toast("Add at least one topic first");
+      return;
+    }
+    savingPlaylist = true;
+    pendingNewPlaylistKey = null;
+    renderPlayfamGrid();
+    goBack();
+    openBranch(key);
+    toast(BRANCHES[key].name + " saved ✓");
+    setTimeout(function(){ savingPlaylist = false; }, 500);
+  }
+  function cancelNewPlaylist(){
+    var key = pendingNewPlaylistKey;
+    delete BRANCHES[key];
+    pendingNewPlaylistKey = null;
+    goBack();
+  }
+
+  // ---------------- myFAM seeds feed ----------------
+  function openMyFamTab(){
+    renderSeedsFeed();
+    setTab("myfam");
+  }
+  function openSearchFAM(){
+    setTab("home");
+  }
+
+  var MYFAM_CARDS = [
+    { title:"The New College Football Arms Race", sub:"NIL money, facilities, recruiting, and the new power brokers.", icon:"sports", caption:"…the transfer portal changed everything, and nobody has fully adjusted to <mark>the new rules</mark>—" },
+    { title:"Why Founders Are Taking Back Control", sub:"Leadership, product, and the rise of operator CEOs.", icon:"business", caption:"…boards used to push founders out at this stage — now they're begging them to <mark>stay in the seat</mark>—" },
+    { title:"Why Everyone Is Talking About AI Agents", sub:"What they are, how they work, and why they matter now.", icon:"tech", caption:"…the difference is these don't just answer questions, they actually <mark>go do the task</mark>—" },
+    { title:"Inside the Best Hollywood Comebacks", sub:"The stories, the risks, and the second acts.", icon:"camera", caption:"…nobody wanted to finance the film, until one name attached and <mark>everything changed</mark>—" },
+    { title:"The Quiet Evolution of Golf", sub:"New players. New formats. Same obsession.", icon:"golf", caption:"…the format is faster, louder, and built for a completely <mark>different audience</mark>—" },
+    { title:"The Habits That Actually Change Your Life", sub:"What the research says. What people ignore.", icon:"leaf", caption:"…the habit that moved the needle most wasn't the one anyone <mark>expected</mark>—" },
+    { title:"The Fed's Next Move, Explained", sub:"Rate cuts, inflation data, and what markets are betting on.", icon:"business", caption:"…the market had already priced this in weeks ago, which is why the reaction was <mark>so muted</mark>—" },
+    { title:"Inside the New Space Race", sub:"Reusable rockets, private missions, and who's really winning.", icon:"rocket", caption:"…the cost per launch dropped so fast that the entire business model had to <mark>get rewritten</mark>—" },
+    { title:"How One Song Breaks the Internet", sub:"Playlists, algorithms, and the new path to a hit.", icon:"music", caption:"…it wasn't radio that made this one — it was a fifteen-second clip that <mark>nobody planned for</mark>—" },
+    { title:"The Restaurants Everyone's Talking About", sub:"Openings, closings, and where the lines are forming.", icon:"food", caption:"…the wait is over two hours now, and the owners still haven't <mark>bought a sign</mark>—" },
+    { title:"The Trade That Changed Everything", sub:"Front offices, cap space, and the deals nobody saw coming.", icon:"sports", caption:"…both front offices swear they weren't talking until <mark>Sunday night</mark>—" },
+    { title:"What We Actually Know About Sleep", sub:"The research, the myths, and what still isn't settled.", icon:"leaf", caption:"…most of the advice going around isn't wrong exactly, it's just <mark>incomplete</mark>—" }
+  ];
+
+  function seedThumbSVG(type){
+    var squiggle = '<path d="M-10 90 Q35 25 75 65 T170 35" fill="none" stroke="#2A2530" stroke-width="1.5" opacity="0.22"/>';
+    var icons = {
+      sports: '<circle cx="80" cy="60" r="26" fill="none" stroke="#2A2530" stroke-width="2.2"/><path d="M58 60h44M80 34v52M64 42l32 36M96 42L64 78" stroke="#2A2530" stroke-width="1.4" fill="none"/>',
+      golf: '<line x1="80" y1="28" x2="80" y2="92" stroke="#2A2530" stroke-width="2.2"/><path d="M80 28 L108 39 L80 50 Z" fill="#2A2530"/><ellipse cx="80" cy="92" rx="24" ry="6" fill="none" stroke="#2A2530" stroke-width="1.6"/>',
+      business: '<rect x="44" y="55" width="14" height="37" fill="none" stroke="#2A2530" stroke-width="2"/><rect x="64" y="40" width="14" height="52" fill="none" stroke="#2A2530" stroke-width="2"/><rect x="84" y="24" width="14" height="68" fill="none" stroke="#2A2530" stroke-width="2"/><rect x="104" y="47" width="14" height="45" fill="none" stroke="#2A2530" stroke-width="2"/>',
+      tech: '<rect x="52" y="34" width="56" height="48" rx="14" fill="none" stroke="#2A2530" stroke-width="2.2"/><circle cx="70" cy="58" r="4" fill="#2A2530"/><circle cx="90" cy="58" r="4" fill="#2A2530"/><line x1="80" y1="34" x2="80" y2="20" stroke="#2A2530" stroke-width="2"/><circle cx="80" cy="17" r="3" fill="none" stroke="#2A2530" stroke-width="2"/>',
+      rocket: '<path d="M80 20 L98 62 L98 84 L62 84 L62 62 Z" fill="none" stroke="#2A2530" stroke-width="2.2"/><path d="M62 74 L44 90 M98 74 L116 90" stroke="#2A2530" stroke-width="2"/><circle cx="80" cy="46" r="6" fill="none" stroke="#2A2530" stroke-width="1.8"/>',
+      camera: '<rect x="44" y="46" width="60" height="40" rx="4" fill="none" stroke="#2A2530" stroke-width="2.2"/><path d="M104 54l16-8v34l-16-8z" fill="none" stroke="#2A2530" stroke-width="2"/><circle cx="74" cy="66" r="11" fill="none" stroke="#2A2530" stroke-width="1.8"/>',
+      music: '<circle cx="66" cy="82" r="9" fill="none" stroke="#2A2530" stroke-width="2.2"/><line x1="75" y1="82" x2="75" y2="28" stroke="#2A2530" stroke-width="2.2"/><path d="M75 28 L102 37 L102 52 L75 43Z" fill="#2A2530"/>',
+      leaf: '<path d="M80 22C112 40 112 82 80 98C48 82 48 40 80 22Z" fill="none" stroke="#2A2530" stroke-width="2.2"/><path d="M80 30v62" stroke="#2A2530" stroke-width="1.6"/>',
+      food: '<line x1="56" y1="20" x2="56" y2="58" stroke="#2A2530" stroke-width="2"/><line x1="66" y1="20" x2="66" y2="58" stroke="#2A2530" stroke-width="2"/><line x1="76" y1="20" x2="76" y2="58" stroke="#2A2530" stroke-width="2"/><path d="M53 58 Q66 70 79 58 L70 92 L62 92Z" fill="none" stroke="#2A2530" stroke-width="2"/>'
+    };
+    return '<svg viewBox="0 0 160 120" preserveAspectRatio="xMidYMid meet">' + squiggle + (icons[type] || icons.leaf) + '</svg>';
+  }
+
+  function renderSeedsFeed(){
+    var idxPool = [];
+    for(var i = 0; i < MYFAM_CARDS.length; i++){ idxPool.push(i); }
+    var picks = shuffledPool(idxPool).slice(0, 6);
+    var html = picks.map(function(i){
+      var c = MYFAM_CARDS[i];
+      return '<div class="seed-card" onclick="startSeedJourney('+i+')">'
+        + '<div class="seed-thumb">'+seedThumbSVG(c.icon)+'</div>'
+        + '<div class="seed-card-body"><div class="seed-card-title">'+c.title+'</div><div class="seed-card-sub">'+c.sub+'</div></div>'
+        + '</div>';
+    }).join("");
+    document.getElementById("seedsFeed").innerHTML = html;
+  }
+  function refreshSeedsFeed(){
+    renderSeedsFeed();
+    toast("Fresh picks ✓");
+  }
+  function startSeedJourney(i){
+    var c = MYFAM_CARDS[i];
+    var key = "seedcard_" + i + "_" + Date.now();
+    TOPICS[key] = { title: c.title, source: "myFAM", caption: c.caption, prompt: c.title, titleOverridden: true };
+    generate(key);
+  }
+
+  // ---------------- myFAM search (3-4 candidates) ----------------
+  function openMyFamSearch(){
+    showModal({
+      title: "Search FAM",
+      placeholder: "What are you curious about?",
+      confirmLabel: "Search",
+      onConfirm: function(value){
+        var base = deriveTitleFromPrompt(value);
+        var candidates = [base, base + ": A Quick Overview", base + ": What You Need to Know", base + ": The Latest"];
+        var items = candidates.map(function(label){
+          return { label: label, action: function(){ startCustomJourney(label, value); } };
+        });
+        showActionSheet(items);
+      }
+    });
+  }
+  function startCustomJourney(title, promptText){
+    var key = "search_" + Date.now();
+    TOPICS[key] = { title: title, prompt: promptText, titleOverridden: true, source: "myFAM", caption: "Live captions will appear here as this plays—" };
+    pendingFromSearch = true;
+    generate(key);
+  }
+
+  function populatePlayAllTopic(){
+    var b = BRANCHES[paAlbumKey];
+    var key = b.topics[paIndex];
+    var t = TOPICS[key];
+    document.getElementById("pa-title").textContent = t.title;
+    document.getElementById("pa-src").textContent = "from " + t.source;
+    speakText(t.title, t.caption);
+    document.getElementById("pa-index").textContent = "Topic " + (paIndex + 1) + " of " + b.topics.length;
+    var totalSeconds = selectedLengthMinutes * 60;
+    document.getElementById("pa-totaltime").textContent = formatTime(totalSeconds);
+    document.getElementById("pa-curtime").textContent = formatTime(totalSeconds * 0.2);
+    document.getElementById("paSpeedLenPill").textContent = "1.2× · " + selectedLengthMinutes + " min";
+    paCcOn = false;
+    var panel = document.getElementById("paCcPanel");
+    panel.classList.remove("on"); panel.classList.add("off");
+    document.getElementById("pa-cc-text").textContent = "Displayed here when captions are turned on.";
+    panel.dataset.key = key;
+    var ccIcon = document.getElementById("paCcIcon");
+    ccIcon.classList.remove("on");
+    ccIcon.querySelector(".circ").innerHTML = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:8.5px;font-weight:700;color:var(--paper);opacity:0.55;">CC</span>';
+    ccIcon.querySelector(".lbl").innerHTML = "Captions<br>off";
+    paIsPlaying = true;
+    document.getElementById("paPlayIcon").innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="var(--paper)"><rect x="5" y="4" width="5" height="16" rx="1"/><rect x="14" y="4" width="5" height="16" rx="1"/></svg>';
+    document.getElementById("paPlayIcon2").innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
+    renderSegbar();
+  }
+
+  function paTogglePlay(){
+    paIsPlaying = !paIsPlaying;
+    var svgArt = paIsPlaying
+      ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="var(--paper)"><rect x="5" y="4" width="5" height="16" rx="1"/><rect x="14" y="4" width="5" height="16" rx="1"/></svg>'
+      : '<svg width="17" height="17" viewBox="0 0 24 24" fill="var(--paper)"><path d="M8 5v14l11-7z"/></svg>';
+    var svgMid = paIsPlaying
+      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>'
+      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><path d="M8 5v14l11-7z"/></svg>';
+    document.getElementById("paPlayIcon").innerHTML = svgArt;
+    document.getElementById("paPlayIcon2").innerHTML = svgMid;
+    document.querySelector("#screen-playall .pa-side:nth-child(2) .lbl").textContent = paIsPlaying ? "pause" : "play";
+    if(paIsPlaying){ resumeSpeech(); } else { pauseSpeech(); }
+  }
+
+  function paToggleCC(){
+    var panel = document.getElementById("paCcPanel");
+    var icon = document.getElementById("paCcIcon");
+    if(paCcOn){
+      panel.classList.remove("on"); panel.classList.add("off");
+      document.getElementById("pa-cc-text").textContent = "Displayed here when captions are turned on.";
+      icon.classList.remove("on");
+      icon.querySelector(".circ").innerHTML = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:8.5px;font-weight:700;color:var(--paper);opacity:0.55;">CC</span>';
+      icon.querySelector(".lbl").innerHTML = "Captions<br>off";
+    } else {
+      var key = panel.dataset.key;
+      var t = TOPICS[key];
+      panel.classList.remove("off"); panel.classList.add("on");
+      document.getElementById("pa-cc-text").innerHTML = t.caption;
+      icon.classList.add("on");
+      icon.querySelector(".circ").innerHTML = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:9px;font-weight:700;color:var(--ink);">CC</span>';
+      icon.querySelector(".lbl").innerHTML = "Captions<br>on";
+    }
+    paCcOn = !paCcOn;
+  }
+
+  function paSkip(){
+    var b = BRANCHES[paAlbumKey];
+    if(paIndex >= b.topics.length - 1){
+      toast("That's the last topic in this album");
+      return;
+    }
+    paIndex++;
+    var overlay = document.getElementById("gen-playall");
+    overlay.classList.add("active");
+    setTimeout(function(){
+      overlay.classList.remove("active");
+      populatePlayAllTopic();
+    }, 700);
+  }
+
+  function paRegenerate(){
+    var overlay = document.getElementById("gen-playall");
+    overlay.classList.add("active");
+    setTimeout(function(){
+      overlay.classList.remove("active");
+      populatePlayAllTopic();
+      toast("Regenerated ✓");
+    }, 700);
+  }
+
+  // ---------------- Share via FAM contacts or phone number ----------------
+  var FAM_CONTACTS = [
+    { name:"Beth Solomon", initials:"BS", color:"#7d9384" },
+    { name:"Mike Solomon", initials:"MS", color:"#c9a339" },
+    { name:"Rachel Solomon", initials:"RS", color:"#e2634c" }
+  ];
+
+  var MESSAGE_THREADS = {
+    "Beth Solomon": [
+      { dir:"out", type:"fam", key:"spacex", time:"2d ago" },
+      { dir:"in", type:"text", text:"didn't realize they scrubbed this launch twice last month before it finally flew", time:"2d ago" }
+    ],
+    "Mike Solomon": [
+      { dir:"out", type:"fam", key:"nvidiaupdate", time:"1d ago" },
+      { dir:"in", type:"text", text:"Just listened — this explains a lot about why the stock moved today", time:"1d ago" }
+    ],
+    "Rachel Solomon": [
+      { dir:"out", type:"fam", key:"worldcup", time:"3d ago" },
+      { dir:"in", type:"text", text:"That comeback in the second half was unreal, can't believe I missed it live", time:"3d ago" }
+    ]
+  };
+
+  function contactByName(name){
+    return FAM_CONTACTS.filter(function(c){ return c.name === name; })[0];
+  }
+
+  function openConnectScreen(){
+    navigate("connect");
+  }
+
+  function openMessages(){
+    renderThreadList();
+    setTab("messages");
+  }
+
+  function renderThreadList(){
+    var html = FAM_CONTACTS.map(function(c){
+      var msgs = MESSAGE_THREADS[c.name] || [];
+      var last = msgs[msgs.length - 1];
+      var preview = last ? (last.type === "fam" ? "Shared: " + TOPICS[last.key].title : last.text) : "No messages yet";
+      var time = last ? last.time : "";
+      return '<div class="thread-row" onclick="openThread(\''+c.name+'\')">'
+        + '<div class="av" style="background:'+c.color+';">'+c.initials+'</div>'
+        + '<div class="tr-body"><div class="tr-name">'+c.name+'</div><div class="tr-preview">'+preview+'</div></div>'
+        + '<div class="tr-time">'+time+'</div>'
+        + '</div>';
+    }).join("");
+    document.getElementById("threadList").innerHTML = html;
+  }
+
+  var currentThreadName = null;
+  function openThread(name){
+    currentThreadName = name;
+    var c = contactByName(name);
+    document.getElementById("thread-name").textContent = name;
+    var avEl = document.getElementById("thread-av");
+    avEl.textContent = c.initials;
+    avEl.style.background = c.color;
+    renderThreadBody();
+    navigate("thread");
+  }
+
+  var NEW_CONTACT_COLORS = ["#8FB4D9","#C3A8E0","#C9A876","#7d9384","#c9a339","#e2634c"];
+  var newContactCounter = 0;
+
+  function openNewChatModal(){
+    document.getElementById("newChatInput").value = "";
+    var html = FAM_CONTACTS.map(function(c){
+      return '<div class="share-contact" onclick="jumpToExistingChat(\''+c.name+'\')"><div class="av" style="background:'+c.color+';">'+c.initials+'</div><div class="nm">'+c.name.split(" ")[0]+'</div></div>';
+    }).join("");
+    document.getElementById("newChatContacts").innerHTML = html;
+    document.getElementById("newChatOverlay").classList.add("active");
+  }
+  function closeNewChatModal(){
+    document.getElementById("newChatOverlay").classList.remove("active");
+  }
+  function jumpToExistingChat(name){
+    closeNewChatModal();
+    openThread(name);
+  }
+  function deriveInitials(text){
+    var words = text.trim().split(/\s+/);
+    if(words.length >= 2){ return (words[0][0] + words[1][0]).toUpperCase(); }
+    return text.trim().slice(0, 2).toUpperCase();
+  }
+  function confirmNewChat(){
+    var val = document.getElementById("newChatInput").value.trim();
+    if(!val) return;
+    if(contactByName(val)){
+      closeNewChatModal();
+      openThread(val);
+      return;
+    }
+    var color = NEW_CONTACT_COLORS[newContactCounter % NEW_CONTACT_COLORS.length];
+    newContactCounter++;
+    FAM_CONTACTS.push({ name: val, initials: deriveInitials(val), color: color });
+    MESSAGE_THREADS[val] = [];
+    closeNewChatModal();
+    renderThreadList();
+    openThread(val);
+  }
+
+  function renderThreadBody(){
+    var msgs = MESSAGE_THREADS[currentThreadName] || [];
+    var html = msgs.map(function(m){
+      var dirCls = m.dir === "out" ? "out" : "in";
+      if(m.type === "fam"){
+        var t = TOPICS[m.key];
+        return '<div class="msg-row '+dirCls+'"><div class="msg-fam-card" onclick="generate(\''+m.key+'\')"><div class="mf-play"><svg width="10" height="10" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg></div><div class="mf-body"><div class="mf-title">'+t.title+'</div><div class="mf-src">'+t.source+'</div></div></div></div>';
+      }
+      if(m.type === "transcript"){
+        var tt = TOPICS[m.key];
+        return '<div class="msg-row '+dirCls+'"><div class="msg-fam-card" style="cursor:default;"><div class="mf-body"><div class="mf-src" style="margin-bottom:4px;">TRANSCRIPT · '+tt.title+'</div><div style="font-size:11px; color:var(--text); line-height:1.45;">'+tt.caption+'</div></div></div></div>';
+      }
+      return '<div class="msg-row '+dirCls+'"><div class="msg-bubble">'+m.text+'</div></div>';
+    }).join("");
+    var body = document.getElementById("thread-body");
+    body.innerHTML = html;
+    body.scrollTop = body.scrollHeight;
+  }
+
+  document.getElementById("threadInput").addEventListener("keydown", function(e){
+    if(e.key === "Enter"){ sendThreadMessage(); }
+  });
+  function sendThreadMessage(){
+    var input = document.getElementById("threadInput");
+    var val = input.value.trim();
+    if(!val || !currentThreadName) return;
+    input.value = "";
+    if(!MESSAGE_THREADS[currentThreadName]) MESSAGE_THREADS[currentThreadName] = [];
+    MESSAGE_THREADS[currentThreadName].push({ dir:"out", type:"text", text:val, time:"Just now" });
+    renderThreadBody();
+  }
+
+  function getCurrentPlayingTopicKey(){
+    var active = document.querySelector(".screen.active");
+    if(!active) return null;
+    if(active.id === "screen-player") return currentPlayingTopicKey;
+    if(active.id === "screen-playall") return BRANCHES[paAlbumKey] ? BRANCHES[paAlbumKey].topics[paIndex] : null;
+    return null;
+  }
+
+  var pendingShareTopicKey = null;
+  var shareMode = "audio";
+  function setShareMode(mode){
+    shareMode = mode;
+    document.getElementById("stAudio").classList.toggle("active", mode === "audio");
+    document.getElementById("stTranscript").classList.toggle("active", mode === "transcript");
+  }
+  function openShareModal(){
+    pendingShareTopicKey = getCurrentPlayingTopicKey();
+    setShareMode("audio");
+    var html = FAM_CONTACTS.map(function(c){
+      return '<div class="share-contact" onclick="sendToContact(\''+c.name+'\')"><div class="av" style="background:'+c.color+';">'+c.initials+'</div><div class="nm">'+c.name.split(" ")[0]+'</div></div>';
+    }).join("");
+    document.getElementById("shareContacts").innerHTML = html;
+    document.getElementById("shareOverlay").classList.add("active");
+  }
+  function closeShareModal(){
+    document.getElementById("shareOverlay").classList.remove("active");
+  }
+  function sendToContact(name){
+    closeShareModal();
+    if(pendingShareTopicKey){
+      if(!MESSAGE_THREADS[name]) MESSAGE_THREADS[name] = [];
+      MESSAGE_THREADS[name].push({ dir:"out", type: shareMode === "transcript" ? "transcript" : "fam", key:pendingShareTopicKey, time:"Just now" });
+    }
+    toast((shareMode === "transcript" ? "Transcript sent to " : "Sent to ") + name.split(" ")[0] + " ✓");
+  }
+
+  // ---------------- Connect your accounts (auto-built folders) ----------------
+  var CONNECT_SOURCES = {
+    instagram:{ label:"Instagram", albumName:"Instagram Trends", topics:["igreels","igfollows","igtrend"], color:["#4A2E45","#5C3958"] },
+    twitter:{ label:"X (Twitter)", albumName:"X Trends", topics:["xtrend","xfollows","xthreads"], color:["#25313D","#2E3D4B"] },
+    tiktok:{ label:"TikTok", albumName:"TikTok For You", topics:["ttsounds","ttcreators","tttrend"], color:["#2A2A2E","#343438"] },
+    location:{ label:"Location & Weather", albumName:"Local Updates", topics:["localnews","localevents","localweather"], color:["#2B3B34","#33453D"] },
+    sports:{ label:"ESPN & Sports Apps", albumName:"My Teams", topics:["myteamsscores","myteamstrades","myteamsmatchups"], color:["#3D2A24","#4A332B"] }
+  };
+  var connectedAlbums = {};
+
+  function toggleConnect(el, sourceKey){
+    var isOn = el.classList.contains("on");
+    if(isOn){
+      el.classList.remove("on");
+      var existingKey = connectedAlbums[sourceKey];
+      if(existingKey){
+        document.querySelectorAll('[data-album-tile="'+existingKey+'"]').forEach(function(node){ node.remove(); });
+        delete BRANCHES[existingKey];
+        delete connectedAlbums[sourceKey];
+        toast("Disconnected — folder removed");
+      }
+      return;
+    }
+    el.classList.add("on");
+    toast("Analyzing your activity…");
+    setTimeout(function(){
+      var src = CONNECT_SOURCES[sourceKey];
+      var albumKey = "connect_" + sourceKey;
+      BRANCHES[albumKey] = { name: src.albumName, topics: src.topics.slice(), reco: null };
+      connectedAlbums[sourceKey] = albumKey;
+      var smallHtml = '<div class="branch-tile" data-album-tile="'+albumKey+'" style="background:linear-gradient(160deg,'+src.color[0]+','+src.color[1]+');" onclick="openBranch(\''+albumKey+'\')"><div class="mini-wave"><span style="height:9px"></span><span style="height:15px"></span><span style="height:7px"></span><span style="height:12px"></span></div><div class="tname">'+src.albumName+'</div></div>';
+      var bigHtml = '<div class="tile-big" data-album-tile="'+albumKey+'" style="background:linear-gradient(160deg,'+src.color[0]+','+src.color[1]+');" onclick="openBranch(\''+albumKey+'\')"><div class="waveform" style="color:#D8CFC0;"><span style="height:9px"></span><span style="height:17px"></span><span style="height:6px"></span><span style="height:15px"></span><span style="height:10px"></span></div><div class="tname">'+src.albumName+'</div></div>';
+      document.getElementById("homeCreateTile").insertAdjacentHTML("beforebegin", smallHtml);
+      document.getElementById("myfamGrid").insertAdjacentHTML("beforeend", bigHtml);
+      toast(src.albumName + " created ✓");
+    }, 900);
+  }
+
+  // ---------------- Daily FAM (Stories-style tab) ----------------
+  var dfDayIndex = 0;
+  var dfEpisodeIndex = 0;
+
+  function openDailyFam(){
+    dfDayIndex = 0;
+    dfEpisodeIndex = 0;
+    setTab("dailyfam");
+    dfPopulate();
+  }
+  function dfClose(){
+    dfActive = false;
+    setTab("home");
+  }
+  var dfIsPlaying = true;
+  var dfSpeechToken = 0;
+  function dfPopulate(){
+    var day = DAILY_FAM_DAYS[dfDayIndex];
+    var key = day.topics[dfEpisodeIndex];
+    var t = TOPICS[key];
+    document.getElementById("df-title").textContent = t.title;
+    document.getElementById("df-date").textContent = day.rel;
+    document.getElementById("df-daylabel").textContent = day.rel;
+    dfIsPlaying = true;
+    document.getElementById("dfPlayIcon2").innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
+    dfSpeechToken++;
+    var myToken = dfSpeechToken;
+    speakText(t.title, t.caption, function(){
+      if(myToken === dfSpeechToken && dfActive){ dfNext(); }
+    });
+  }
+  function dfTogglePlay(){
+    dfIsPlaying = !dfIsPlaying;
+    document.getElementById("dfPlayIcon2").innerHTML = dfIsPlaying
+      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>'
+      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--ink)"><path d="M8 5v14l11-7z"/></svg>';
+    if(dfIsPlaying){ resumeSpeech(); } else { pauseSpeech(); }
+  }
+  function dfHandleTap(e){
+    var stage = document.getElementById("dfStage");
+    var rect = stage.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    if(x < rect.width / 2){ dfPrev(); } else { dfNext(); }
+  }
+  function dfPrev(){
+    if(dfEpisodeIndex > 0){
+      dfEpisodeIndex--;
+      dfTransition();
+      return;
+    }
+    if(dfDayIndex > 0){
+      dfDayIndex--;
+      dfEpisodeIndex = DAILY_FAM_DAYS[dfDayIndex].topics.length - 1;
+      dfTransition();
+    }
+  }
+  function dfNext(){
+    var day = DAILY_FAM_DAYS[dfDayIndex];
+    if(dfEpisodeIndex < day.topics.length - 1){
+      dfEpisodeIndex++;
+      dfTransition();
+      return;
+    }
+    if(dfDayIndex < DAILY_FAM_DAYS.length - 1){
+      dfDayIndex++;
+      dfEpisodeIndex = 0;
+      dfTransition();
+      return;
+    }
+    dfClose();
+  }
+  function dfTransition(){
+    var overlay = document.getElementById("gen-dailyfam");
+    overlay.classList.add("active");
+    setTimeout(function(){
+      overlay.classList.remove("active");
+      dfPopulate();
+    }, 500);
+  }
+  function openDayPicker(){
+    var items = DAILY_FAM_DAYS.map(function(day, i){
+      return {
+        label: day.rel + " — " + day.label + (i === dfDayIndex ? "  ✓" : ""),
+        action: function(){
+          dfDayIndex = i;
+          dfEpisodeIndex = 0;
+          dfPopulate();
+        }
+      };
+    });
+    showActionSheet(items);
+  }
+
+  // ---------------- Splash screen ----------------
+  function showSplash(){
+    var splash = document.getElementById("splashScreen");
+    if(!splash) return;
+    splash.classList.remove("hide");
+    setTimeout(function(){
+      splash.classList.add("hide");
+    }, 1400);
+  }
+  renderSeedsFeed();
+  showSplash();
+</script>
 </body>
 </html>

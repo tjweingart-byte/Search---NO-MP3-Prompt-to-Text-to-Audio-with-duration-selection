@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search &rarr; Podcast</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <h1>Ask anything. Hear the answer.</h1>
+  <p class="sub">A spoken briefing, written on demand and read aloud as it is written.</p>
+
+  <form id="form" autocomplete="off">
+    <input id="query" name="query" type="text" maxlength="500"
+           placeholder="What would you like a briefing on?" required>
+
+    <div class="length">
+      <label for="minutes">Length</label>
+      <input id="minutes" type="range" min="1" max="10" step="1" value="3">
+      <output id="minutesOut">3 minutes</output>
+    </div>
+
+    <button id="go" type="submit">Listen</button>
+    <button id="stop" type="button" class="ghost" hidden>Stop</button>
+  </form>
+
+  <section id="status" class="status" aria-live="polite"></section>
+
+  <section class="meter" hidden id="meterWrap">
+    <div class="bar"><div id="bar"></div></div>
+    <div class="times"><span id="elapsed">0:00</span><span id="total">3:00</span></div>
+  </section>
+
+  <details id="transcriptWrap" hidden>
+    <summary>Transcript</summary>
+    <div id="transcript"></div>
+  </details>
+
+  <p class="engine" id="engine"></p>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

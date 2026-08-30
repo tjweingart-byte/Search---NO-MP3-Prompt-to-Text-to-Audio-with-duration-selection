@@ -80,7 +80,9 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `cache.py` | Shared script cache: key normalization, TTL policy, SQLite store |
 | `demo_script.py` | Built-in sample script used when there are no credentials |
 | `config.py` | Every setting, overridable by environment variable |
-| `static/` | Interface and the streaming Web Audio player |
+| `static/index.html` | The FAM prototype interface, wired to live audio |
+| `static/fam-audio.js` | Streaming player the prototype calls instead of speechSynthesis |
+| `static/reference-ui.html` | The original minimal test interface, kept for debugging |
 | `tests/test_pipeline.py` | Runs offline — no API key, no TTS needed |
 | `PROBLEMS.md` | Every problem hit while building this, and its solution |
 
@@ -139,6 +141,23 @@ including when the model misses its word budget by ±30%.
 See `.env.example`. Notable knobs: `MODEL` (defaults to `claude-opus-5`;
 `claude-sonnet-5` is cheaper and faster), `ENABLE_WEB_SEARCH`, `TTS_ENGINE`,
 `TARGET_WPM`, and `RATE_LIMIT_SECONDS`.
+
+## How the prototype is wired
+
+`static/index.html` is the FAM clickable prototype, unchanged visually. It used
+`window.speechSynthesis` to read a canned caption aloud; that layer is now
+`static/fam-audio.js`, which streams a real briefing from the server. Three
+functions changed and nothing else:
+
+| Prototype function | Now does |
+|---|---|
+| `speakText(title, ...)` | `FamAudio.play(title, selectedLengthMinutes, ...)` — the topic title becomes the query |
+| `pauseSpeech` / `resumeSpeech` / `stopSpeech` | Suspend / resume / abort the audio stream |
+| `generate()` | Holds the "FAMiliarizing you…" overlay until real audio arrives, instead of a fixed 900 ms |
+
+The player's progress bar and timer, previously fixed at 44%, now track actual
+playback position. `selectedLengthMinutes` already existed and is passed
+straight through, so the 1–10 minute picker drives real episode length.
 
 ## Troubleshooting
 
