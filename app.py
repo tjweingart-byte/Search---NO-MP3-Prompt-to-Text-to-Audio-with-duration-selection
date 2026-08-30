@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from cache import MemoryScriptCache, SqliteScriptCache, build_cache
+from demo_script import DemoGenerator
 from config import settings
 from pipeline import GenerationStats, PodcastPipeline
 from script_generator import ScriptGenerator, plan_episode
@@ -58,6 +59,21 @@ def friendly_error(exc: Exception) -> str:
 # One cache shared by every request this worker serves - and, with the SQLite
 # backend, by every other worker on the machine too.
 SCRIPT_CACHE = build_cache()
+
+# With no credentials the app runs on a built-in sample script instead of
+# refusing to start. Everything downstream of the model - streaming, pacing,
+# duration matching, playback - is exercised for real; only the writer is
+# canned. This is what makes the audio approach verifiable before anyone has
+# an API key in place.
+DEMO_MODE = not settings.anthropic_api_key
+
+
+def _make_pipeline() -> PodcastPipeline:
+    if DEMO_MODE:
+        return PodcastPipeline(
+            generator=DemoGenerator(), engine=build_engine(), cache=None
+        )
+    return PodcastPipeline(engine=build_engine(), cache=SCRIPT_CACHE)
 
 
 def _cache_report() -> dict:
@@ -107,6 +123,7 @@ class ScriptRequest(BaseModel):
 async def health() -> dict:
     return {
         "status": "ok",
+        "mode": "demo" if DEMO_MODE else "live",
         "model": settings.model,
         "web_search": settings.enable_web_search,
         "api_key_configured": bool(settings.anthropic_api_key),
@@ -126,7 +143,8 @@ async def health() -> dict:
 async def script(req: ScriptRequest, request: Request) -> dict:
     _rate_limit(request)
     plan = _validated_plan(req.query, req.minutes)
-    text = await ScriptGenerator().full_script(plan)
+    generator = DemoGenerator() if DEMO_MODE else ScriptGenerator()
+    text = " ".join([s async for s in generator.stream_sentences(plan)])
     return {
         "query": plan.query,
         "minutes": plan.minutes,
@@ -153,7 +171,7 @@ async def audio(
     plan = _validated_plan(q, minutes)
 
     try:
-        pipeline = PodcastPipeline(engine=build_engine(), cache=SCRIPT_CACHE)
+        pipeline = _make_pipeline()
     except TTSUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

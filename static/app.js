@@ -194,20 +194,24 @@ fetch("/api/health")
     engineEl.textContent = `${h.model} · voice: ${h.tts.selected} · ${h.sample_rate} Hz`;
 
     const notices = [];
-    if (!h.api_key_configured) {
+    if (h.mode === "demo") {
+      // Demo mode is not an error: the audio pipeline is fully real, and the
+      // whole point is that it can be judged before any key exists.
       notices.push({
-        blocking: true,
-        text: "Listen is disabled: the server has no Anthropic credentials. Put " +
-              "ANTHROPIC_API_KEY in a .env file in the folder you run ./run.sh from, " +
-              "then restart the server.",
+        blocking: false,
+        text: "Demo mode — no Anthropic credentials, so a built-in sample script is " +
+              "used instead of Claude. Press Listen: the streaming, the timing and the " +
+              "playback are all real, so this is enough to judge the audio approach. " +
+              "Add ANTHROPIC_API_KEY to .env and restart for real briefings.",
       });
     }
     if (h.tts.selected === "debug") {
       notices.push({
         blocking: false,
-        text: "No speech engine installed, so you would hear a placeholder tone " +
-              "rather than a voice. Install espeak-ng (sudo apt-get install espeak-ng, " +
-              "or brew install espeak-ng) and restart the server.",
+        text: "No speech engine found, so you will hear a placeholder tone rather than " +
+              "a voice. On a Mac the built-in `say` voice should be picked up " +
+              "automatically — if you are seeing this on a Mac, check the server log. " +
+              "Otherwise install espeak-ng and restart.",
       });
     }
 

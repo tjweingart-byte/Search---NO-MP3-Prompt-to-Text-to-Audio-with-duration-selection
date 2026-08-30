@@ -8,13 +8,32 @@ Written by Claude (with live web search), read aloud straight off the script.
 **No MP3, no audio file, no encoder** — the samples go from the speech engine to
 your speakers over a single streaming HTTP response.
 
+## Just want to check the audio approach works?
+
+Run it with **no API key at all**. The server starts in demo mode: a built-in
+sample script stands in for Claude, and everything downstream — the streaming,
+the pacing, the duration matching, the playback — is the real thing.
+
+```bash
+pip install -r requirements.txt
+python3 -m uvicorn app:app --port 8000     # no .env needed
+```
+
+Open http://localhost:8000, press Listen, and change the length slider. If audio
+starts within a second or two and a 3-minute selection produces 3 minutes of
+audio, the approach is working and the interface can be built against it.
+`/api/health` reports `"mode": "demo"` so nothing is mistaken for real output.
+
+On macOS the built-in `say` voice is used automatically — nothing to install.
+
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
 
 # A voice. espeak-ng is instant and zero-config; piper sounds far better.
-sudo apt-get install espeak-ng        # or: brew install espeak-ng
+# A voice. macOS already has one (`say`) - nothing to do there.
+sudo apt-get install espeak-ng        # Linux
 
 cp .env.example .env                  # add your ANTHROPIC_API_KEY
 ./run.sh                              # http://localhost:8000
@@ -59,6 +78,7 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `tts.py` | Pluggable speech engines (piper / espeak / debug), all raw PCM |
 | `audio_utils.py` | Live WAV header, silence, the pacing controller |
 | `cache.py` | Shared script cache: key normalization, TTL policy, SQLite store |
+| `demo_script.py` | Built-in sample script used when there are no credentials |
 | `config.py` | Every setting, overridable by environment variable |
 | `static/` | Interface and the streaming Web Audio player |
 | `tests/test_pipeline.py` | Runs offline — no API key, no TTS needed |

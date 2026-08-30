@@ -149,6 +149,64 @@ class PiperEngine(TTSEngine):
         return bool(settings.piper_model) and shutil.which(settings.piper_binary) is not None
 
 
+class SayEngine(TTSEngine):
+    """macOS built-in speech. Pre-installed on every Mac - nothing to download.
+
+    `say` writes its output through CoreAudio, which wants a seekable
+    destination for a WAV container, so each sentence goes to a scratch file
+    that is read and deleted immediately. That is a per-sentence temporary of a
+    second or two, not an episode file: no encoding happens, the episode is
+    never assembled on disk, and streaming latency is unchanged.
+
+    Rate is a direct flag (-r words per minute), so the pacing controller maps
+    onto it exactly as it does for espeak.
+    """
+
+    name = "say"
+
+    def __init__(self) -> None:
+        self._rate: int | None = None
+
+    async def synth(self, text: str, wpm: float) -> bytes:
+        import os
+        import tempfile
+
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            cmd = [
+                settings.say_binary,
+                "-r", str(int(round(wpm))),
+                "--data-format=LEI16@22050",
+                "--file-format=WAVE",
+                "-o", path,
+            ]
+            if settings.say_voice:
+                cmd[1:1] = ["-v", settings.say_voice]
+            await self._run(cmd, stdin_text=text)
+            with open(path, "rb") as handle:
+                wav = handle.read()
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        detected = _wav_sample_rate(wav)
+        if detected:
+            self._rate = detected
+        return strip_wav_header(wav)
+
+    @property
+    def sample_rate(self) -> int:
+        return self._rate or 22050
+
+    @staticmethod
+    def available() -> bool:
+        import sys as _sys
+
+        return _sys.platform == "darwin" and shutil.which(settings.say_binary) is not None
+
+
 class DebugEngine(TTSEngine):
     """No speech: a soft tone whose length matches what the text would take.
 
@@ -200,6 +258,7 @@ def build_engine(preference: str | None = None) -> TTSEngine:
     explicit = {
         "piper": PiperEngine,
         "espeak": EspeakEngine,
+        "say": SayEngine,
         "debug": DebugEngine,
     }
     if choice in explicit:
@@ -208,7 +267,8 @@ def build_engine(preference: str | None = None) -> TTSEngine:
             raise TTSUnavailable(f"TTS engine '{choice}' is not installed or not configured")
         return cls()
 
-    for cls in (PiperEngine, EspeakEngine):
+    # Preference order: best voice first, then anything already on the machine.
+    for cls in (PiperEngine, EspeakEngine, SayEngine):
         if cls.available():
             return cls()
     return DebugEngine()
@@ -220,5 +280,6 @@ def engine_report() -> dict:
         "selected": build_engine().name,
         "piper": PiperEngine.available(),
         "espeak": EspeakEngine.available(),
+        "say": SayEngine.available(),
         "debug": True,
     }

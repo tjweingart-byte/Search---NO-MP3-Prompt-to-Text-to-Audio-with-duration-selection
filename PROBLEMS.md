@@ -391,3 +391,39 @@ Reported with a screenshot. Two more UI problems, both mine:
    now surface there in red.
 4. Check your system volume and that the tab is not muted. The stream is played
    through Web Audio, so it obeys the tab's mute state.
+
+
+---
+
+## 13. You cannot evaluate the audio approach without an API key
+
+The most useful failure of the whole build. Every blocker reported so far — the
+silent episode, the disabled button, the spinner — had the same root: the app
+required Claude credentials before it would produce a single second of sound. So
+the question "does instant streaming audio actually work?" could not be answered
+without first solving an unrelated setup problem.
+
+That is backwards. The audio pipeline is the risky, novel part; the model call is
+the routine part. The risky part should be the easiest to try.
+
+**Demo mode** (`demo_script.py`). With no credentials the server now runs on a
+built-in sample script instead of refusing. Everything downstream of the writer
+is real: the same sentence streaming, the same pacing controller, the same
+raw-PCM transport, the same player. `/api/health` reports `"mode": "demo"` and
+the interface says so plainly, so nothing is mistaken for real output.
+
+Verified with no key present: a 1-minute request produced 60.00 s and a 3-minute
+request 180.00 s, and in Chromium the button was enabled, 86 buffers were
+scheduled, and peak amplitude was 0.80.
+
+**macOS `say`** (`tts.SayEngine`). Requiring a Homebrew install of espeak-ng
+before hearing anything was a second unnecessary gate; every Mac already ships a
+speech engine, and it sounds considerably better. It is now auto-detected ahead
+of the placeholder tone. `say` needs a seekable destination for a WAV container,
+so each sentence goes to a scratch file that is read and deleted immediately —
+a per-sentence temporary of a second or two, not an episode file. No encoding
+happens and nothing is assembled on disk, so the architecture is unchanged.
+
+Untested caveat: `say` could not be exercised here (this build machine is
+Linux). The engine falls back automatically if it fails, and the failure would
+be visible in `/api/health`.

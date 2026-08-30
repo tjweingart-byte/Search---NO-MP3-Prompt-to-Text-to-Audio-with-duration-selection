@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import app as appmod  # noqa: E402
 import pipeline as pipeline_mod  # noqa: E402
 from tests.test_pipeline import FakeGenerator  # noqa: E402
+from demo_script import DemoGenerator  # noqa: E402
 from tts import DebugEngine  # noqa: E402
 
 
@@ -30,15 +31,15 @@ def client(monkeypatch):
 
 
 def _use(monkeypatch, generator):
-    original = pipeline_mod.PodcastPipeline.__init__
+    """Point the endpoint at a specific generator, bypassing demo mode."""
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
     monkeypatch.setattr(
-        pipeline_mod.PodcastPipeline,
-        "__init__",
-        lambda self, generator=None, engine=None, cache=None, use_cache=True: original(
-            self, generator, DebugEngine(), None, False
+        appmod,
+        "_make_pipeline",
+        lambda: pipeline_mod.PodcastPipeline(
+            generator=generator, engine=DebugEngine(), cache=None
         ),
     )
-    monkeypatch.setattr(pipeline_mod, "ScriptGenerator", lambda *a, **k: generator)
 
 
 class SilentGenerator:
@@ -95,3 +96,24 @@ def test_a_working_episode_still_streams_audio(client, monkeypatch, fmt):
 def test_friendly_error_explains_a_missing_key():
     message = appmod.friendly_error(TypeError("Could not resolve authentication method. Expected..."))
     assert "ANTHROPIC_API_KEY" in message
+
+
+def test_demo_mode_serves_playable_audio_without_credentials(client, monkeypatch):
+    """The audio approach must be judgeable before an API key exists."""
+    monkeypatch.setattr(appmod, "DEMO_MODE", True)
+    monkeypatch.setattr(
+        appmod,
+        "_make_pipeline",
+        lambda: pipeline_mod.PodcastPipeline(
+            generator=DemoGenerator(), engine=DebugEngine(), cache=None
+        ),
+    )
+    res = client.get("/api/audio?q=anything&minutes=1&fmt=wav")
+    assert res.status_code == 200
+    seconds = (len(res.content) - 44) / (22050 * 2)
+    assert abs(seconds - 60) <= 2, f"demo episode was {seconds:.1f}s"
+
+
+def test_health_reports_demo_mode(client, monkeypatch):
+    monkeypatch.setattr(appmod, "DEMO_MODE", True)
+    assert client.get("/api/health").json()["mode"] == "demo"

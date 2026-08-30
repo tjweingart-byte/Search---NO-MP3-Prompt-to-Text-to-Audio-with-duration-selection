@@ -98,6 +98,9 @@ class Settings:
         default_factory=lambda: os.environ.get("ESPEAK_BIN", "espeak-ng")
     )
     espeak_voice: str = field(default_factory=lambda: os.environ.get("ESPEAK_VOICE", "en-us"))
+    # macOS `say`: present on every Mac, so nothing needs installing there.
+    say_binary: str = field(default_factory=lambda: os.environ.get("SAY_BIN", "say"))
+    say_voice: str = field(default_factory=lambda: os.environ.get("SAY_VOICE", ""))
 
     # --- Server -----------------------------------------------------------
     host: str = field(default_factory=lambda: os.environ.get("HOST", "0.0.0.0"))
