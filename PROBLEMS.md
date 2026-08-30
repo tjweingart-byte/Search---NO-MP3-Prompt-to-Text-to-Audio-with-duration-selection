@@ -424,6 +424,14 @@ so each sentence goes to a scratch file that is read and deleted immediately —
 a per-sentence temporary of a second or two, not an episode file. No encoding
 happens and nothing is assembled on disk, so the architecture is unchanged.
 
+**A footgun this exposed.** `PodcastPipeline(cache=None)` used to mean "build the
+default cache", so a caller passing None to switch caching *off* silently turned
+it on. It caused two separate test failures — the second time as false passes,
+where a cached script from an earlier test made a deliberately failing generator
+return 200. `cache` now takes a store, or the explicit `AUTO` sentinel to build
+the configured one, or `None` to disable. Ambiguous defaults that read as their
+own opposite are worth deleting the moment they mislead once.
+
 Untested caveat: `say` could not be exercised here (this build machine is
 Linux). The engine falls back automatically if it fails, and the failure would
 be visible in `/api/health`.

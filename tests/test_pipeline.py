@@ -101,7 +101,7 @@ def test_pace_controller_slows_down_when_running_ahead():
 @pytest.mark.parametrize("minutes", [1, 4, 10])
 def test_audio_lands_on_the_requested_duration(minutes):
     plan = plan_episode("a question", minutes)
-    pipeline = PodcastPipeline(generator=FakeGenerator(), engine=DebugEngine(), use_cache=False)
+    pipeline = PodcastPipeline(generator=FakeGenerator(), engine=DebugEngine(), cache=None)
     stats = GenerationStats()
 
     async def run():
@@ -123,7 +123,7 @@ def test_audio_lands_on_the_requested_duration(minutes):
 def test_a_short_or_long_script_still_lands_on_time(ratio):
     """The pacing controller must absorb a model that misses the budget."""
     plan = plan_episode("a question", 5)
-    pipeline = PodcastPipeline(generator=FakeGenerator(ratio), engine=DebugEngine(), use_cache=False)
+    pipeline = PodcastPipeline(generator=FakeGenerator(ratio), engine=DebugEngine(), cache=None)
     stats = GenerationStats()
 
     async def run():
@@ -140,7 +140,7 @@ def test_a_short_or_long_script_still_lands_on_time(ratio):
 
 def test_wav_stream_starts_with_exactly_one_header():
     plan = plan_episode("a question", 1)
-    pipeline = PodcastPipeline(generator=FakeGenerator(), engine=DebugEngine(), use_cache=False)
+    pipeline = PodcastPipeline(generator=FakeGenerator(), engine=DebugEngine(), cache=None)
 
     async def run():
         chunks = []
@@ -163,7 +163,7 @@ def test_generator_errors_propagate_instead_of_producing_silence():
             yield ""  # pragma: no cover
 
     plan = plan_episode("a question", 1)
-    pipeline = PodcastPipeline(generator=Broken(), engine=DebugEngine(), use_cache=False)
+    pipeline = PodcastPipeline(generator=Broken(), engine=DebugEngine(), cache=None)
 
     async def run():
         async for _ in pipeline.stream_pcm(plan, GenerationStats()):

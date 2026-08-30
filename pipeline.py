@@ -31,6 +31,9 @@ log = logging.getLogger(__name__)
 
 # How many sentences may sit synthesised-and-waiting. Small on purpose: this is
 # the whole memory budget of a 10-minute episode.
+#: Sentinel meaning "use the configured cache" - see PodcastPipeline.__init__.
+AUTO = "auto"
+
 QUEUE_DEPTH = 4
 # Silence inserted between sentences so the delivery does not sound rushed.
 SENTENCE_GAP = 0.12
@@ -108,12 +111,19 @@ class PodcastPipeline:
         self,
         generator: Optional[ScriptGenerator] = None,
         engine: Optional[TTSEngine] = None,
-        cache: Optional[ScriptCache] = None,
-        use_cache: bool = True,
+        cache: ScriptCache | None | str = AUTO,
     ):
+        """`cache` takes a store, or AUTO to build the configured one, or None
+        to disable caching.
+
+        The explicit AUTO sentinel exists because `cache=None` previously meant
+        "build the default", so passing None to switch caching *off* silently
+        turned it on. That misread caused two separate test failures before it
+        was noticed; a caller saying None now unambiguously gets no cache.
+        """
         self.generator = generator or ScriptGenerator()
         self.engine = engine or build_engine()
-        self.cache = cache if cache is not None else (build_cache() if use_cache else None)
+        self.cache = build_cache() if cache is AUTO else cache
 
     def _start(self, sentences: AsyncIterator[str]) -> "_Pump":
         """Begin consuming a sentence stream *now*, into a bounded queue.
