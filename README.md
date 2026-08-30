@@ -159,6 +159,24 @@ The player's progress bar and timer, previously fixed at 44%, now track actual
 playback position. `selectedLengthMinutes` already existed and is passed
 straight through, so the 1–10 minute picker drives real episode length.
 
+## Demo mode vs live mode
+
+With no `ANTHROPIC_API_KEY`, the server runs in **demo mode**: every briefing is
+the same built-in sample script describing how the audio pipeline works. It does
+*not* answer your search. This is deliberate — it makes the audio half testable
+before any key exists — but it is easy to mistake for a broken engine, so the
+app labels it in three places: a banner above the phone, a `SAMPLE SCRIPT` badge
+beside "Now playing", and the loading overlay text.
+
+To get real briefings:
+
+```bash
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
+./run.sh
+```
+
+Then `/api/health` reports `"mode": "live"` and the banner names the model.
+
 ## Troubleshooting
 
 **"It generates an episode but I can't hear anything."** Almost always the

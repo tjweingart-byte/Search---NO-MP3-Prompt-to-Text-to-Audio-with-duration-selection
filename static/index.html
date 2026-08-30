@@ -412,6 +412,14 @@
   @keyframes bob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-3px); } }
 
   /* -------- generating overlay -------- */
+  .demo-badge{
+    display:none; align-items:center; gap:5px;
+    font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.08em;
+    text-transform:uppercase; color:var(--ink); background:var(--copper);
+    border-radius:6px; padding:3px 7px; font-weight:700;
+  }
+  body.demo-mode .demo-badge{ display:inline-flex; }
+
   .generating{
     position:absolute; inset:0; background:var(--bg); z-index:30;
     display:none; align-items:center; justify-content:center; flex-direction:column; gap:14px;
@@ -608,7 +616,7 @@
       <!-- ============ PLAYER ============ -->
       <section class="screen" id="screen-player">
         <div class="player-top">
-          <span class="kicker">Now playing</span>
+          <span class="kicker">Now playing <span class="demo-badge" title="No API key: a built-in sample script is standing in for Claude">sample script</span></span>
           <span class="x" onclick="goBack()">✕</span>
         </div>
         <button class="go-deeper-pill" onclick="openGoDeeper('player')">Go Deeper</button>
@@ -642,7 +650,7 @@
 
       <!-- ============ PLAY ALL (segmented continuous player) ============ -->
       <section class="screen" id="screen-playall">
-        <div class="player-top"><span class="kicker" id="pa-kicker">Playing all</span><span class="x" onclick="goBack()">✕</span></div>
+        <div class="player-top"><span class="kicker" id="pa-kicker">Playing all</span><span class="demo-badge">sample script</span><span class="x" onclick="goBack()">✕</span></div>
         <button class="go-deeper-pill" onclick="openGoDeeper('playall')">Go Deeper</button>
         <div class="segbar" id="paSegbar"></div>
         <div class="player-body">
@@ -1108,9 +1116,15 @@
     var el = document.getElementById("audioMode");
     if(!el) return;
     if(h.mode === "demo"){
+      document.body.classList.add("demo-mode");
       el.style.color = "var(--copper)";
-      el.textContent = "Demo mode — a built-in sample script stands in for Claude. "
-                     + "Streaming, timing and playback are real. Add ANTHROPIC_API_KEY to .env for live briefings.";
+      el.textContent = "DEMO MODE — the server has no ANTHROPIC_API_KEY, so every briefing you hear is "
+                     + "the same built-in sample script describing how the audio works. It is not "
+                     + "answering your search. Add your key to .env and restart for real briefings.";
+      // Say so on the loading overlay too, where attention actually is.
+      Array.prototype.forEach.call(document.querySelectorAll(".generating .gen-text"), function(node){
+        node.textContent = "Playing the built-in sample script…";
+      });
     } else {
       el.style.color = "var(--sage)";
       el.textContent = "Live — briefings written by " + h.model + ", voice: " + h.tts.selected + ".";

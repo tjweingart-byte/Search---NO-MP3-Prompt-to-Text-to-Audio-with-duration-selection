@@ -435,3 +435,40 @@ own opposite are worth deleting the moment they mislead once.
 Untested caveat: `say` could not be exercised here (this build machine is
 Linux). The engine falls back automatically if it fails, and the failure would
 be visible in `/api/health`.
+
+
+---
+
+## 14. Demo mode was mistaken for a broken engine
+
+Reported after the prototype integration: "I typed in a search, it did not
+generate an episode, all it did was talk about the process." Everything was
+working exactly as designed, which is what made the report so useful.
+
+The server had no `ANTHROPIC_API_KEY`, so it was in demo mode and playing the
+built-in sample script — which happens to describe the audio pipeline. From the
+listener's seat that is indistinguishable from "the generator was never wired
+in": you type a question and hear something that is not an answer to it.
+
+The signal existed (a banner above the phone) but was in the wrong place. The
+listening happens *inside* the phone, on the player screen, and that is where
+the state needed to be visible. Demo mode is now labelled in three places: the
+banner, a `SAMPLE SCRIPT` badge beside "Now playing", and the loading overlay,
+which reads "Playing the built-in sample script…" instead of the normal text.
+
+**Proving the live path, without credentials.** The deeper problem was that the
+live path had never actually run — no key had existed in any environment all
+session, so "the engine is wired in" was an inference rather than an
+observation. A stand-in server that speaks the real Anthropic streaming wire
+protocol now makes that testable: pointing `ANTHROPIC_BASE_URL` at it exercises
+the genuine `ScriptGenerator`, the real SDK, real SSE streaming and real
+sentence assembly.
+
+Result: a request for "the 1969 moon landing" produced a script about the 1969
+moon landing, at 150 words against a 150-word budget, and in the browser the
+banner read "Live — briefings written by claude-opus-5" with no sample-script
+badge. The engine is wired in; only the credentials were missing.
+
+The lesson worth keeping: a fallback that is *useful* is also a fallback that is
+*confusable*, and the label belongs where the user's attention is, not where it
+was convenient to put it.
