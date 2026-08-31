@@ -134,6 +134,7 @@ TTL instead of 24 hours.
 | `GET /api/voices` | Voices this machine can speak in, best first |
 | `POST /api/script` | `{query, minutes}` → the script as JSON, no audio |
 | `GET /api/audio?q=…&minutes=N&fmt=pcm\|wav` | The episode, streamed live |
+| `GET /api/next?q=…&minutes=N` | The thread that episode left open, for a one-tap Go Deeper |
 
 `/api/audio` also takes `voice=` (an id from `/api/voices`) and `context=` (the
 topic a follow-up is deepening).

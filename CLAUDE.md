@@ -88,6 +88,12 @@ mechanics carry it:
   coat.
 * **Endings widen, they do not conclude.** The last line points at what this is
   part of or what happens next. They should finish *inside* the subject.
+* **One named thread, left open.** Widening is not a mood, it is a specific
+  unresolved thing - a decision not yet taken, a figure that does not add up -
+  set up earlier in the episode and still standing at the end. It has to already
+  be in the room: nobody wants to know more about something introduced in the
+  final sentence. Stated as a fact still in motion, never as a question asked of
+  the listener.
 * **Speak from inside.** No orienting, no justifying the topic. Begin as though
   continuing a conversation they were already in.
 
@@ -98,6 +104,15 @@ This also has an architectural consequence for the browse surfaces: if an
 episode ends by widening rather than concluding, the natural next move is the
 next episode - which is exactly what dailyFAM's infinite swipe and myFAM's tiles
 are for. The ending of one is the entry to the next.
+
+**The thread is carried out of the script, not just left in the listener's
+head.** The model names it on a trailing `<<NEXT: ...>>` line, stripped before
+synthesis and never spoken; the pipeline stores it beside the script in the
+cache, `GET /api/next` returns it for free, and the Go Deeper sheet offers it as
+a one-tap chip. Wanting to go deeper and actually tapping Go Deeper were
+separated by having to compose a question into an empty box; that step is now
+gone. The same thread is the obvious thing for the browse surfaces to prefetch a
+script for.
 
 Note this **replaced an earlier rule** that said to open with the answer
 immediately. That was news-writing — the inverted pyramid — and it is the

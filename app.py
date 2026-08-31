@@ -26,7 +26,7 @@ from cache import MemoryScriptCache, SqliteScriptCache, build_cache
 from demo_script import DemoGenerator
 from config import settings
 from pipeline import GenerationStats, PodcastPipeline
-from script_generator import ScriptGenerator, plan_episode
+from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import voice_store
 from tts import (
     TTSUnavailable,
@@ -196,14 +196,43 @@ async def script(req: ScriptRequest, request: Request) -> dict:
     _rate_limit(request)
     plan = _validated_plan(req.query, req.minutes)
     generator = DemoGenerator() if DEMO_MODE else ScriptGenerator()
-    text = " ".join([s async for s in generator.stream_sentences(plan)])
+    notes = ScriptNotes()
+    text = " ".join([s async for s in generator.stream_sentences(plan, notes)])
     return {
         "query": plan.query,
         "minutes": plan.minutes,
         "word_budget": plan.word_budget,
         "words": len(text.split()),
         "script": text,
+        "thread": notes.thread,
     }
+
+
+@app.get("/api/next")
+async def next_thread(
+    request: Request,
+    q: str = Query(..., description="What the listener asked"),
+    minutes: int = Query(3, ge=1, le=10),
+    context: str = Query("", description="Topic the listener just heard"),
+    search: bool = Query(False),
+):
+    """The thread the episode left open, as the follow-up a listener would ask.
+
+    Read from the script cache, so it costs no tokens and no time. The interface
+    offers it as a one-tap suggestion in Go Deeper: an episode that ends pointed
+    at something specific is only half the job if acting on it still means
+    composing a question into an empty box.
+
+    An empty thread is normal - the script may not be cached, or the model may
+    not have named one - and the interface falls back to the blank field.
+    """
+    _rate_limit(request)
+    plan = _validated_plan(q, minutes, context, search)
+    try:
+        pipeline = _make_pipeline()
+    except TTSUnavailable:
+        return {"thread": ""}
+    return {"thread": await pipeline.thread_for(plan)}
 
 
 @app.get("/api/audio")

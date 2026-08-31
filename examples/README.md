@@ -38,7 +38,15 @@ and the second-last defender at the moment a teammate plays it forward...
   aren't all the same form, and one example teaches one form.
 - **Include a short one and a long one.** How a briefing grows from one minute to
   five is exactly where padding creeps in; showing it is better than describing it.
-- **End the way you want it to end.** Endings get copied too.
+- **End the way you want it to end.** Endings get copied hardest, and this is
+  the single most valuable thing an example can teach. Don't conclude - widen.
+  Leave one specific thing unresolved that you set up earlier in the piece, and
+  stop pointed at it. No summary, no "and that's the story of", no question
+  asked of the listener.
+- **Write it as if they're already here.** No orienting, no explaining why the
+  topic is worth their time. Begin mid-conversation.
+- You do **not** need to add the `<<NEXT: ...>>` line to an example. That is
+  machine metadata the app strips; examples are about how the writing sounds.
 - **Don't over-polish.** Write what you'd genuinely want in your ears on a walk.
 
 Two or three good ones shift the output a lot. Past about five, returns drop off.

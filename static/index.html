@@ -337,6 +337,21 @@
     font-family:'Space Grotesk',sans-serif; font-size:11.5px; font-weight:700; cursor:pointer; flex:none;
   }
   .go-deeper-pill:active{ transform:scale(0.96); }
+  /* The thread the episode left open, offered as one tap. Wanting to go
+     deeper and actually doing it are separated by having to phrase a
+     question; this removes that step. */
+  .deeper-chip{
+    display:block; width:100%; text-align:left; margin:0 0 10px; padding:11px 14px;
+    border-radius:12px; background:var(--surface); border:1px solid var(--copper);
+    color:var(--text); font-family:'Space Grotesk',sans-serif; font-size:12px;
+    font-weight:600; line-height:1.35; cursor:pointer;
+  }
+  .deeper-chip:active{ transform:scale(0.98); }
+  .deeper-chip .chip-label{
+    display:block; font-family:'JetBrains Mono', monospace; font-size:8px;
+    letter-spacing:0.08em; text-transform:uppercase; color:var(--text-muted);
+    margin-bottom:4px;
+  }
   .pt-icons{ display:flex; align-items:center; gap:10px; }
   .pt-icon{ width:32px; height:32px; border-radius:50%; background:var(--surface); border:1px solid var(--border-strong); display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; flex:none; flex-shrink:0; }
   .pt-icon.on{ background:var(--copper); color:var(--ink); border-color:var(--copper); }
@@ -834,6 +849,7 @@
         <div class="modal-card">
           <div class="modal-title">Go deeper</div>
           <div class="gc-label" style="margin-bottom:8px;">Ask a follow-up, or steer where this goes next</div>
+          <button class="deeper-chip" id="goDeeperSuggestion" style="display:none;" onclick="useThreadSuggestion()"></button>
           <input class="modal-input" id="goDeeperInput" type="text" placeholder="e.g. &quot;explain the market impact&quot;">
           <div class="modal-btns">
             <button class="modal-btn ghost" onclick="closeGoDeeper()">Cancel</button>
@@ -1286,18 +1302,72 @@
     generate(key, "player");
   }
 
+  // ---------------- The thread this episode left open ----------------
+  // The script ends pointed at one specific unresolved thing, and names it in
+  // a trailing line the server strips before synthesis. Offering that as a
+  // one-tap suggestion is what turns "I'd like to know more" into a Go Deeper
+  // tap. It is only known once the script is written - after the audio
+  // response headers have gone - so it is fetched separately, from the cache,
+  // at no token cost. Missing is normal and falls back to the empty field.
+  var episodeThread = "";
+  var episodeStamp = "";
+  function rememberEpisode(query, minutes, context){
+    episodeStamp = query + "|" + minutes + "|" + (context || "");
+    episodeThread = "";
+  }
+  function fetchEpisodeThread(){
+    if(!episodeStamp || episodeThread) return;
+    var parts = episodeStamp.split("|");
+    var stamp = episodeStamp;
+    fetch("/api/next?q=" + encodeURIComponent(parts[0]) +
+          "&minutes=" + encodeURIComponent(parts[1]) +
+          "&context=" + encodeURIComponent(parts[2] || ""))
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(data){
+        // The listener may have moved on while this was in flight.
+        if(!data || !data.thread || stamp !== episodeStamp) return;
+        episodeThread = data.thread;
+        showThreadSuggestion();
+      })
+      .catch(function(){ /* a missing suggestion is not an error */ });
+  }
+  function showThreadSuggestion(){
+    var chip = document.getElementById("goDeeperSuggestion");
+    if(!chip) return;
+    if(!episodeThread){ chip.style.display = "none"; return; }
+    chip.innerHTML = '<span class="chip-label">Pick up the thread</span>' +
+                     escapeHtml(episodeThread);
+    chip.style.display = "block";
+  }
+  function useThreadSuggestion(){
+    if(!episodeThread) return;
+    document.getElementById("goDeeperInput").value = episodeThread;
+    confirmGoDeeper();
+  }
+  function escapeHtml(text){
+    return String(text).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
   function speakText(title, captionHtml, onEnd, context){
     var totalSeconds = selectedLengthMinutes * 60;
+    rememberEpisode(title, selectedLengthMinutes, context || "");
     FamAudio.play(title, selectedLengthMinutes, {
       onFirstAudio: function(){
         startProgress(totalSeconds);
         applyPlaybackSpeed();   // honour the speed already chosen in the pill
         onGenerationStarted();
+        // The script finishes well before the audio does, so by now the
+        // thread is usually already in the cache and the chip is ready
+        // before the listener thinks to reach for Go Deeper.
+        setTimeout(fetchEpisodeThread, 6000);
       },
       onEnd: function(){
         refreshProgressNow();
         stopProgress();
         setPlayState(false);
+        fetchEpisodeThread();
         if(onEnd) onEnd();
       },
       onError: function(err){
@@ -1721,6 +1791,8 @@
     goDeeperContext = context;
     stopSpeech();
     document.getElementById("goDeeperInput").value = "";
+    showThreadSuggestion();
+    fetchEpisodeThread();   // still generating? fill the chip when it lands
     document.getElementById("goDeeperOverlay").classList.add("active");
     setTimeout(function(){ document.getElementById("goDeeperInput").focus(); }, 60);
   }

@@ -65,7 +65,7 @@ class FakeGenerator:
                 if emitted >= target:
                     break
 
-    async def stream_sentences(self, plan):
+    async def stream_sentences(self, plan, notes=None):
         async for s in self._emit(int(plan.body_budget * self.ratio)):
             yield s
 
@@ -185,7 +185,7 @@ def test_wav_stream_starts_with_exactly_one_header():
 
 def test_generator_errors_propagate_instead_of_producing_silence():
     class Broken:
-        async def stream_sentences(self, plan):
+        async def stream_sentences(self, plan, notes=None):
             raise RuntimeError("upstream is down")
             yield ""  # pragma: no cover
 
@@ -226,7 +226,7 @@ class CountingGenerator(FakeGenerator):
         super().__init__(ratio)
         self.calls = 0
 
-    async def stream_sentences(self, plan):
+    async def stream_sentences(self, plan, notes=None):
         self.calls += 1
         async for s in super().stream_sentences(plan):
             yield s
@@ -375,7 +375,7 @@ class SlowResearchGenerator:
         for sentence in OPENER_SENTENCES:
             yield sentence
 
-    async def stream_sentences(self, plan):
+    async def stream_sentences(self, plan, notes=None):
         await asyncio.sleep(self.delay)
         for i in range(60):
             yield f"Body sentence {i} of the real briefing."
@@ -425,7 +425,7 @@ def test_no_opener_is_spoken_when_the_script_fails(with_opener):
     """Never introduce an episode that is not coming."""
 
     class Failing(SlowResearchGenerator):
-        async def stream_sentences(self, plan):
+        async def stream_sentences(self, plan, notes=None):
             raise RuntimeError("model is down")
             yield ""  # pragma: no cover
 
@@ -515,7 +515,7 @@ class ShortOpenerSlowBody:
         self.opener_calls += 1
         yield "One short framing sentence."
 
-    async def stream_sentences(self, plan):
+    async def stream_sentences(self, plan, notes=None):
         await asyncio.sleep(self.delay)
         for i in range(80):
             yield f"Body sentence {i} of the researched briefing."
@@ -602,7 +602,7 @@ def test_a_short_script_is_not_padded_back_to_length():
     assert settings.allow_topups is False
 
     class BriefGenerator:
-        async def stream_sentences(self, plan):
+        async def stream_sentences(self, plan, notes=None):
             for i in range(6):
                 yield f"A genuinely substantive sentence number {i}."
 
@@ -766,4 +766,128 @@ def test_the_prompt_asks_the_writer_to_speak_from_inside():
 def test_the_brief_asks_for_momentum_and_a_widening_end():
     prompt = build_prompt(plan_episode("a topic", 3))
     assert "make the next thing matter more" in prompt
-    assert "End inside the subject" in prompt
+    assert "Leave one thread open" in prompt
+    assert "<<NEXT:" in prompt
+
+
+def test_the_prompt_asks_for_one_named_unresolved_thread():
+    """Widening only converts into a Go Deeper tap if it names something."""
+    from script_generator import SYSTEM_PROMPT
+
+    assert "Leave exactly one thread" in SYSTEM_PROMPT
+    # A thread the listener has never heard of is a tease, not a thread.
+    assert "already be in the room" in SYSTEM_PROMPT
+    # And curiosity is not manufactured by asking for it.
+    assert "Point at it, do not ask about it" in SYSTEM_PROMPT
+    assert "<<NEXT:" in SYSTEM_PROMPT
+
+
+def test_the_thread_marker_is_extracted_and_never_spoken():
+    from script_generator import clean_for_speech, extract_thread
+
+    script = "She filed the appeal on Tuesday.\n\n<<NEXT: whether the appeal is heard at all>>"
+    assert extract_thread(script) == "whether the appeal is heard at all"
+    assert "NEXT" not in clean_for_speech(script)
+    assert clean_for_speech(script) == "She filed the appeal on Tuesday."
+
+
+def test_a_half_written_marker_is_never_spoken_either():
+    """The marker arrives in stream chunks; a partial one must not be read out."""
+    from script_generator import clean_for_speech
+
+    assert clean_for_speech("The count is still going. <<NEX") == "The count is still going."
+
+
+def test_no_marker_is_not_an_error():
+    from script_generator import extract_thread
+
+    assert extract_thread("A script that named nothing.") == ""
+
+
+def test_the_thread_survives_a_cache_hit():
+    """The suggestion must still be there when the script is replayed for free."""
+    cache = MemoryScriptCache()
+    cache.put("k", ["One sentence."], ttl=60, query="q", thread="what happens to the levy")
+    assert cache.thread("k") == "what happens to the levy"
+
+
+def test_the_pipeline_carries_the_thread_out_of_generation():
+    class Threaded:
+        client = None
+
+        async def stream_sentences(self, plan, notes=None):
+            if notes is not None:
+                notes.thread = "why the rule expires in March"
+            yield "A sentence with substance in it."
+
+    pipeline = PodcastPipeline(generator=Threaded(), engine=DebugEngine(), cache=None)
+    stats = GenerationStats()
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan_episode("a topic", 1), stats):
+            pass
+
+    asyncio.run(run())
+    assert stats.thread == "why the rule expires in March"
+    assert stats.as_dict()["thread"] == "why the rule expires in March"
+
+
+def test_the_marker_is_never_spoken_even_when_it_arrives_in_pieces():
+    """The real risk of the feature: a marker read aloud, or half of one.
+
+    The model streams token by token, so "<<NEXT: ...>>" reliably arrives split
+    across several events - and one of those fragments ends in a full stop.
+    """
+    import script_generator
+
+    chunks = [
+        "She filed the appeal on Tuesday. ",
+        "The clerk has not listed it.",
+        "\n\n<<NE",
+        "XT: whether the appe",
+        "al is heard at all>>",
+    ]
+
+    class _Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        @property
+        async def text_stream(self):  # pragma: no cover - replaced below
+            raise AssertionError
+
+        async def get_final_message(self):
+            class _Msg:
+                stop_reason = "end_turn"
+
+            return _Msg()
+
+    async def _text_stream():
+        for chunk in chunks:
+            yield chunk
+
+    stream = _Stream()
+    type(stream).text_stream = property(lambda self: _text_stream())
+
+    class _Messages:
+        def stream(self, **kwargs):
+            return stream
+
+    class _Client:
+        messages = _Messages()
+
+    gen = script_generator.ScriptGenerator.__new__(script_generator.ScriptGenerator)
+    gen.client = _Client()
+    notes = script_generator.ScriptNotes()
+
+    async def run():
+        return [s async for s in gen.stream_sentences(plan_episode("the appeal", 1), notes)]
+
+    spoken = asyncio.run(run())
+    assert notes.thread == "whether the appeal is heard at all"
+    for sentence in spoken:
+        assert "<" not in sentence and "NEXT" not in sentence, sentence
+    assert " ".join(spoken) == "She filed the appeal on Tuesday. The clerk has not listed it."

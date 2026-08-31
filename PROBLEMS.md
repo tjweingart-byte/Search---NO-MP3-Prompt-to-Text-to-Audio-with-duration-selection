@@ -1127,3 +1127,79 @@ the kind of instruction a model interprets badly and a human writer gets
 instantly from one good example. `examples/` is where this is really settled;
 its guide now says what an example needs to demonstrate - the specific opening,
 the turn, causation over chronology, the landed ending.
+
+## 30. Annexation: a good ending is still an exit
+
+**The problem.** The prompt said *"Land it. The last line should give the
+listener something to carry."* That is sound podcast advice and exactly wrong
+for this product. A landed ending is a resolution, and a resolution is
+permission to leave — politely, satisfied, and gone. If the aim is to absorb a
+listener rather than entertain them for four minutes, the ending is where it is
+won or lost.
+
+**The first fix, and why it was not enough.** "Do not end. Widen." replaced it,
+along with a ban on the explicit exit signals ("so, to sum up", "in
+conclusion", "the bottom line is") and a rule to speak from inside rather than
+orienting the listener. That is directionally right but *underspecified*, and
+underspecified prompt instructions get filled in with atmosphere — which is the
+failure mode this whole section of the prompt exists to prevent. "Widen" alone
+invites a portentous closing mood: *"and what happens next will matter for all
+of us."* That is a feeling, not a thread, and it is banned two paragraphs later
+by the rule that every sentence must carry information.
+
+**What widening actually has to mean.** One *specific* unresolved thing, named
+concretely: a decision not yet taken, a figure that does not add up, a person
+whose next move settles it, a rule about to be tested. Three constraints make it
+work rather than tease:
+
+- **It has to already be in the room.** Nobody can want to know more about
+  something they first hear of in the final sentence. The thread has to be set
+  up in passing while the story is being told, and left standing.
+- **It has to be nameable in a handful of words** — small enough to be a
+  request, big enough to be a whole episode.
+- **Point at it; do not ask about it.** No rhetorical questions to the listener
+  ("but will it hold?"), no promises about next time. Curiosity comes from the
+  gap being real, not from being told to be curious.
+
+**The half of the problem that was not in the prompt at all.** An episode that
+ends pointed at something specific is only half the job while acting on it still
+means composing a question into an empty text box. Go Deeper opened on a blank
+field with a generic placeholder. The listener had the impulse and the interface
+asked them to do the work.
+
+So the thread is now carried out of the script rather than left in the
+listener's head. The model writes it after the final sentence as
+`<<NEXT: six to twelve words>>`, phrased as the follow-up someone would ask for.
+
+**Making sure it is never spoken.** This is the risk the feature introduces, and
+the project has been bitten before by things that fail quietly, so it is
+defended in three places:
+
+- `stream_sentences` partitions the buffer at `<<` and only ever hands the part
+  *before* it to the sentence splitter — the marker can arrive split across
+  stream events, and a half-written `<<NEX` must not be read out either.
+- `clean_for_speech` strips both a complete marker and anything from an
+  unmatched `<<` onwards, so no path can reach synthesis with one in it.
+- It is stored in its own cache column, beside the sentences rather than inside
+  them, so a replayed cache hit cannot speak it by accident.
+
+**Getting it to the interface.** The thread is only known once the script is
+finished — which is *after* the `/api/audio` response headers have gone out, so
+it cannot be a header. It is written into the script cache with the script, and
+`GET /api/next` reads it back: no second model call, no tokens, no added
+latency. A cache hit keeps its thread, so a free replayed episode still offers
+the same follow-up. The Go Deeper sheet shows it as a one-tap chip; the field
+below it still takes anything the listener would rather ask. An absent thread is
+normal — uncached, or the model named none — and degrades to exactly the blank
+box that was there before.
+
+**Still unverified.** As with every writing change in this project so far, this
+is reasoning about a prompt rather than evidence about output: there are no
+credentials on the build machine and no real script has ever been read from any
+version of it. `python write.py "<query>" --minutes 3` prints one in seconds.
+The question to ask of the output is not "is this a good ending" but "can I
+name, in a few words, the thing I now want to hear about" — and whether that
+thing was set up earlier in the piece or produced out of nowhere at the end.
+
+The cache key version is bumped to 2 so nothing written under the old prompt is
+served under the new one.

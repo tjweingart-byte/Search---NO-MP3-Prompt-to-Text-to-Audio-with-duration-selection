@@ -124,7 +124,7 @@ def cache_key(
             "search": bool(searched),
             "model": settings.model,
             "wpm": settings.target_wpm,
-            "v": 1,  # bump to invalidate everything after a prompt change
+            "v": 2,  # bump to invalidate everything after a prompt change
         },
         sort_keys=True,
     )
@@ -133,14 +133,20 @@ def cache_key(
 
 class ScriptCache(Protocol):
     def get(self, key: str) -> Optional[list[str]]: ...
-    def put(self, key: str, sentences: list[str], ttl: int, query: str) -> None: ...
+    def put(
+        self, key: str, sentences: list[str], ttl: int, query: str, thread: str = ""
+    ) -> None: ...
+    #: The go-deeper thread stored with the script, or "" if there was none.
+    #: Kept beside the sentences rather than inside them so a replayed episode
+    #: can never speak it by accident.
+    def thread(self, key: str) -> str: ...
 
 
 class MemoryScriptCache:
     """Process-local cache. Fine for tests and single-worker development."""
 
     def __init__(self) -> None:
-        self._data: dict[str, tuple[float, list[str]]] = {}
+        self._data: dict[str, tuple[float, list[str], str]] = {}
         self.hits = 0
         self.misses = 0
 
@@ -152,8 +158,16 @@ class MemoryScriptCache:
         self.hits += 1
         return list(entry[1])
 
-    def put(self, key: str, sentences: list[str], ttl: int, query: str = "") -> None:
-        self._data[key] = (time.time() + ttl, list(sentences))
+    def put(
+        self, key: str, sentences: list[str], ttl: int, query: str = "", thread: str = ""
+    ) -> None:
+        self._data[key] = (time.time() + ttl, list(sentences), thread)
+
+    def thread(self, key: str) -> str:
+        entry = self._data.get(key)
+        if not entry or entry[0] < time.time():
+            return ""
+        return entry[2]
 
     def stats(self) -> dict:
         return {"backend": "memory", "entries": len(self._data), "hits": self.hits, "misses": self.misses}
@@ -182,6 +196,13 @@ class SqliteScriptCache:
                    )"""
             )
             conn.execute("CREATE INDEX IF NOT EXISTS scripts_expires ON scripts(expires)")
+            # Added after the table shipped, so existing caches need widening
+            # rather than recreating - a cache file is not worth a migration
+            # framework, and losing it would only cost one regeneration.
+            try:
+                conn.execute("ALTER TABLE scripts ADD COLUMN thread TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # already there
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -209,18 +230,33 @@ class SqliteScriptCache:
             log.exception("script cache read failed; regenerating")
             return None
 
-    def put(self, key: str, sentences: list[str], ttl: int, query: str = "") -> None:
+    def put(
+        self, key: str, sentences: list[str], ttl: int, query: str = "", thread: str = ""
+    ) -> None:
         if not sentences:
             return
         try:
             now = time.time()
             self._conn().execute(
-                "INSERT OR REPLACE INTO scripts (key, expires, created, hits, query, sentences)"
-                " VALUES (?, ?, ?, 0, ?, ?)",
-                (key, now + ttl, now, query[:500], json.dumps(sentences)),
+                "INSERT OR REPLACE INTO scripts"
+                " (key, expires, created, hits, query, sentences, thread)"
+                " VALUES (?, ?, ?, 0, ?, ?, ?)",
+                (key, now + ttl, now, query[:500], json.dumps(sentences), thread[:200]),
             )
         except Exception:
             log.exception("script cache write failed; continuing")
+
+    def thread(self, key: str) -> str:
+        try:
+            row = self._conn().execute(
+                "SELECT thread, expires FROM scripts WHERE key = ?", (key,)
+            ).fetchone()
+            if not row or row[1] < time.time():
+                return ""
+            return row[0] or ""
+        except Exception:
+            log.exception("script cache thread read failed")
+            return ""
 
     def purge_expired(self) -> int:
         try:

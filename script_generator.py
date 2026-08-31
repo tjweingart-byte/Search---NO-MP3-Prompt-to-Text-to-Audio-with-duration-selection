@@ -71,7 +71,8 @@ def style_example_block() -> str:
     parts = [
         "\nThis is the house voice. Match its rhythm, its directness and the way "
         "it opens and closes. Do not borrow its facts or its topics - only how it "
-        "sounds:\n"
+        "sounds. They show the spoken script only; you must still end with the "
+        "<<NEXT: ...>> line:\n"
     ]
     for query, script in STYLE_EXAMPLES:
         words = len(script.split())
@@ -92,6 +93,10 @@ def remember_opener(text: str) -> None:
     del _RECENT_OPENERS[:-_RECENT_LIMIT]
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
+# The one line the model may write that is not speech: the thread it left open,
+# phrased as the follow-up a listener would ask for. Stripped before synthesis
+# and handed to the interface, which offers it as a one-tap "go deeper".
+_NEXT_MARKER = re.compile(r"<<\s*NEXT\s*:\s*([^<>]{1,160}?)\s*>>", re.I)
 # Anything that would be read aloud as punctuation noise rather than speech.
 _MARKDOWN = re.compile(r"[*_`#>\[\]]|^\s*[-•]\s+", re.MULTILINE)
 
@@ -138,6 +143,21 @@ open - the consequence that is still unfolding, the thing this turns out to be \
 part of, what it means for something the listener already cares about. Never \
 summarise, never recap, never wrap up. They should finish inside the subject, \
 not outside it holding a summary of it.
+- **Leave exactly one thread.** Widening is not a mood, it is a specific thing \
+you deliberately did not resolve. Somewhere in the piece, name that thing \
+concretely - a decision not yet taken, a figure that does not add up, a person \
+whose next move decides it, a rule about to be tested - and then let the episode \
+end pointed at it, still open. It has to be nameable in a handful of words and \
+big enough to be worth a whole episode of its own.
+- **The thread must already be in the room.** A listener cannot want to know \
+more about something they have never heard of, so the thing you leave open has \
+to have been set up earlier, mentioned in passing and left standing. Introducing \
+it for the first time in the final sentence reads as a tease, not a thread.
+- **Point at it, do not ask about it.** No rhetorical questions to the listener \
+("but will it hold?", "so what happens now?"), no promises about what comes next, \
+no "we'll have to wait and see". State the unresolved thing as a fact that is \
+still in motion, and stop on it. Curiosity comes from the gap being real, not \
+from being told to be curious.
 
 Take them in rather than showing them round:
 - **Speak from inside.** Assume the listener is already here. No orienting them, \
@@ -184,12 +204,48 @@ point. Say numbers and symbols as a person says them: "about twelve percent", \
 "nineteen ninety-eight".
 - No greeting, no sign-off, no "welcome back", no naming the show, and never \
 mention being an AI.
+
+One line after the script, which is never spoken:
+After the final sentence, on its own line, name the thread you left open in the \
+form the listener would ask for it:
+
+<<NEXT: the thing they would want to hear about next>>
+
+Write it as a request, not a title - "whether the appeal actually gets heard", \
+"why the 1998 ruling still binds", "what the new tariff does to the second-hand \
+market". Six to twelve words. It must be the thread you actually left open in \
+the episode, not a related topic you thought of afterwards. This line is read by \
+the app and stripped before anything is spoken, so it never reaches the \
+listener's ears; write nothing else after it.
 """
 
 
 def system_prompt() -> str:
     """The house rules, plus any examples of the voice they describe."""
     return SYSTEM_PROMPT + style_example_block()
+
+
+@dataclass
+class ScriptNotes:
+    """What the model wrote that is not spoken.
+
+    Passed in by the caller rather than kept on the generator. One generator
+    serves many concurrent episodes, and per-episode state stashed on `self`
+    has already caused one bug in this file; an argument cannot go stale.
+    """
+
+    #: The thread the episode deliberately left open, phrased as the follow-up
+    #: a listener would ask for. Empty when the model did not name one.
+    thread: str = ""
+
+
+def extract_thread(text: str) -> str:
+    """Pull the go-deeper thread out of the model's trailing marker line."""
+    match = _NEXT_MARKER.search(text)
+    if not match:
+        return ""
+    thread = re.sub(r"\s+", " ", match.group(1)).strip(" .\"'")
+    return thread[:160]
 
 
 @dataclass
@@ -300,8 +356,18 @@ moving: each thing you tell them should make the next thing matter more. By the
 end they should understand it, and should have felt taken somewhere rather than
 briefed.
 
-End inside the subject, not outside it. The last line points at what this is
-part of or what happens next - never a summary of what you just said.
+Leave one thread open. Pick something real that this story touches and does not
+settle - a decision still to be taken, a number that does not add up, someone
+whose next move decides it. Set it up in passing while you are telling the story,
+then end pointed at it, still open. Never a summary of what you just said, never
+a question asked of the listener.
+
+Then, on its own line after the script, write that thread as the follow-up they
+would ask for:
+
+<<NEXT: six to twelve words>>
+
+That line is stripped before anything is spoken. Nothing goes after it.
 
 The time is the listener's, not a quota. If the story resolves early, stop
 there; a short piece that lands beats a long one padded out. If you catch
@@ -313,6 +379,10 @@ Begin."""
 
 def clean_for_speech(text: str) -> str:
     """Strip anything the model may have added that should not be spoken."""
+    # The go-deeper marker, and any half-written one: everything from an
+    # unmatched "<<" onwards is metadata, never speech.
+    text = _NEXT_MARKER.sub("", text)
+    text = re.sub(r"<<.*$", "", text, flags=re.S)
     # Stage directions first, while their brackets are still intact.
     text = re.sub(r"\[[^\]]{0,60}\]", "", text)
     text = re.sub(r"\((?:music|sfx|pause|beat|sound)[^)]*\)", "", text, flags=re.I)
@@ -354,7 +424,9 @@ class ScriptGenerator:
             ]
         return kwargs
 
-    async def stream_sentences(self, plan: EpisodePlan) -> AsyncIterator[str]:
+    async def stream_sentences(
+        self, plan: EpisodePlan, notes: ScriptNotes | None = None
+    ) -> AsyncIterator[str]:
         """Yield speech-ready sentences as Claude writes them.
 
         Sentence granularity is deliberate: it is the largest unit that keeps
@@ -367,15 +439,20 @@ class ScriptGenerator:
         async with self.client.messages.stream(**self._request_kwargs(plan)) as stream:
             async for event in stream.text_stream:
                 buffer += event
+                # Everything from "<<" onwards is the go-deeper marker rather
+                # than speech, and it can arrive split across events. Hold it
+                # back instead of letting the sentence splitter reach it.
+                speech, marker, rest = buffer.partition("<<")
                 while True:
-                    match = _SENTENCE_END.search(buffer)
+                    match = _SENTENCE_END.search(speech)
                     if not match:
                         break
-                    sentence = clean_for_speech(buffer[: match.end()])
-                    buffer = buffer[match.end() :]
+                    sentence = clean_for_speech(speech[: match.end()])
+                    speech = speech[match.end() :]
                     if sentence:
                         emitted_words += count_words(sentence)
                         yield sentence
+                buffer = speech + marker + rest
                 # Safety valve: a model that ignores the budget must not be
                 # allowed to produce an hour of audio for a 1-minute request.
                 if emitted_words > plan.max_words * 1.35:
@@ -384,6 +461,8 @@ class ScriptGenerator:
             tail = clean_for_speech(buffer)
             if tail:
                 yield tail
+            if notes is not None:
+                notes.thread = extract_thread(buffer)
 
             final = await stream.get_final_message()
             if final.stop_reason == "refusal":
@@ -429,7 +508,8 @@ class ScriptGenerator:
             "- No greeting, no 'welcome to the show', no show name, no 'let's dive in'.\n"
             "- Do not say 'here is your briefing' or any variation. Start with substance "
             "about the shape of the question.\n"
-            "- Output only the sentences."
+            "- Output only the sentences. No <<NEXT>> line - you are opening "
+            "the episode, not ending it."
         )
         try:
             message = await self.client.messages.create(
@@ -501,9 +581,9 @@ class ScriptGenerator:
             if tail_sentence:
                 yield tail_sentence
 
-    async def full_script(self, plan: EpisodePlan) -> str:
+    async def full_script(self, plan: EpisodePlan, notes: ScriptNotes | None = None) -> str:
         """Non-streaming convenience path, used by /api/script and by tests."""
-        parts = [s async for s in self.stream_sentences(plan)]
+        parts = [s async for s in self.stream_sentences(plan, notes)]
         return " ".join(parts)
 
 

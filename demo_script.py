@@ -48,7 +48,11 @@ class DemoGenerator:
     #: Mirrors the real generator's interface so the pipeline cannot tell them apart.
     client = None
 
-    async def stream_sentences(self, plan) -> AsyncIterator[str]:
+    async def stream_sentences(self, plan, notes=None) -> AsyncIterator[str]:
+        # Demo mode leaves a thread too, so the Go Deeper suggestion can be
+        # exercised without credentials.
+        if notes is not None:
+            notes.thread = f"how {plan.query} actually works underneath"
         # A small delay imitates the model streaming, so demo mode exercises the
         # same producer/consumer path as a real generation rather than dumping
         # every sentence in at once.

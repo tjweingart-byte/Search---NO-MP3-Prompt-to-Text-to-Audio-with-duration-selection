@@ -26,7 +26,7 @@ import time
 from audio_utils import PaceController, pcm_duration, silence, streaming_wav_header
 from cache import ScriptCache, build_cache, cache_key, canonical_key, is_shareable, ttl_for
 from config import settings
-from script_generator import EpisodePlan, ScriptGenerator, count_words
+from script_generator import EpisodePlan, ScriptGenerator, ScriptNotes, count_words
 from tts import TTSEngine, build_engine
 
 log = logging.getLogger(__name__)
@@ -150,6 +150,10 @@ class GenerationStats:
     #: How many times the opener was topped up while waiting for the script.
     opener_fills: int = 0
     script: list[str] = field(default_factory=list)
+    #: The thread the episode left open, phrased as the follow-up a listener
+    #: would ask for. Drives the one-tap suggestion in Go Deeper; empty when
+    #: the model named none.
+    thread: str = ""
 
     @property
     def drift(self) -> float:
@@ -173,6 +177,7 @@ class GenerationStats:
             "starved": self.starved,
             "first_audio_at": round(self.first_audio_at, 2),
             "opener_fills": self.opener_fills,
+            "thread": self.thread,
         }
 
 
@@ -440,6 +445,27 @@ class PodcastPipeline:
             if not waiting.done():
                 await asyncio.wait({waiting})
 
+    async def _cache_key(self, plan: EpisodePlan) -> str:
+        """Where this episode lives in the shared cache. "" when caching is off."""
+        if not self.cache:
+            return ""
+        canonical = None
+        if settings.cache_semantic_key:
+            canonical = await canonical_key(plan.query, self.generator.client)
+        return cache_key(plan.query, plan.minutes, canonical, plan.context, plan.search)
+
+    async def thread_for(self, plan: EpisodePlan) -> str:
+        """The go-deeper thread of an episode that has already been generated.
+
+        Read out of the cache, so it costs nothing and needs no second call.
+        The thread is only known once the script has been written, which is
+        after the audio response headers have gone out - hence a separate
+        lookup rather than a header on /api/audio.
+        """
+        if not self.cache or not is_shareable(plan.query):
+            return ""
+        return self.cache.thread(await self._cache_key(plan))
+
     async def stream_pcm(
         self, plan: EpisodePlan, stats: Optional[GenerationStats] = None
     ) -> AsyncIterator[bytes]:
@@ -458,16 +484,12 @@ class PodcastPipeline:
 
         # --- Cache: has anyone already asked for this? --------------------
         shareable = is_shareable(plan.query)
-        key = ""
-        if self.cache and shareable:
-            canonical = None
-            if settings.cache_semantic_key:
-                canonical = await canonical_key(plan.query, self.generator.client)
-            key = cache_key(plan.query, plan.minutes, canonical, plan.context, plan.search)
+        key = await self._cache_key(plan) if shareable else ""
         if self.cache and shareable:
             cached = self.cache.get(key)
             if cached:
                 stats.cache = "hit"
+                stats.thread = self.cache.thread(key)
                 log.info("cache hit for %r (%d min)", plan.query, plan.minutes)
                 # Replaying the same sentences through the same controller
                 # reproduces the episode exactly - and costs zero API tokens.
@@ -481,7 +503,8 @@ class PodcastPipeline:
         # --- Generate ------------------------------------------------------
         # Start the researched call FIRST so web search is already running
         # while the cold open is being written and spoken.
-        body = self._start(self.generator.stream_sentences(plan))
+        notes = ScriptNotes()
+        body = self._start(self.generator.stream_sentences(plan, notes))
         cold_open = getattr(self.generator, "cold_open", None)
         if settings.enable_cold_open and plan.reserved_words and cold_open:
             opener = self._start(cold_open(plan))
@@ -512,9 +535,11 @@ class PodcastPipeline:
             if pace.spoken_words == before:
                 break  # the top-up produced nothing; stop asking
 
+        stats.thread = notes.thread
+
         if self.cache and shareable and stats.script:
             ttl = ttl_for(plan.query)
-            self.cache.put(key, stats.script, ttl, plan.query)
+            self.cache.put(key, stats.script, ttl, plan.query, stats.thread)
             log.info("cached %d sentences for %r (ttl %ds)", len(stats.script), plan.query, ttl)
 
         async for chunk in self._finish(pace, stats):

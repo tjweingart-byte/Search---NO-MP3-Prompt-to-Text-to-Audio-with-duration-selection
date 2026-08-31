@@ -46,7 +46,7 @@ def _use(monkeypatch, generator):
 class SilentGenerator:
     """Produces no sentences at all - e.g. the model returned nothing."""
 
-    async def stream_sentences(self, plan):
+    async def stream_sentences(self, plan, notes=None):
         return
         yield ""  # pragma: no cover
 
@@ -58,7 +58,7 @@ class SilentGenerator:
 class FailingGenerator:
     """Fails before the first sentence - e.g. a bad API key."""
 
-    async def stream_sentences(self, plan):
+    async def stream_sentences(self, plan, notes=None):
         raise RuntimeError("Could not resolve authentication method")
         yield ""  # pragma: no cover
 
@@ -169,3 +169,67 @@ def test_the_prompt_bans_preamble_openings():
     # Scene-setting is the other way a piece fails to get to the point.
     assert "picture this" in SYSTEM_PROMPT.lower()
 
+
+
+# --- The go-deeper thread -------------------------------------------------
+
+
+def test_the_thread_endpoint_serves_what_the_episode_left_open(client, monkeypatch):
+    """Generating an episode leaves a follow-up suggestion behind it."""
+    from cache import MemoryScriptCache
+
+    class Threaded:
+        client = None
+
+        async def stream_sentences(self, plan, notes=None):
+            if notes is not None:
+                notes.thread = "whether the appeal is heard at all"
+            yield "She filed the appeal on Tuesday morning."
+
+        async def top_up(self, plan, spoken_so_far, words_needed):
+            return
+            yield ""  # pragma: no cover
+
+    shared = MemoryScriptCache()
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(
+        appmod,
+        "_make_pipeline",
+        lambda voice=None: pipeline_mod.PodcastPipeline(
+            generator=Threaded(), engine=DebugEngine(), cache=shared, voice=voice
+        ),
+    )
+
+    assert client.get("/api/next?q=the+appeal&minutes=1").json()["thread"] == ""
+    assert client.get("/api/audio?q=the+appeal&minutes=1&fmt=pcm").status_code == 200
+    assert (
+        client.get("/api/next?q=the+appeal&minutes=1").json()["thread"]
+        == "whether the appeal is heard at all"
+    )
+
+
+def test_a_missing_thread_is_an_empty_string_not_an_error(client, monkeypatch):
+    """No suggestion just means the blank Go Deeper field, never a failure."""
+    _use(monkeypatch, FakeGenerator())
+    res = client.get("/api/next?q=anything&minutes=1")
+    assert res.status_code == 200
+    assert res.json()["thread"] == ""
+
+
+def test_the_marker_never_reaches_the_script_endpoint_as_speech(client, monkeypatch):
+    class Marked:
+        client = None
+
+        async def stream_sentences(self, plan, notes=None):
+            from script_generator import clean_for_speech, extract_thread
+
+            raw = "The rule expires in March. <<NEXT: what replaces the rule>>"
+            if notes is not None:
+                notes.thread = extract_thread(raw)
+            yield clean_for_speech(raw)
+
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "ScriptGenerator", lambda: Marked())
+    body = client.post("/api/script", json={"query": "the rule", "minutes": 1}).json()
+    assert "NEXT" not in body["script"]
+    assert body["thread"] == "what replaces the rule"
