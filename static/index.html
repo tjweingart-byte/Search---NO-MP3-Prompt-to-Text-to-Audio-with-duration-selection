@@ -210,19 +210,28 @@
     font-weight:500; font-size:27px; color:var(--text); letter-spacing:-0.01em; }
   /* Drawn, not set. Widths are the glyphs' own aspect ratios against one cap
      height, so they stay in proportion at any size. */
-  .wm-glyph{ display:inline-block; height:0.65em; color:var(--copper);
-    vertical-align:baseline; }
-  .wm-glyph svg{ display:block; width:100%; height:100%; }
-  .wm-glyph.f{ width:0.496em; }
-  .wm-glyph.m{ width:0.573em; }
+  /* Height is one cap height of whatever font actually renders - `cap` is the
+     CSS unit for exactly that - with the measured 0.65em as the fallback for
+     older browsers. This matters because the mark is drawn and the word beside
+     it is text: if the webfont has not loaded, the fallback face has a
+     different cap height, and a fixed em would leave the mark sitting off the
+     line next to it. Widths follow from each glyph's aspect ratio. */
+  .wm-glyph{ display:inline-block; width:auto; height:0.65em; height:1cap;
+    color:var(--copper); vertical-align:baseline; }
+  .wm-glyph svg, .wm-a svg{ display:block; width:100%; height:100%;
+    overflow:visible; }
+  .wm-glyph.f{ aspect-ratio:12.9 / 16.9; }
+  .wm-glyph.m{ aspect-ratio:14.9 / 16.9; }
   /* Gap between the leading word and the mark on myFAM / DailyFAM / explore.
-     Nothing when the mark stands alone, so the searchFAM logo stays centred. */
-  .wm-glyph.f:not(:first-child){ margin-left:0.14em; }
+     Not :not(:first-child) - the leading word is a text node, so the F really
+     is the first element and the rule silently never applied. */
+  .wm-glyph.f{ margin-left:0.16em; }
+  .fam-logo .wm-glyph.f{ margin-left:0; }   /* stands alone; stays centred */
   /* One cap height tall, bottom on the baseline: the mark now measures the
      same as the letters either side of it. */
-  .wm-a{ display:inline-block; width:0.65em; height:0.65em; color:var(--copper);
-    margin:0 0.12em; vertical-align:baseline; }
-  .wm-a svg{ display:block; width:100%; height:100%; }
+  .wm-a{ display:inline-block; width:auto; aspect-ratio:1; height:0.65em; height:1cap;
+    color:var(--copper); margin-left:0.09em; margin-right:0.15em;
+    vertical-align:baseline; }
 
   /* Go Deeper: what is unfinished, and what the endings left open. Above the
      recommendations because a thread someone already has is worth more than a
