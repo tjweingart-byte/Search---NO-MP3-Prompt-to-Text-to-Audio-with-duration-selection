@@ -64,6 +64,29 @@ browse surfaces, where what someone might tap is known well before they tap it,
 and where a speculative script is far more likely to be used than one triggered
 by a keystroke pause. That is where to spend it.
 
+## What makes a FAM episode different
+
+**It is a story, and that is the product.** Not a briefing with storytelling
+added — the narrative is how the information arrives. A listener asking about a
+simple concept or a routine update should find themselves pulled along without
+noticing why.
+
+The distinction that matters, because getting it wrong is what produces the two
+failure modes seen so far:
+
+* **Narrative as structure** (right): facts arrive in an order that opens a
+  question and closes it. Because / therefore / but. Invisible.
+* **Storytelling as decoration** (wrong): "picture this", scene-setting,
+  atmosphere. This is what makes a listener think *get to the point*.
+
+The guard: every sentence must carry information. Atmosphere alone is cut. The
+point should be arriving continuously, from the first line, inside the story.
+
+Note this **replaced an earlier rule** that said to open with the answer
+immediately. That was news-writing — the inverted pyramid — and it is the
+opposite of story structure. The opening should be concrete and open a question,
+not state the conclusion.
+
 ## The problem that matters most right now
 
 **The scripts are not good enough.** Not the voice - the writing. That is the

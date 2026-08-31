@@ -1083,3 +1083,47 @@ with a warning rather than breaking generation.
 about a third of a cent on Sonnet. It also pushes the system prompt over the
 minimum cacheable prefix, which §9 noted it was previously too short to reach,
 so the examples may end up close to free on repeat traffic.
+
+
+---
+
+## 29. The thing that makes a FAM episode different
+
+The user, arriving at the actual product thesis: an episode should be a *story*.
+Even a simple explainer or a routine update. Entertaining, feeling like it comes
+from somewhere - and crucially, not so obviously storytelling that a listener
+thinks "get to the point". The immersion should be subconscious.
+
+**The craft distinction that decides whether this works:**
+
+* **Narrative as structure** - the facts arrive in an order that opens a
+  question and closes it. Because / therefore / but rather than and-then.
+  Invisible; the listener just does not want to stop.
+* **Storytelling as decoration** - "picture this", scene-setting, atmosphere
+  laid over the information. This is exactly what produces *get to the point*.
+
+The prompt now asks for the first and bans the second by name.
+
+**This corrected a rule I had introduced three sections earlier.** §23 said to
+open with the answer immediately - the most concrete fact, straight away. That
+is news-writing, the inverted pyramid, and it is the *opposite* of story
+structure: state the conclusion in sentence one and there is nowhere left to go.
+The opening should now be concrete and open a question - a small "wait, why?" -
+without either spoiling the answer or delaying it.
+
+The guard against the other failure is explicit: every sentence must carry
+information, atmosphere alone is cut, and the point should be arriving
+continuously from the first line. Story is the shape of the delivery, never a
+delay before it.
+
+Length now describes **story scope** rather than a word quota or a section
+template - "one question, opened and answered" at a minute, "the full arc" at
+ten - so the model picks something it can resolve in the time rather than
+starting something too big and padding or truncating it.
+
+**Rules can only get this so far.** Every failure in this log came from a rule
+that was followed too literally. "A story, but not too much story" is precisely
+the kind of instruction a model interprets badly and a human writer gets
+instantly from one good example. `examples/` is where this is really settled;
+its guide now says what an example needs to demonstrate - the specific opening,
+the turn, causation over chronology, the landed ending.

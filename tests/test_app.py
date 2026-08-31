@@ -165,5 +165,7 @@ def test_the_prompt_bans_preamble_openings():
     from script_generator import SYSTEM_PROMPT
 
     assert "Here's what I can tell you about" in SYSTEM_PROMPT
-    assert "Banned openings" in SYSTEM_PROMPT
+    assert "Banned outright" in SYSTEM_PROMPT
+    # Scene-setting is the other way a piece fails to get to the point.
+    assert "picture this" in SYSTEM_PROMPT.lower()
 

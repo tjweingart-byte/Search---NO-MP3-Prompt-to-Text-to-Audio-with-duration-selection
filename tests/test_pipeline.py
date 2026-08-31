@@ -628,7 +628,7 @@ def test_the_brief_does_not_demand_a_word_count_above_all_else():
     prompt = build_prompt(plan_episode("anything", 5))
     assert "most important requirement" not in prompt
     assert "not a quota" in prompt
-    assert "finish early" in prompt
+    assert "resolves early, stop" in prompt
 
 
 def test_the_brief_no_longer_imposes_a_section_template():
@@ -688,3 +688,49 @@ def test_a_malformed_example_is_skipped_not_fatal(tmp_path, monkeypatch):
     (tmp_path / "examples" / "2-fine.txt").write_text("a query\n\nA script.\n")
     monkeypatch.setattr(sg, "__file__", str(tmp_path / "script_generator.py"))
     assert sg.load_style_examples() == [("a query", "A script.")]
+
+
+# --------------------------------------------------------------------------
+# A FAM episode is a story
+#
+# The differentiator: not a briefing with storytelling added, but information
+# delivered as narrative. Two failure modes bracket it - a flat list of facts on
+# one side, and scene-setting that makes a listener think "get to the point" on
+# the other. These assert the prompt guards both.
+# --------------------------------------------------------------------------
+
+
+def test_the_prompt_asks_for_narrative_not_a_list():
+    from script_generator import SYSTEM_PROMPT
+
+    assert "Because, therefore, but" in SYSTEM_PROMPT, "causation, not chronology"
+    assert "Tension then release" in SYSTEM_PROMPT
+
+
+def test_the_prompt_guards_against_over_storytelling():
+    """The listener must never think 'get to the point'."""
+    from script_generator import SYSTEM_PROMPT
+
+    assert "get to the point" in SYSTEM_PROMPT
+    assert "Atmosphere on its own is cut" in SYSTEM_PROMPT
+    for banned in ("picture this", "imagine"):
+        assert banned in SYSTEM_PROMPT.lower(), f"{banned!r} should be called out"
+
+
+def test_the_opening_must_not_state_the_conclusion():
+    """News-writing front-loads the answer; a story opens a question instead."""
+    from script_generator import SYSTEM_PROMPT
+
+    assert "Do not state your" in SYSTEM_PROMPT
+    assert "nowhere to go after that" in SYSTEM_PROMPT
+    assert "Do not delay it" in SYSTEM_PROMPT, "and it must not become a stall either"
+
+
+def test_length_describes_story_scope_not_a_section_template():
+    """A fixed beat template forced invented content; scope guides instead."""
+    short = build_prompt(plan_episode("a topic", 1))
+    long = build_prompt(plan_episode("a topic", 10))
+    assert "opened and answered" in short
+    assert "full arc" in long
+    for beat in ("one-line hook", "the essential background", "what to watch next"):
+        assert beat not in long
