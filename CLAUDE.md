@@ -192,10 +192,14 @@ another rule.
    a classifier. The cost design is the load-bearing part: **one bank for
    everyone, personalisation in the ordering, not the inventory** - so two
    people tapping a tile share one script through `cache.py`.
-5. **"What your followers are listening to" has no follow graph behind it.**
+5. **playFAM is built as its own tab.** `mixes.py` stores named daily mixes -
+   a mix holds *topic ids*, never audio, so "At the gym" is the same subjects
+   every day and a different set of episodes. Members are validated against the
+   same shared bank, which is what keeps the cost design intact.
+6. **"What your followers are listening to" has no follow graph behind it.**
    It ranks co-listener overlap. The heading promises a social network the app
    does not have; either build follows or rename it.
-6. **Personalisation needs state the app does not have**: user identity, an
+7. **Personalisation needs state the app does not have**: user identity, an
    interaction log, and a recommender. Everything today is stateless.
 
 ## Constraints that are settled — do not undo without discussing

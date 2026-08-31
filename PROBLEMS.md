@@ -1337,3 +1337,52 @@ point of having four different signals. Each rail owns its own horizontal
 overflow so the page itself never scrolls sideways (asserted in a real
 browser), and a chevron closes each rail because a rail gives no hint that it
 moves until you touch it.
+
+## 33. playFAM: a mix holds topics, not audio
+
+**The decision everything else follows from.** A mix is a *standing
+subscription* to a handful of topics, not a saved recording. "At the gym" is
+the same three subjects every day and a different three episodes. Saving audio
+would make a mix stale the moment it was created, would break the no-files rule
+the whole product rests on, and would cost storage per listener; saving topic
+ids costs a row in SQLite and is fresh every morning.
+
+**Membership is validated against the shared bank.** A mix that could hold
+arbitrary free-text queries would quietly undo the myFAM cost design - two
+people whose "Morning" mixes both contain the Fed episode share one script
+through `cache.py`, and that only works while members are bank topics. An
+unknown id is rejected with a message rather than dropped silently, because a
+mix that loses a topic on save looks like the app forgot.
+
+**Rules live on the server, not in both places.** Duplicate names, the topic
+cap, empty names: the API decides and the interface shows what it says. The
+alternative - validating in the browser too - means two implementations that
+drift, and the browser's copy is the one that gets skipped.
+
+**Two bugs found by driving a real browser, not by unit tests.**
+
+*The topic picker died silently when `/api/topics` failed.* An error response
+is still JSON, so `r.json().topics` was `undefined` and `renderMixPicker` threw
+`Cannot read properties of undefined`. The listener saw an empty screen and a
+console error they will never look at. Now the response status is checked, and
+a failed bank renders a message with a retry rather than nothing. Worth noting
+how it surfaced: the app's own rate limiter throttled the page during testing,
+which is exactly the condition that would hit a real listener on a slow or
+busy server.
+
+*`openPlayFAM` both set the tab and navigated,* pushing the same screen onto
+the back stack twice, so Back did nothing the first time it was pressed.
+`setTab` already shows the screen and resets the stack.
+
+**Removed with it:** the prototype's client-side playlists - `BRANCHES`-backed
+grids, the create-playlist modal, the separate add-topics screen and the
+hard-coded tile colours. Leaving them would have meant two playlist systems,
+one real and one fake, with no way for a listener to tell which they were
+using.
+
+**Still open.** "Daily" is currently a promise about *content* (each day's
+episode of a standing topic), not a scheduler - nothing wakes up in the morning
+and generates the mix. That is the right next step and the right place for
+prefetch: a mix names exactly which scripts are worth warming, per listener,
+before they press play, which is the case `CLAUDE.md` has been arguing for all
+along. Until then the mix generates on tap like everything else.

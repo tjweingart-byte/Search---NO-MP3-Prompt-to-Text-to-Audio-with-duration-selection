@@ -208,6 +208,50 @@
   .feed-more{ flex:0 0 44px; align-self:stretch; display:flex; align-items:center;
     justify-content:center; color:var(--text-muted); opacity:0.5; }
 
+  /* playFAM: a mix is a folder. The card shows what is inside without
+     needing to be opened, because a folder you cannot see into is a guess. */
+  .mix-card{ display:flex; align-items:center; gap:13px; padding:13px 14px; margin-bottom:11px;
+    background:var(--surface); border:1px solid var(--border); border-radius:14px; cursor:pointer; }
+  .mix-card:active{ transform:scale(0.99); }
+  .mix-folder{ flex:0 0 46px; height:46px; border-radius:12px; background:var(--paper);
+    display:flex; align-items:center; justify-content:center; color:var(--ink); }
+  .mix-card-body{ flex:1; min-width:0; }
+  .mix-name{ font-family:'Fraunces', serif; font-weight:600; font-size:14px; color:var(--text);
+    margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mix-meta{ font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.05em;
+    text-transform:uppercase; color:var(--text-muted); margin-bottom:3px; }
+  .mix-preview{ font-size:10px; line-height:1.35; color:var(--text-muted);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mix-chev{ flex:none; color:var(--text-muted); opacity:0.6; }
+  .mix-new{ display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+    padding:13px; border-radius:14px; background:transparent; color:var(--copper);
+    border:1px dashed var(--border-strong); font-family:'Space Grotesk',sans-serif;
+    font-size:12px; font-weight:700; cursor:pointer; margin-bottom:11px; }
+  .starter-row{ display:flex; gap:9px; overflow-x:auto; padding-bottom:4px;
+    margin:-2px 0 14px; scrollbar-width:none; }
+  .starter-row::-webkit-scrollbar{ display:none; }
+  .starter-chip{ flex:0 0 auto; padding:8px 13px; border-radius:999px; background:var(--surface);
+    border:1px solid var(--border-strong); color:var(--text); font-size:11px; font-weight:600;
+    cursor:pointer; }
+  /* Inside a mix, and in the picker. */
+  .mix-topic{ display:flex; align-items:center; gap:11px; padding:11px 12px; margin-bottom:9px;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px; }
+  .mix-topic-body{ flex:1; min-width:0; }
+  .mix-topic-title{ font-family:'Fraunces', serif; font-weight:600; font-size:12.5px;
+    color:var(--text); line-height:1.3; }
+  .mix-topic-sub{ font-size:9.5px; color:var(--text-muted); margin-top:2px; line-height:1.35; }
+  .mix-topic-act{ flex:none; width:30px; height:30px; border-radius:50%; display:flex;
+    align-items:center; justify-content:center; border:1px solid var(--border-strong);
+    background:transparent; color:var(--text); cursor:pointer; font-size:15px; }
+  .mix-topic.chosen{ border-color:var(--copper); }
+  .mix-topic.chosen .mix-topic-act{ background:var(--copper); color:var(--ink); border-color:var(--copper); }
+  .mix-play{ display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+    padding:13px; border-radius:999px; background:var(--copper); color:var(--ink); border:none;
+    font-family:'Space Grotesk',sans-serif; font-size:12.5px; font-weight:700; cursor:pointer;
+    margin:2px 0 16px; }
+  .mix-empty{ padding:16px 14px; border:1px dashed var(--border-strong); border-radius:12px;
+    font-size:11px; line-height:1.5; color:var(--text-muted); margin-bottom:14px; }
+
   .grid4{ padding:14px 18px 0; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   .tile-big{ aspect-ratio:1/1; border-radius:18px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid var(--border); cursor:pointer; }
   .tile-big:active{ transform:scale(0.97); }
@@ -579,6 +623,7 @@
         <div class="tabbar">
           <div class="tab active" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
           <div class="tab" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
           <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
@@ -612,34 +657,55 @@
         <div class="tabbar">
           <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab active" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
           <div class="tab" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
           <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
       </section>
 
       <!-- ============ PLAYFAM (past playlists) ============ -->
+      <!-- ============ PLAYFAM (daily mixes) ============ -->
       <section class="screen" id="screen-playfam">
-        <div class="back-row">
-          <span class="back" onclick="goBack()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
-          <h2>playFAMs</h2>
-        </div>
         <div class="scroll">
-          <div class="connect-sub" style="margin:0 0 14px;">Your playlists — tap one to play or edit it.</div>
-          <div class="grid4" id="playfamGrid"></div>
+          <div class="myfam-header">
+            <h2>playFAM</h2>
+            <button class="myfam-dots-btn" onclick="openNewMix()">+</button>
+          </div>
+          <div class="connect-sub" style="margin:2px 0 16px;">
+            Daily mixes. Each one is a standing list of topics — the episodes are
+            new every day.
+          </div>
+          <div id="mixList"></div>
         </div>
-        <div class="generating" id="gen-playfam"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
+        <div class="tabbar">
+          <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
+          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab active" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
+          <div class="tab" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
+          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+        </div>
       </section>
 
-      <!-- ============ NEW PLAYLIST — add topics ============ -->
-      <section class="screen" id="screen-newplaylist">
+      <!-- ============ PLAYFAM — inside one mix ============ -->
+      <section class="screen" id="screen-mixdetail">
         <div class="back-row">
-          <span class="back" onclick="cancelNewPlaylist()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
-          <h2 id="npTitle">Add Topics</h2>
+          <span class="back" onclick="openPlayFAM()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <h2 id="mixTitle">Mix</h2>
+          <div class="head-dots" onclick="openMixMenu()"><span></span><span></span><span></span></div>
         </div>
-        <div class="connect-sub" style="margin:0 18px 12px;">Add every topic you want in this playlist, then save.</div>
-        <div class="scroll" id="npBody"></div>
+        <div class="scroll" id="mixBody"></div>
+      </section>
+
+      <!-- ============ PLAYFAM — choose topics ============ -->
+      <section class="screen" id="screen-mixpicker">
+        <div class="back-row">
+          <span class="back" onclick="cancelMixPicker()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <h2 id="pickerTitle">Choose topics</h2>
+        </div>
+        <div class="connect-sub" style="margin:0 18px 12px;" id="pickerCount">Nothing chosen yet.</div>
+        <div class="scroll" id="pickerBody"></div>
         <div style="padding:0 18px 18px;">
-          <button class="np-save-btn" onclick="saveNewPlaylist()">Save Playlist</button>
+          <button class="np-save-btn" onclick="saveMixPicker()">Save mix</button>
         </div>
       </section>
 
@@ -757,6 +823,7 @@
         <div class="tabbar">
           <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
           <div class="tab active" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
           <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
@@ -778,6 +845,7 @@
         <div class="tabbar">
           <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
           <div class="tab" data-tab="dailyfam" onclick="openDailyFam()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">Daily FAM</div></div>
           <div class="tab active" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
@@ -832,15 +900,6 @@
         </div>
       </div>
 
-      <div class="modal-overlay" id="cpOverlay" onclick="if(event.target===this) closeCreatePlaylist()">
-        <div class="modal-card">
-          <div class="modal-title">Create Playlist</div>
-          <input class="modal-input" id="cpNameInput" type="text" placeholder="Playlist name">
-          <div class="modal-btns">
-            <button class="modal-btn ghost" onclick="closeCreatePlaylist()">Cancel</button>
-            <button class="modal-btn primary" onclick="confirmCreatePlaylist()">Next</button>
-          </div>
-        </div>
       </div>
 
       <div class="modal-overlay" id="speedLengthOverlay" onclick="if(event.target===this) closeSpeedLengthModal()">
@@ -1106,12 +1165,7 @@
   var lastDetailBranch = null;
   var pendingNewPlaylistKey = null;
   function refreshTopicList(key){
-    var activeId = document.querySelector(".screen.active") ? document.querySelector(".screen.active").id : "";
-    if(activeId === "screen-newplaylist"){
-      renderNewPlaylistTopics();
-    } else {
-      renderBranch(key);
-    }
+    renderBranch(key);
   }
   var currentAlbumForPlayer = null;
   var currentTopicIndexInAlbum = -1;
@@ -2094,111 +2148,290 @@
     navigate("playall");
   }
 
-  // ---------------- PlayFAM (past playlists) ----------------
-  var PLAYFAM_COLORS = {
-    morning: ["#4A3527","#5C4530"],
-    culture: ["#3B2E4A","#4A3960"],
-    aiupd: ["#1F3B45","#274954"]
-  };
-  var PLAYFAM_COLOR_ROTATION = [["#3B3550","#463F60"],["#2C3B45","#354655"],["#2B3B34","#33453D"],["#4A2E37","#5B3641"]];
-  var playfamColorCounter = 0;
+  // ---------------- playFAM: daily mixes ----------------
+  // A mix is a named, standing list of TOPICS - never saved audio. That is
+  // the design decision the rest follows from: "At the gym" is the same three
+  // subjects every day and a different three episodes, so it never goes stale
+  // and it costs nothing to keep. Members come from the same shared bank as
+  // myFAM, so two people whose mixes both contain the Fed episode share one
+  // script.
+  var mixes = [];
+  var mixStarters = [];
+  var topicBank = [];
+  var currentMixId = null;
+  var pickerSelection = [];
+  var pickerMixId = null;      // null => the picker is creating a new mix
+  var pickerNewName = "";
 
-  function renderPlayfamGrid(){
-    var html = "";
-    Object.keys(BRANCHES).forEach(function(key){
-      var b = BRANCHES[key];
-      var color = PLAYFAM_COLORS[key];
-      if(!color){
-        color = PLAYFAM_COLOR_ROTATION[playfamColorCounter % PLAYFAM_COLOR_ROTATION.length];
-        playfamColorCounter++;
-        PLAYFAM_COLORS[key] = color;
-      }
-      html += '<div class="tile-big" onclick="openPlaylistMenu(\''+key+'\')" style="background:linear-gradient(160deg,'+color[0]+','+color[1]+');">'
-        + '<div class="waveform" style="color:#D8CFC0;"><span style="height:9px"></span><span style="height:17px"></span><span style="height:6px"></span><span style="height:15px"></span><span style="height:10px"></span></div>'
-        + '<div class="tname">'+b.name+'</div></div>';
-    });
-    html += '<div class="tile-big" style="background:transparent; border:1.5px dashed var(--border-strong);" onclick="openCreatePlaylistModal()">'
-      + '<div class="plus" style="font-size:22px;color:var(--text-faint);">+</div>'
-      + '<div class="tname" style="color:var(--text-muted);">Create Playlist</div></div>';
-    document.getElementById("playfamGrid").innerHTML = html;
+  function folderSVG(){
+    return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'
+      + '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>';
   }
+
   function openPlayFAM(){
-    renderPlayfamGrid();
-    navigate("playfam");
+    // setTab already shows the screen and resets the back stack; navigating
+    // on top of it would push the same screen twice and make Back a no-op.
+    setTab("playfam");
+    loadMixes();
   }
-  function openPlaylistMenu(key){
+
+  function loadMixes(){
+    var el = document.getElementById("mixList");
+    if(!el) return;
+    Promise.all([
+      fetch("/api/mixes?user=" + encodeURIComponent(famUserId())).then(function(r){
+        if(!r.ok) throw new Error("mixes unavailable"); return r.json();
+      }),
+      topicBank.length ? Promise.resolve({topics: topicBank})
+                       : fetch("/api/topics").then(function(r){
+                           // An error body is still JSON. Without this check the
+                           // bank silently becomes undefined and the picker dies
+                           // with a console error the listener never sees.
+                           if(!r.ok) throw new Error("topics unavailable");
+                           return r.json();
+                         })
+    ]).then(function(res){
+      mixes = res[0].mixes;
+      mixStarters = res[0].starters || [];
+      topicBank = res[1].topics;
+      renderMixList();
+    }).catch(function(){
+      // A failure has to look like one. An empty page here would read as
+      // "you have no mixes", which is a different and much worse message.
+      el.innerHTML = '<div class="mix-empty">Could not load your mixes. '
+        + 'They are safe on the server — this will fill in when it is back.</div>';
+    });
+  }
+
+  function renderMixList(){
+    var html = "";
+    if(!mixes.length){
+      html += '<div class="mix-empty">No mixes yet. A mix is a handful of topics '
+        + 'you want every day — name it after when you listen, not what it is about.</div>';
+      if(mixStarters.length){
+        html += '<div class="starter-row">' + mixStarters.map(function(st, i){
+          return '<div class="starter-chip" onclick="useStarterMix(' + i + ')">'
+            + escapeHtml(st.name) + '</div>';
+        }).join("") + '</div>';
+      }
+    }
+    html += '<button class="mix-new" onclick="openNewMix()">'
+      + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
+      + 'New mix</button>';
+
+    html += mixes.map(function(m){
+      var names = m.topics.map(function(t){ return t.title; }).join(" · ");
+      return '<div class="mix-card" onclick="openMix(\'' + m.id + '\')">'
+        + '<div class="mix-folder">' + folderSVG() + '</div>'
+        + '<div class="mix-card-body">'
+        + '<div class="mix-name">' + escapeHtml(m.name) + '</div>'
+        + '<div class="mix-meta">' + m.topics.length
+        + (m.topics.length === 1 ? " topic · daily" : " topics · daily") + '</div>'
+        + '<div class="mix-preview">' + (escapeHtml(names) || "Nothing in it yet") + '</div>'
+        + '</div>'
+        + '<div class="mix-chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" '
+        + 'stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6"/></svg></div>'
+        + '</div>';
+    }).join("");
+    document.getElementById("mixList").innerHTML = html;
+  }
+
+  function mixById(id){
+    for(var i = 0; i < mixes.length; i++){ if(mixes[i].id === id) return mixes[i]; }
+    return null;
+  }
+
+  // --- inside one mix ---
+  function openMix(id){
+    var m = mixById(id);
+    if(!m) return;
+    currentMixId = id;
+    document.getElementById("mixTitle").textContent = m.name;
+    var html = "";
+    if(m.topics.length){
+      html += '<button class="mix-play" onclick="playMix()">'
+        + '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">'
+        + '<path d="M8 5v14l11-7z"/></svg>Play today\u2019s ' + m.topics.length
+        + (m.topics.length === 1 ? " episode" : " episodes") + '</button>';
+      html += '<div class="mix-meta" style="margin:0 0 9px;">Today\u2019s edition</div>';
+      html += m.topics.map(function(t){
+        return '<div class="mix-topic">'
+          + '<div class="mix-topic-body">'
+          + '<div class="mix-topic-title">' + escapeHtml(t.title) + '</div>'
+          + '<div class="mix-topic-sub">' + escapeHtml(t.subtitle) + '</div>'
+          + '</div>'
+          + '<button class="mix-topic-act" title="Play this one" '
+          + 'onclick="event.stopPropagation(); startBankTopic(\'' + t.id + '\')">'
+          + '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">'
+          + '<path d="M8 5v14l11-7z"/></svg></button>'
+          + '</div>';
+      }).join("");
+    } else {
+      html += '<div class="mix-empty">This mix is empty. Add the topics you want '
+        + 'to hear about every day.</div>';
+    }
+    html += '<button class="mix-new" onclick="editMixTopics()">'
+      + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
+      + 'Edit topics</button>';
+    document.getElementById("mixBody").innerHTML = html;
+    navigate("mixdetail");
+  }
+
+  function playMix(){
+    var m = mixById(currentMixId);
+    if(!m || !m.topics.length){ toast("Add a topic first"); return; }
+    startBankTopic(m.topics[0].id);
+  }
+
+  function openMixMenu(){
+    var m = mixById(currentMixId);
+    if(!m) return;
     showActionSheet([
-      { label: "Play", action: function(){ playPlaylistDirect(key); } },
-      { label: "Edit", action: function(){ openBranch(key); } }
+      { label: "Rename", action: renameMix },
+      { label: "Edit topics", action: editMixTopics },
+      { label: "Delete mix", action: deleteMix }
     ]);
   }
-  function playPlaylistDirect(key){
-    if(BRANCHES[key].topics.length === 0){
-      toast("Add a topic first");
-      openBranch(key);
-      return;
-    }
-    var overlay = document.getElementById("gen-playfam");
-    overlay.classList.add("active");
-    setTimeout(function(){
-      overlay.classList.remove("active");
-      startPlayAll(key);
-    }, 900);
-  }
-  function openCreatePlaylistModal(){
-    document.getElementById("cpNameInput").value = "";
-    document.getElementById("cpOverlay").classList.add("active");
-    setTimeout(function(){ document.getElementById("cpNameInput").focus(); }, 60);
-  }
-  function closeCreatePlaylist(){
-    document.getElementById("cpOverlay").classList.remove("active");
-  }
-  function confirmCreatePlaylist(){
-    var name = document.getElementById("cpNameInput").value.trim();
-    if(!name){ document.getElementById("cpNameInput").focus(); return; }
-    closeCreatePlaylist();
-    var key = "playlist_" + Date.now();
-    BRANCHES[key] = { name: name, topics: [], reco: null };
-    pendingNewPlaylistKey = key;
-    lastDetailBranch = key;
-    document.getElementById("npTitle").textContent = name;
-    renderNewPlaylistTopics();
-    navigate("newplaylist");
-  }
-  function renderNewPlaylistTopics(){
-    var key = pendingNewPlaylistKey;
-    var b = BRANCHES[key];
-    var html = "";
-    b.topics.forEach(function(tk){
-      html += topicRowHTML(tk, false, key);
+
+  function renameMix(){
+    var m = mixById(currentMixId);
+    showModal({
+      title: "Rename mix",
+      placeholder: m.name,
+      confirmLabel: "Save",
+      onConfirm: function(value){
+        saveMix("PATCH", "/api/mixes/" + m.id, { name: value }, function(){ openMix(m.id); });
+      }
     });
-    html += '<div class="add-topic-bar" onclick="openAddTopicModal()">+ Add a topic</div>';
-    document.getElementById("npBody").innerHTML = html;
-  }
-  var savingPlaylist = false;
-  function saveNewPlaylist(){
-    if(savingPlaylist) return;
-    var key = pendingNewPlaylistKey;
-    if(!key || !BRANCHES[key] || !BRANCHES[key].topics.length){
-      toast("Add at least one topic first");
-      return;
-    }
-    savingPlaylist = true;
-    pendingNewPlaylistKey = null;
-    renderPlayfamGrid();
-    goBack();
-    openBranch(key);
-    toast(BRANCHES[key].name + " saved ✓");
-    setTimeout(function(){ savingPlaylist = false; }, 500);
-  }
-  function cancelNewPlaylist(){
-    var key = pendingNewPlaylistKey;
-    delete BRANCHES[key];
-    pendingNewPlaylistKey = null;
-    goBack();
   }
 
-  // ---------------- myFAM seeds feed ----------------
+  function deleteMix(){
+    var m = mixById(currentMixId);
+    fetch("/api/mixes/" + m.id + "?user=" + encodeURIComponent(famUserId()), { method: "DELETE" })
+      .then(function(r){
+        if(!r.ok) throw new Error();
+        toast("Deleted " + m.name);
+        openPlayFAM();
+      })
+      .catch(function(){ toast("Could not delete that mix"); });
+  }
+
+  // --- choosing topics ---
+  function openNewMix(){
+    showModal({
+      title: "New mix",
+      placeholder: "e.g. Morning, At the gym",
+      confirmLabel: "Choose topics",
+      onConfirm: function(value){
+        pickerMixId = null;
+        pickerNewName = value;
+        pickerSelection = [];
+        openMixPicker(value);
+      }
+    });
+  }
+
+  function useStarterMix(i){
+    var st = mixStarters[i];
+    if(!st) return;
+    pickerMixId = null;
+    pickerNewName = st.name;
+    pickerSelection = st.topic_ids.slice();
+    openMixPicker(st.name);
+  }
+
+  function editMixTopics(){
+    var m = mixById(currentMixId);
+    if(!m) return;
+    pickerMixId = m.id;
+    pickerNewName = m.name;
+    pickerSelection = m.topic_ids.slice();
+    openMixPicker(m.name);
+  }
+
+  function openMixPicker(name){
+    document.getElementById("pickerTitle").textContent = name;
+    renderMixPicker();
+    navigate("mixpicker");
+  }
+
+  function renderMixPicker(){
+    if(!topicBank || !topicBank.length){
+      document.getElementById("pickerCount").textContent = "";
+      document.getElementById("pickerBody").innerHTML =
+        '<div class="mix-empty">Could not load the topic list. '
+        + '<span style="color:var(--copper);cursor:pointer" onclick="reloadTopicBank()">Try again</span></div>';
+      return;
+    }
+    document.getElementById("pickerCount").textContent = pickerSelection.length
+      ? pickerSelection.length + (pickerSelection.length === 1 ? " topic chosen" : " topics chosen")
+      : "Nothing chosen yet.";
+    document.getElementById("pickerBody").innerHTML = topicBank.map(function(t){
+      var on = pickerSelection.indexOf(t.id) !== -1;
+      return '<div class="mix-topic' + (on ? " chosen" : "") + '" '
+        + 'onclick="toggleMixTopic(\'' + t.id + '\')">'
+        + '<div class="mix-topic-body">'
+        + '<div class="mix-topic-title">' + escapeHtml(t.title) + '</div>'
+        + '<div class="mix-topic-sub">' + escapeHtml(t.subtitle) + '</div>'
+        + '</div>'
+        + '<div class="mix-topic-act">' + (on ? "\u2713" : "+") + '</div>'
+        + '</div>';
+    }).join("");
+  }
+
+  function reloadTopicBank(){
+    fetch("/api/topics")
+      .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
+      .then(function(d){ topicBank = d.topics; renderMixPicker(); })
+      .catch(function(){ toast("Still cannot reach the topic list"); });
+  }
+
+  function toggleMixTopic(id){
+    var at = pickerSelection.indexOf(id);
+    if(at === -1) pickerSelection.push(id); else pickerSelection.splice(at, 1);
+    renderMixPicker();
+  }
+
+  function cancelMixPicker(){
+    if(pickerMixId) openMix(pickerMixId); else openPlayFAM();
+  }
+
+  function saveMixPicker(){
+    if(pickerMixId){
+      saveMix("PATCH", "/api/mixes/" + pickerMixId, { topic_ids: pickerSelection },
+              function(m){ openMix(m.id); });
+    } else {
+      saveMix("POST", "/api/mixes",
+              { name: pickerNewName, topic_ids: pickerSelection },
+              function(m){ openMix(m.id); });
+    }
+  }
+
+  // One place that talks to the server, so every refusal is surfaced the same
+  // way. The server owns the rules (duplicate names, unknown topics); the
+  // interface just shows what it says rather than guessing at them twice.
+  function saveMix(method, url, body, done){
+    body.user = famUserId();
+    fetch(url, {
+      method: method,
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    }).then(function(r){
+      return r.json().then(function(data){
+        if(!r.ok) throw new Error(data.error || "Could not save that mix");
+        return data;
+      });
+    }).then(function(saved){
+      var existing = mixById(saved.id);
+      if(existing){ mixes[mixes.indexOf(existing)] = saved; } else { mixes.push(saved); }
+      renderMixList();
+      if(done) done(saved);
+    }).catch(function(err){ toast(err.message || "Could not save that mix"); });
+  }
+
   function openMyFamTab(){
     loadMyFamFeed();
     setTab("myfam");

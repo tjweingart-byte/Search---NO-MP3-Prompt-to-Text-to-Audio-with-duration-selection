@@ -29,6 +29,7 @@ from config import settings
 from pipeline import GenerationStats, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import topics as topics_mod
+import mixes as mixes_mod
 import voice_store
 from tts import (
     TTSUnavailable,
@@ -211,6 +212,62 @@ async def script(req: ScriptRequest, request: Request) -> dict:
 
 
 EVENTS = topics_mod.EventStore(os.environ.get("MYFAM_DB", "myfam.db"))
+MIXES = mixes_mod.MixStore(os.environ.get("MIXES_DB", "mixes.db"))
+
+
+class MixRequest(BaseModel):
+    user: str = Field(..., max_length=64)
+    name: Optional[str] = Field(None, max_length=mixes_mod.MAX_NAME)
+    topic_ids: Optional[list[str]] = None
+
+
+@app.get("/api/topics")
+async def bank(request: Request):
+    """The whole shared bank, for the mix topic picker."""
+    _rate_limit(request)
+    return {"topics": [t.as_dict() for t in topics_mod.TOPIC_BANK]}
+
+
+@app.get("/api/mixes")
+async def list_mixes(request: Request, user: str = Query("", max_length=64)):
+    """This listener's playFAM mixes, each with its topics resolved."""
+    _rate_limit(request)
+    return {
+        "mixes": [m.as_dict() for m in MIXES.list_for_user(user)],
+        "starters": [
+            {"name": name, "topic_ids": list(ids)}
+            for name, ids in mixes_mod.STARTER_MIXES
+        ],
+    }
+
+
+@app.post("/api/mixes")
+async def create_mix(req: MixRequest, request: Request):
+    _rate_limit(request)
+    try:
+        mix = MIXES.create(req.user, req.name or "", req.topic_ids or [])
+    except mixes_mod.MixError as exc:
+        # Phrased for the listener: these are things they did, not faults.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return mix.as_dict()
+
+
+@app.patch("/api/mixes/{mix_id}")
+async def update_mix(mix_id: str, req: MixRequest, request: Request):
+    _rate_limit(request)
+    try:
+        mix = MIXES.update(req.user, mix_id, req.name, req.topic_ids)
+    except mixes_mod.MixError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return mix.as_dict()
+
+
+@app.delete("/api/mixes/{mix_id}")
+async def delete_mix(mix_id: str, request: Request, user: str = Query("", max_length=64)):
+    _rate_limit(request)
+    if not MIXES.delete(user, mix_id):
+        raise HTTPException(status_code=404, detail="That mix no longer exists.")
+    return {"ok": True}
 
 
 class EventRequest(BaseModel):

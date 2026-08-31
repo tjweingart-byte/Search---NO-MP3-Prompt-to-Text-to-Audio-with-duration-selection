@@ -137,6 +137,8 @@ TTL instead of 24 hours.
 | `GET /api/next?q=…&minutes=N` | The thread that episode left open, for a one-tap Go Deeper |
 | `GET /api/myfam?user=…` | The four ranked myFAM sections. No model call |
 | `POST /api/event` | Record a search, completion or skip, for ranking |
+| `GET /api/topics` | The whole shared topic bank, for the mix picker |
+| `GET/POST /api/mixes`, `PATCH/DELETE /api/mixes/{id}` | playFAM daily mixes |
 
 `/api/audio` also takes `voice=` (an id from `/api/voices`) and `context=` (the
 topic a follow-up is deepening).
