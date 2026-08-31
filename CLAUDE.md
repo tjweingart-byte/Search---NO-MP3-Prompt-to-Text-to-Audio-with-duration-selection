@@ -186,7 +186,16 @@ another rule.
    30s of preamble, because the listener must hear *something*. The cure is a
    faster script - fewer web searches, a faster model, or prefetch on the
    browse surfaces - not a longer opener.
-4. **Personalisation needs state the app does not have**: user identity, an
+4. **myFAM is built; the taste model is deliberately crude.** `topics.py` ranks
+   a *shared* bank of ~28 topics four ways (trending / adjacent / co-listener /
+   history) from an append-only event log. Tags come from keyword matching, not
+   a classifier. The cost design is the load-bearing part: **one bank for
+   everyone, personalisation in the ordering, not the inventory** - so two
+   people tapping a tile share one script through `cache.py`.
+5. **"What your followers are listening to" has no follow graph behind it.**
+   It ranks co-listener overlap. The heading promises a social network the app
+   does not have; either build follows or rename it.
+6. **Personalisation needs state the app does not have**: user identity, an
    interaction log, and a recommender. Everything today is stateless.
 
 ## Constraints that are settled — do not undo without discussing

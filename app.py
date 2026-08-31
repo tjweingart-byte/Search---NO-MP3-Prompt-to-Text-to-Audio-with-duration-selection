@@ -10,6 +10,7 @@ Endpoints
 """
 from __future__ import annotations
 
+import os
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -27,6 +28,7 @@ from demo_script import DemoGenerator
 from config import settings
 from pipeline import GenerationStats, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
+import topics as topics_mod
 import voice_store
 from tts import (
     TTSUnavailable,
@@ -208,6 +210,43 @@ async def script(req: ScriptRequest, request: Request) -> dict:
     }
 
 
+EVENTS = topics_mod.EventStore(os.environ.get("MYFAM_DB", "myfam.db"))
+
+
+class EventRequest(BaseModel):
+    user: str = Field(..., max_length=64)
+    kind: str = Field(..., max_length=16)
+    topic_id: str = Field("", max_length=64)
+    text: str = Field("", max_length=300)
+
+
+@app.get("/api/myfam")
+async def myfam(request: Request, user: str = Query("", max_length=64)):
+    """The four myFAM sections, ranked for this listener.
+
+    Costs no model call: the topic bank is fixed and this only orders it.
+    A listener with no history still gets Trending and a starter set, with
+    the personal sections honestly empty rather than filled with fakes.
+    """
+    _rate_limit(request)
+    return topics_mod.build_feed(EVENTS, user)
+
+
+@app.post("/api/event")
+async def record_event(req: EventRequest, request: Request):
+    """Log one interaction. Playback never depends on this succeeding."""
+    _rate_limit(request)
+    tags = ()
+    if req.topic_id and req.topic_id in topics_mod.BANK_BY_ID:
+        tags = topics_mod.BANK_BY_ID[req.topic_id].tags
+    elif req.text:
+        tags = topics_mod.tags_for_text(req.text)
+    EVENTS.record(
+        topics_mod.Event(req.user, req.kind, req.topic_id, req.text, tags)
+    )
+    return {"ok": True}
+
+
 @app.get("/api/next")
 async def next_thread(
     request: Request,
@@ -244,6 +283,8 @@ async def audio(
     context: str = Query("", description="Topic the listener just heard, for a follow-up"),
     voice: str = Query("", description="Voice id from /api/voices"),
     search: bool = Query(False, description="Look up live sources; adds 10-25s before audio"),
+    user: str = Query("", max_length=64, description="Anonymous listener id, for myFAM"),
+    topic_id: str = Query("", max_length=64, description="Bank topic id, when played from myFAM"),
 ):
     """Stream the episode.
 
@@ -309,6 +350,18 @@ async def audio(
             log.info(
                 "episode q=%r %s wall=%.1fs", plan.query, stats.as_dict(), time.monotonic() - started
             )
+
+    # Recorded here rather than client-side: audio is being served, so the
+    # play is a fact. A dropped event costs one weak signal, never the episode.
+    if user:
+        EVENTS.record(
+            topics_mod.Event(
+                user, "play", topic_id, plan.query,
+                topics_mod.BANK_BY_ID[topic_id].tags
+                if topic_id in topics_mod.BANK_BY_ID
+                else topics_mod.tags_for_text(plan.query),
+            )
+        )
 
     media_type = "audio/wav" if fmt == "wav" else "audio/L16"
     return StreamingResponse(

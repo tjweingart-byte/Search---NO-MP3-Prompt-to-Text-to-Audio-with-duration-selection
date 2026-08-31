@@ -135,6 +135,8 @@ TTL instead of 24 hours.
 | `POST /api/script` | `{query, minutes}` → the script as JSON, no audio |
 | `GET /api/audio?q=…&minutes=N&fmt=pcm\|wav` | The episode, streamed live |
 | `GET /api/next?q=…&minutes=N` | The thread that episode left open, for a one-tap Go Deeper |
+| `GET /api/myfam?user=…` | The four ranked myFAM sections. No model call |
+| `POST /api/event` | Record a search, completion or skip, for ranking |
 
 `/api/audio` also takes `voice=` (an id from `/api/voices`) and `context=` (the
 topic a follow-up is deepening).

@@ -135,7 +135,7 @@ window.FamAudio = (function () {
     tick();
   }
 
-  function play(query, minutes, h, context, voice) {
+  function play(query, minutes, h, context, voice, listener) {
     handlers = h || {};
     stop();
     var myToken = ++token;
@@ -148,7 +148,13 @@ window.FamAudio = (function () {
     var url = "/api/audio?q=" + encodeURIComponent(query) +
               "&minutes=" + encodeURIComponent(minutes) + "&fmt=pcm" +
               (context ? "&context=" + encodeURIComponent(context) : "") +
-              (voice ? "&voice=" + encodeURIComponent(voice) : "");
+              (voice ? "&voice=" + encodeURIComponent(voice) : "") +
+              // Who is listening and what they tapped, so myFAM can rank.
+              // Sent with the audio request rather than as a separate call:
+              // a play that reached the server is a fact, and a client-side
+              // report of one is a claim that can be lost or duplicated.
+              (listener && listener.user ? "&user=" + encodeURIComponent(listener.user) : "") +
+              (listener && listener.topicId ? "&topic_id=" + encodeURIComponent(listener.topicId) : "");
 
     ctx.resume().then(function () {
       return fetch(url, { signal: controller.signal });

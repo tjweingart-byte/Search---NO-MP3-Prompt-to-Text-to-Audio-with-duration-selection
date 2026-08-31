@@ -187,6 +187,15 @@
   .seed-card-sub{ font-size:9.5px; line-height:1.4; color:var(--text-muted); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .seeds-refresh{ display:flex; align-items:center; justify-content:center; gap:7px; padding:16px 0 6px; color:var(--copper); font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; cursor:pointer; }
   .seeds-refresh:active{ opacity:0.7; }
+  /* myFAM sections. Each runs on a different signal, so each says which. */
+  .feed-section{ margin:18px 0 4px; }
+  .feed-section + .feed-section{ margin-top:22px; }
+  .feed-why{ font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.06em;
+    text-transform:none; color:var(--text-muted); opacity:0.75; margin:-4px 0 9px; }
+  .feed-empty{ padding:14px 13px; border:1px dashed var(--border-strong); border-radius:12px;
+    font-size:10.5px; line-height:1.45; color:var(--text-muted); background:transparent; }
+  .feed-skeleton{ height:118px; border-radius:13px; background:var(--surface);
+    border:1px solid var(--border); opacity:0.55; }
 
   .grid4{ padding:14px 18px 0; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   .tile-big{ aspect-ratio:1/1; border-radius:18px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid var(--border); cursor:pointer; }
@@ -582,8 +591,7 @@
               <span>playFAMs</span>
             </button>
           </div>
-          <div class="section-kicker" style="margin:18px 0 9px;">For you</div>
-          <div class="seeds-grid" id="seedsFeed"></div>
+          <div id="myfamFeed"></div>
           <div class="seeds-refresh" onclick="refreshSeedsFeed()">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 12a10 10 0 0116-7.7M22 12a10 10 0 01-16 7.7M2 4v6h6M22 20v-6h-6"/></svg>
             <span>Different picks</span>
@@ -1169,6 +1177,9 @@
     var val = document.getElementById("searchInput").value.trim();
     if(val){
       TOPICS["_custom"] = { title: val, source: "Your search", caption: "Generating your live transcript as this plays—" };
+      // What someone searches is the clearest statement of interest they make,
+      // and it is the input myFAM was asked to rank on.
+      recordFamEvent("search", "", val);
       pendingFromSearch = true;
       generate("_custom", "home");
       document.getElementById("searchInput").value = "";
@@ -1350,9 +1361,11 @@
     });
   }
 
-  function speakText(title, captionHtml, onEnd, context){
+  function speakText(title, captionHtml, onEnd, context, bankTopicId){
     var totalSeconds = selectedLengthMinutes * 60;
     rememberEpisode(title, selectedLengthMinutes, context || "");
+    var episodeTopicId = bankTopicId || "";
+    var reportedOutcome = false;
     FamAudio.play(title, selectedLengthMinutes, {
       onFirstAudio: function(){
         startProgress(totalSeconds);
@@ -1368,6 +1381,12 @@
         stopProgress();
         setPlayState(false);
         fetchEpisodeThread();
+        // Finishing is the strongest taste signal there is, and only the
+        // client knows it happened.
+        if(!reportedOutcome){
+          reportedOutcome = true;
+          recordFamEvent("complete", episodeTopicId, title);
+        }
         if(onEnd) onEnd();
       },
       onError: function(err){
@@ -1375,9 +1394,23 @@
         setPlayState(false);
         onGenerationFailed(err && err.message);
       }
-    }, context, selectedVoice);
+    }, context, selectedVoice, { user: famUserId(), topicId: episodeTopicId });
+
+    // Abandoning an episode early is evidence in the other direction, and
+    // must not be recorded as a quiet non-event.
+    famAbandonReporter = function(){
+      if(reportedOutcome) return;
+      reportedOutcome = true;
+      if(FamAudio.position() > 5 && !FamAudio.isComplete()){
+        recordFamEvent("skip", episodeTopicId, title);
+      }
+    };
   }
-  function stopSpeech(){ stopProgress(); FamAudio.stop(); }
+  var famAbandonReporter = null;
+  function stopSpeech(){
+    if(famAbandonReporter){ try { famAbandonReporter(); } catch(e){} famAbandonReporter = null; }
+    stopProgress(); FamAudio.stop();
+  }
   function pauseSpeech(){ FamAudio.pause(); }
   function resumeSpeech(){ FamAudio.resume(); }
 
@@ -1404,13 +1437,13 @@
     var query = t.prompt || t.title;
     var context = t.parentTopic || "";
     if(isFromSearch){
-      speakText(query, t.caption, null, context);
+      speakText(query, t.caption, null, context, t.bankTopicId);
     } else {
       speakText(query, t.caption, function(){
         if(myToken === playerSpeechToken && document.querySelector(".screen.active") && document.querySelector(".screen.active").id === "screen-player"){
           playerTapAdvance();
         }
-      }, context);
+      }, context, t.bankTopicId);
     }
     // reset CC to off each time
     var panel = document.getElementById("ccPanel");
@@ -1464,8 +1497,9 @@
       playNextInAlbum();
       return;
     }
-    var idx = Math.floor(Math.random() * MYFAM_CARDS.length);
-    startSeedJourney(idx);
+    var ids = Object.keys(myFamTopics);
+    if(!ids.length){ toast("Nothing queued yet"); return; }
+    startBankTopic(ids[Math.floor(Math.random() * ids.length)]);
   }
 
   (function(){
@@ -1802,6 +1836,7 @@
   function confirmGoDeeper(){
     var val = document.getElementById("goDeeperInput").value.trim();
     if(!val){ document.getElementById("goDeeperInput").focus(); return; }
+    recordFamEvent("search", "", val);
     var baseKey = getGoDeeperBaseKey(goDeeperContext);
     var baseTitle = baseKey && TOPICS[baseKey] ? TOPICS[baseKey].title : "this";
     closeGoDeeper();
@@ -2154,27 +2189,13 @@
 
   // ---------------- myFAM seeds feed ----------------
   function openMyFamTab(){
-    renderSeedsFeed();
+    loadMyFamFeed();
     setTab("myfam");
   }
   function openSearchFAM(){
     setTab("home");
   }
 
-  var MYFAM_CARDS = [
-    { title:"The New College Football Arms Race", sub:"NIL money, facilities, recruiting, and the new power brokers.", icon:"sports", caption:"…the transfer portal changed everything, and nobody has fully adjusted to <mark>the new rules</mark>—" },
-    { title:"Why Founders Are Taking Back Control", sub:"Leadership, product, and the rise of operator CEOs.", icon:"business", caption:"…boards used to push founders out at this stage — now they're begging them to <mark>stay in the seat</mark>—" },
-    { title:"Why Everyone Is Talking About AI Agents", sub:"What they are, how they work, and why they matter now.", icon:"tech", caption:"…the difference is these don't just answer questions, they actually <mark>go do the task</mark>—" },
-    { title:"Inside the Best Hollywood Comebacks", sub:"The stories, the risks, and the second acts.", icon:"camera", caption:"…nobody wanted to finance the film, until one name attached and <mark>everything changed</mark>—" },
-    { title:"The Quiet Evolution of Golf", sub:"New players. New formats. Same obsession.", icon:"golf", caption:"…the format is faster, louder, and built for a completely <mark>different audience</mark>—" },
-    { title:"The Habits That Actually Change Your Life", sub:"What the research says. What people ignore.", icon:"leaf", caption:"…the habit that moved the needle most wasn't the one anyone <mark>expected</mark>—" },
-    { title:"The Fed's Next Move, Explained", sub:"Rate cuts, inflation data, and what markets are betting on.", icon:"business", caption:"…the market had already priced this in weeks ago, which is why the reaction was <mark>so muted</mark>—" },
-    { title:"Inside the New Space Race", sub:"Reusable rockets, private missions, and who's really winning.", icon:"rocket", caption:"…the cost per launch dropped so fast that the entire business model had to <mark>get rewritten</mark>—" },
-    { title:"How One Song Breaks the Internet", sub:"Playlists, algorithms, and the new path to a hit.", icon:"music", caption:"…it wasn't radio that made this one — it was a fifteen-second clip that <mark>nobody planned for</mark>—" },
-    { title:"The Restaurants Everyone's Talking About", sub:"Openings, closings, and where the lines are forming.", icon:"food", caption:"…the wait is over two hours now, and the owners still haven't <mark>bought a sign</mark>—" },
-    { title:"The Trade That Changed Everything", sub:"Front offices, cap space, and the deals nobody saw coming.", icon:"sports", caption:"…both front offices swear they weren't talking until <mark>Sunday night</mark>—" },
-    { title:"What We Actually Know About Sleep", sub:"The research, the myths, and what still isn't settled.", icon:"leaf", caption:"…most of the advice going around isn't wrong exactly, it's just <mark>incomplete</mark>—" }
-  ];
 
   function seedThumbSVG(type){
     var squiggle = '<path d="M-10 90 Q35 25 75 65 T170 35" fill="none" stroke="#2A2530" stroke-width="1.5" opacity="0.22"/>';
@@ -2192,28 +2213,118 @@
     return '<svg viewBox="0 0 160 120" preserveAspectRatio="xMidYMid meet">' + squiggle + (icons[type] || icons.leaf) + '</svg>';
   }
 
-  function renderSeedsFeed(){
-    var idxPool = [];
-    for(var i = 0; i < MYFAM_CARDS.length; i++){ idxPool.push(i); }
-    var picks = shuffledPool(idxPool).slice(0, 6);
-    var html = picks.map(function(i){
-      var c = MYFAM_CARDS[i];
-      return '<div class="seed-card" onclick="startSeedJourney('+i+')">'
-        + '<div class="seed-thumb">'+seedThumbSVG(c.icon)+'</div>'
-        + '<div class="seed-card-body"><div class="seed-card-title">'+c.title+'</div><div class="seed-card-sub">'+c.sub+'</div></div>'
-        + '</div>';
+  // ---------------- myFAM feed ----------------
+  // Four sections, four different signals, ranked server-side over a bank of
+  // topics that is the SAME for every listener. That is the cost design: a
+  // per-user bank would mean a per-user script for every tile, where a shared
+  // bank means the second person to tap a tile gets the first person's script
+  // for free. Personalisation is in the ordering, not the inventory.
+
+  // Anonymous, per-device, and never sent anywhere but this app's own server.
+  // Real accounts would replace this; nothing else has to change.
+  function famUserId(){
+    var id = null;
+    try { id = localStorage.getItem("fam_uid"); } catch(e){}
+    if(!id){
+      id = "u" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { localStorage.setItem("fam_uid", id); } catch(e){}
+    }
+    return id;
+  }
+
+  // Why each section exists, shown to the listener. A feed that cannot say
+  // why it picked something reads as arbitrary, and "followers" in particular
+  // would otherwise imply a social graph this app does not have.
+  var SECTION_WHY = {
+    trending: "Most played across FAM right now",
+    might_like: "Next to what you listen to, not more of it",
+    followers: "From people who listen to what you listen to",
+    from_history: "Closest to what you have played"
+  };
+
+  var myFamTopics = {};   // id -> topic, so a tap knows what to generate
+
+  function renderMyFamFeed(sections){
+    var html = sections.map(function(sec){
+      var body;
+      if(sec.topics.length){
+        body = '<div class="seeds-grid">' + sec.topics.map(function(t){
+          myFamTopics[t.id] = t;
+          return '<div class="seed-card" onclick="startBankTopic(\'' + t.id + '\')">'
+            + '<div class="seed-thumb">' + seedThumbSVG(t.icon) + '</div>'
+            + '<div class="seed-card-body">'
+            + '<div class="seed-card-title">' + escapeHtml(t.title) + '</div>'
+            + '<div class="seed-card-sub">' + escapeHtml(t.subtitle) + '</div>'
+            + '</div></div>';
+        }).join("") + '</div>';
+      } else {
+        // Honest rather than padded. A new listener has no history and no
+        // co-listeners, and inventing picks to fill the space is the kind of
+        // silent fake this project has been bitten by before.
+        body = '<div class="feed-empty">' + escapeHtml(sec.empty_reason) + '</div>';
+      }
+      return '<div class="feed-section">'
+        + '<div class="section-kicker">' + escapeHtml(sec.title) + '</div>'
+        + '<div class="feed-why">' + (SECTION_WHY[sec.key] || "") + '</div>'
+        + body + '</div>';
     }).join("");
-    document.getElementById("seedsFeed").innerHTML = html;
+    document.getElementById("myfamFeed").innerHTML = html;
+  }
+
+  function loadMyFamFeed(){
+    var el = document.getElementById("myfamFeed");
+    if(!el) return;
+    if(!el.innerHTML){
+      el.innerHTML = '<div class="feed-section"><div class="section-kicker">Loading</div>'
+        + '<div class="seeds-grid"><div class="feed-skeleton"></div>'
+        + '<div class="feed-skeleton"></div></div></div>';
+    }
+    fetch("/api/myfam?user=" + encodeURIComponent(famUserId()))
+      .then(function(r){ if(!r.ok) throw new Error("feed unavailable"); return r.json(); })
+      .then(function(data){ renderMyFamFeed(data.sections); })
+      .catch(function(){
+        // The feed failing must look like a failure, not like an empty app.
+        el.innerHTML = '<div class="feed-empty">Could not load your feed. '
+          + 'Search still works, and this will fill in when the server is back.</div>';
+      });
   }
   function refreshSeedsFeed(){
-    renderSeedsFeed();
-    toast("Fresh picks ✓");
+    loadMyFamFeed();
+    toast("Fresh picks \u2713");
   }
-  function startSeedJourney(i){
-    var c = MYFAM_CARDS[i];
-    var key = "seedcard_" + i + "_" + Date.now();
-    TOPICS[key] = { title: c.title, source: "myFAM", caption: c.caption, prompt: c.title, titleOverridden: true };
+
+  function startBankTopic(topicId){
+    var t = myFamTopics[topicId];
+    if(!t) return;
+    var key = "bank_" + topicId + "_" + Date.now();
+    TOPICS[key] = {
+      title: t.title,
+      source: "myFAM",
+      caption: "Live captions will appear here as this plays\u2014",
+      // The tile generates from `query`, not the display title: a headline is
+      // not a question, and the query is what the shared script cache keys on.
+      prompt: t.query,
+      bankTopicId: topicId,
+      titleOverridden: true
+    };
     generate(key);
+  }
+
+  // Interactions the server cannot observe for itself. A play is recorded
+  // server-side when the audio is served; these are the ones only the client
+  // knows about, and a failure here is silent by design - it costs one weak
+  // ranking signal, never an episode.
+  function recordFamEvent(kind, topicId, text){
+    try {
+      fetch("/api/event", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          user: famUserId(), kind: kind,
+          topic_id: topicId || "", text: (text || "").slice(0, 300)
+        })
+      }).catch(function(){});
+    } catch(e){}
   }
 
   // ---------------- myFAM search (3-4 candidates) ----------------
@@ -2233,6 +2344,7 @@
     });
   }
   function startCustomJourney(title, promptText){
+    recordFamEvent("search", "", promptText);
     var key = "search_" + Date.now();
     TOPICS[key] = { title: title, prompt: promptText, titleOverridden: true, source: "myFAM", caption: "Live captions will appear here as this plays—" };
     pendingFromSearch = true;
@@ -2637,7 +2749,7 @@
       splash.classList.add("hide");
     }, 1400);
   }
-  renderSeedsFeed();
+  loadMyFamFeed();
   showSplash();
 </script>
 </body>

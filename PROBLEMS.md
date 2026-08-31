@@ -1253,3 +1253,79 @@ The check when reading a script from `write.py` is now two questions in order:
 *could I say the answer back in my own words?*, and only then *can I name the
 thing I want next?* A yes to the second and a no to the first is the failure
 this section exists to catch.
+
+## 32. myFAM: personalise the ordering, not the inventory
+
+**The constraint that decided the design.** A per-user set of topics means a
+per-user script for every tile, and a script is the only expensive thing in
+this product. So every listener sees the **same bank** of ~28 topics and a
+different **ordering** of it. Two people who tap the same tile share one script
+through `cache.py`: the second tap costs nothing and starts instantly. That is
+the whole cost argument, and it also happens to be what makes prefetching the
+browse surfaces affordable later.
+
+**Four sections have to run on four signals**, or they are one ranked list
+wearing four headings - which is the standard way a feed like this fails:
+
+    trending      global play counts, identical for everyone (cheapest to serve)
+    might_like    adjacent to taste, strongest tag suppressed (exploration)
+    followers     co-listener overlap (social proxy)
+    from_history  closest match to what they played (exploitation)
+
+A taste profile is computed from the event log on read, never stored: a stored
+profile is a cache that can disagree with the log it came from. Completing an
+episode counts 2.5x a play; a **skip counts negative**, because treating it as
+a weak play means skipping something recommends more of it. Interests decay
+with a fourteen-day half-life so the feed is not a museum.
+
+**Three bugs the tests caught, all of them design errors rather than typos.**
+
+*The personal sections were starved by the generic ones.* Filling in display
+order, Trending and "might like" claim from the whole bank first, so by the
+time the two sections the listener actually asked for are filled, every topic
+they wanted is taken and they render empty. Sections are now **filled in
+constraint order** (from_history, followers, might_like, trending) and
+**displayed in product order**. Trending chooses last precisely because it can
+fall back to anything.
+
+*Four sections of six needs twenty-four topics.* The bank had twenty-two, so
+the last section could not fill even when correctly ordered. Now twenty-eight,
+with a test that fails if a future edit drops it below four times the section
+size.
+
+*A one-tag listener got an empty "might like".* Suppressing their strongest tag
+to avoid a filter bubble leaves nothing at all for someone whose entire history
+is one tag - and they are exactly who that section exists for. It now fills in
+tiers that top each other up: their other interests, then bridges that keep the
+familiar tag but pair it with a new one, then anything unseen.
+
+**Honesty rules carried over from the rest of the project.** An empty section
+says why it is empty rather than being padded with picks that pretend to be
+personal - a new listener genuinely has no history and no co-listeners. A feed
+that fails to load says so instead of rendering as an empty app. And the event
+store is wrapped so that losing an interaction can never break playback: a feed
+is a nicety, audio is the product.
+
+**What is still wrong, and known.**
+
+*"What your followers are listening to" is a label over data that does not
+exist.* There are no accounts and no follow graph. It ranks co-listener overlap
+- people who played what you played also played this - which is a real signal
+and a standard one, but it is not followers. Either build follows or rename the
+section; do not let the heading keep implying a social network.
+
+*Tags come from keyword matching*, not a classifier. A search for "the fed" gets
+`money`; "zzzz" gets nothing and contributes no signal. A model call per search
+would cost more than the episode it is recommending, so this is the right trade
+at this size - but it silently mis-tags anything phrased unusually, and there is
+no way to notice from the outside.
+
+*Identity is a random id in `localStorage`.* Clearing site data is a new person;
+a second device is a second person. Real accounts replace it and nothing else
+has to change.
+
+*Cold start is real.* Trending falls back to a stable slice of the bank rather
+than random picks - random would defeat the shared script cache and move tiles
+under the listener between visits - but until people are actually playing
+things, "trending" means "the front of the bank" and only the ordering is
+honest.
