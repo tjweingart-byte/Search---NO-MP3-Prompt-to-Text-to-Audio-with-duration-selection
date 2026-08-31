@@ -3,10 +3,6 @@
 Ask a question, pick a length from 1 to 10 minutes, and hear the answer.
 **Audio starts in about half a second** and runs for the length you asked for.
 
-Typing pauses are used: 800ms after you stop typing, the script is written into
-the cache, so pressing play is usually a cache hit. Measured against an
-18-second researched call, that turns 18.30s into 0.12s.
-
 Speed is the product. The default answers from what the model already knows, so
 there is nothing between pressing the button and hearing the answer. Add
 `search=1` to a request when a question genuinely needs today's facts and the

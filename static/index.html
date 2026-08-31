@@ -1149,43 +1149,7 @@
     if(el){ el.style.color = "var(--coral)"; el.textContent = "Audio server unreachable — start it with ./run.sh"; }
   });
 
-  // ---- Prefetch while the listener is still deciding --------------------
-  //
-  // The slow, expensive part of an episode is the script; the audio is nearly
-  // free. So once someone stops typing we start writing the script into the
-  // cache. If they then press the button, the model wait has already happened
-  // and audio begins almost immediately.
-  //
-  // Same idea as a shop working out delivery when an item goes in the basket
-  // rather than at checkout: use the pause the user is already taking.
-  var PREFETCH_PAUSE_MS = 800;   // long enough that mid-word pauses do not fire
-  var PREFETCH_MIN_CHARS = 12;   // a real question, not two words
-  var prefetchTimer = null;
-  var prefetched = {};           // query|minutes we have already asked for
-
-  function schedulePrefetch(){
-    if(prefetchTimer) clearTimeout(prefetchTimer);
-    prefetchTimer = setTimeout(function(){
-      var q = (document.getElementById("searchInput").value || "").trim();
-      if(q.length < PREFETCH_MIN_CHARS) return;
-      var key = q + "|" + selectedLengthMinutes;
-      if(prefetched[key]) return;          // never pay for the same script twice
-      prefetched[key] = true;
-      fetch("/api/prefetch", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({query: q, minutes: selectedLengthMinutes})
-      }).catch(function(){ delete prefetched[key]; });
-    }, PREFETCH_PAUSE_MS);
-  }
-
-  (function(){
-    var input = document.getElementById("searchInput");
-    if(input) input.addEventListener("input", schedulePrefetch);
-  })();
-
   function runSearch(){
-    if(prefetchTimer){ clearTimeout(prefetchTimer); prefetchTimer = null; }
     var val = document.getElementById("searchInput").value.trim();
     if(val){
       TOPICS["_custom"] = { title: val, source: "Your search", caption: "Generating your live transcript as this plays—" };

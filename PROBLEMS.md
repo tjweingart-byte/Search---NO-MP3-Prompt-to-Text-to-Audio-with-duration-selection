@@ -1028,3 +1028,26 @@ touching the model.
 Verified unaffected: the shared voice store still resolves to `~/.fam/voices`,
 `setup_voices.py --list` reads it, startup reports it, and prefetch still turns
 an 18-second model call into 0.11s to first audio.
+
+
+---
+
+## 27. Prefetch removed
+
+Removed at the user's request. `/api/prefetch`, the typing-pause trigger in the
+interface, its bookkeeping and its tests are all gone - not disabled behind a
+flag, deleted, so there is no dead path to reason about later.
+
+What it did is worth keeping in mind rather than in code: writing the script
+during the pause before someone presses play turned an 18.30s wait into 0.12s,
+because the script is the slow part and the audio is nearly free. What it cost
+was a speculative model call for every abandoned query, which on a search box is
+most of them.
+
+That trade is much better on the browse surfaces, where what someone might tap
+is known well in advance and the hit rate would be far higher. The reasoning is
+recorded in `CLAUDE.md`; the mechanism is not in the codebase.
+
+The ordinary script cache is untouched and still does the cheap half of the same
+job: a repeat of the same query is a hit. Measured after removal - 0.70s to
+first audio cold, 0.11s on the repeat, no gaps.
