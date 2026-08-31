@@ -209,20 +209,42 @@
     justify-content:center; color:var(--text-muted); opacity:0.5; }
 
   /* Explore: a vertical feed of episodes that already exist. */
-  .explore-card{ position:relative; padding:15px 16px 14px; margin-bottom:11px;
-    background:var(--surface); border:1px solid var(--border); border-radius:14px;
-    cursor:pointer; }
-  .explore-card:active{ transform:scale(0.99); }
-  .explore-meta{ font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.07em;
-    text-transform:uppercase; color:var(--text-muted); margin-bottom:7px; }
-  .explore-title{ font-family:'Fraunces', serif; font-weight:600; font-size:15px;
-    line-height:1.3; color:var(--text); margin-bottom:8px; }
-  .explore-thread{ font-size:10px; line-height:1.4; color:var(--text-muted);
-    padding-left:9px; border-left:2px solid var(--border-strong); margin-bottom:11px; }
-  .explore-play{ display:inline-flex; align-items:center; gap:6px; color:var(--copper);
-    font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:700; }
-  .explore-empty{ padding:18px 15px; border:1px dashed var(--border-strong);
-    border-radius:13px; font-size:11px; line-height:1.55; color:var(--text-muted); }
+  /* Explore, reels-style. One episode fills the screen and the next is
+     deliberately not visible: not knowing what is coming is the point, so
+     there is nothing to scan, skip past, or decide about. */
+  .reel-stage{ position:absolute; inset:0; bottom:56px; display:flex; flex-direction:column;
+    padding:20px 20px 12px; background:
+      radial-gradient(120% 80% at 50% 0%, rgba(212,168,83,0.10), transparent 60%), var(--bg);
+    touch-action:pan-x; overflow:hidden; user-select:none; }
+  .reel-head{ display:flex; align-items:center; justify-content:space-between; flex:none; }
+  .reel-brand{ font-family:'Fraunces', serif; font-size:19px; color:var(--text); }
+  .reel-count{ font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.08em;
+    color:var(--text-muted); }
+  .reel-body{ flex:1; display:flex; flex-direction:column; justify-content:center;
+    align-items:flex-start; }
+  .reel-kicker{ font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--copper); margin-bottom:14px; }
+  .reel-title{ font-family:'Fraunces', serif; font-weight:600; font-size:29px; line-height:1.2;
+    color:var(--text); }
+  .reel-sub{ margin-top:16px; font-size:11px; line-height:1.5; color:var(--text-muted); }
+  .reel-stage.turning .reel-body{ opacity:0; transform:translateY(18px); }
+  .reel-body{ transition:opacity 220ms ease, transform 220ms ease; }
+  .reel-progress{ flex:none; height:3px; border-radius:2px; background:var(--border-strong);
+    overflow:hidden; margin-bottom:16px; }
+  .reel-fill{ height:100%; width:0%; background:var(--copper); transition:width 200ms linear; }
+  .reel-controls{ flex:none; display:flex; align-items:center; justify-content:center; gap:26px;
+    margin-bottom:14px; }
+  .reel-btn{ position:relative; width:42px; height:42px; border-radius:50%; display:flex;
+    align-items:center; justify-content:center; color:var(--text);
+    border:1px solid var(--border-strong); cursor:pointer; }
+  .reel-btn span{ position:absolute; bottom:-12px; font-family:'JetBrains Mono', monospace;
+    font-size:7.5px; color:var(--text-muted); }
+  .reel-play{ width:54px; height:54px; border-radius:50%; background:var(--copper);
+    color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .reel-hint{ flex:none; display:flex; align-items:center; justify-content:center; gap:7px;
+    color:var(--text-muted); font-family:'JetBrains Mono', monospace; font-size:9px;
+    opacity:0.65; }
+  .reel-empty{ font-size:12px; line-height:1.6; color:var(--text-muted); }
 
   /* playFAM: a mix is a folder. The card shows what is inside without
      needing to be opened, because a folder you cannot see into is a guess. */
@@ -639,7 +661,7 @@
         <div class="tabbar">
           <div class="tab active" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
           <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
@@ -673,7 +695,7 @@
         <div class="tabbar">
           <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab active" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
           <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
@@ -684,19 +706,19 @@
       <section class="screen" id="screen-playfam">
         <div class="scroll">
           <div class="myfam-header">
-            <h2>playFAM</h2>
+            <h2>DailyFAM</h2>
             <button class="myfam-dots-btn" onclick="openNewMix()">+</button>
           </div>
           <div class="connect-sub" style="margin:2px 0 16px;">
-            Daily mixes. Each one is a standing list of topics — the episodes are
-            new every day.
+            Your daily mixes. Each one is a standing list of topics — the
+            episodes are new every day.
           </div>
           <div id="mixList"></div>
         </div>
         <div class="tabbar">
           <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab active" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
+          <div class="tab active" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
           <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
@@ -717,6 +739,11 @@
         <div class="back-row">
           <span class="back" onclick="cancelMixPicker()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
           <h2 id="pickerTitle">Choose topics</h2>
+        </div>
+        <div style="padding:0 18px 10px;">
+          <input class="modal-input" id="pickerSearch" type="text" autocomplete="off"
+                 placeholder="Search topics, or type your own"
+                 oninput="onPickerSearch()" onkeydown="if(event.key==='Enter') addTypedTopic()">
         </div>
         <div class="connect-sub" style="margin:0 18px 12px;" id="pickerCount">Nothing chosen yet.</div>
         <div class="scroll" id="pickerBody"></div>
@@ -806,23 +833,46 @@
       </section>
 
       <!-- ============ DAILY FAM (Stories-style feed) ============ -->
-      <!-- ============ EXPLORE (other listeners' episodes) ============ -->
+      <!-- ============ EXPLORE (one at a time, swipe up for the next) ============ -->
       <section class="screen" id="screen-explore">
-        <div class="scroll">
-          <div class="myfam-header">
-            <h2>explore</h2>
-            <button class="myfam-dots-btn" onclick="loadExplore()">↻</button>
+        <div class="reel-stage" id="reelStage">
+          <div class="reel-head">
+            <div class="reel-brand">explore</div>
+            <div class="reel-count" id="reelCount"></div>
           </div>
-          <div class="connect-sub" style="margin:2px 0 16px;">
-            What other people have been asking. Every one of these already exists —
-            nothing here is generated for you.
+
+          <div class="reel-body" id="reelBody">
+            <div class="reel-kicker" id="reelKicker">Someone asked</div>
+            <div class="reel-title" id="reelTitle">Loading…</div>
+            <div class="reel-sub" id="reelSub"></div>
           </div>
-          <div id="exploreFeed"></div>
+
+          <div class="reel-progress"><div class="reel-fill" id="reelFill"></div></div>
+
+          <div class="reel-controls">
+            <div class="reel-btn" onclick="skipAudio(-15)" title="Back 15 seconds">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M11 18l-8-6 8-6v4h9v4h-9z"/></svg>
+              <span>15</span>
+            </div>
+            <div class="reel-play" id="reelPlay" onclick="reelTogglePlay()">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
+            </div>
+            <div class="reel-btn" onclick="skipAudio(15)" title="Forward 15 seconds">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M13 18l8-6-8-6v4H4v4h9z"/></svg>
+              <span>15</span>
+            </div>
+          </div>
+
+          <div class="reel-hint" id="reelHint">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            <span>swipe up for another</span>
+          </div>
         </div>
+        <div class="generating" id="gen-explore"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
         <div class="tabbar">
           <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab active" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
           <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
@@ -844,7 +894,7 @@
         <div class="tabbar">
           <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">playFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
           <div class="tab active" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
@@ -2172,13 +2222,14 @@
       + 'New mix</button>';
 
     html += mixes.map(function(m){
-      var names = m.topics.map(function(t){ return t.title; }).join(" · ");
+      var entries = m.items || m.topics;
+      var names = entries.map(function(t){ return t.title; }).join(" · ");
       return '<div class="mix-card" onclick="openMix(\'' + m.id + '\')">'
         + '<div class="mix-folder">' + folderSVG() + '</div>'
         + '<div class="mix-card-body">'
         + '<div class="mix-name">' + escapeHtml(m.name) + '</div>'
-        + '<div class="mix-meta">' + m.topics.length
-        + (m.topics.length === 1 ? " topic · daily" : " topics · daily") + '</div>'
+        + '<div class="mix-meta">' + entries.length
+        + (entries.length === 1 ? " topic · daily" : " topics · daily") + '</div>'
         + '<div class="mix-preview">' + (escapeHtml(names) || "Nothing in it yet") + '</div>'
         + '</div>'
         + '<div class="mix-chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" '
@@ -2200,20 +2251,20 @@
     currentMixId = id;
     document.getElementById("mixTitle").textContent = m.name;
     var html = "";
-    if(m.topics.length){
+    if(m.items && m.items.length){
       html += '<button class="mix-play" onclick="playMix()">'
         + '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">'
-        + '<path d="M8 5v14l11-7z"/></svg>Play today\u2019s ' + m.topics.length
-        + (m.topics.length === 1 ? " episode" : " episodes") + '</button>';
+        + '<path d="M8 5v14l11-7z"/></svg>Play today\u2019s ' + m.items.length
+        + (m.items.length === 1 ? " episode" : " episodes") + '</button>';
       html += '<div class="mix-meta" style="margin:0 0 9px;">Today\u2019s edition</div>';
-      html += m.topics.map(function(t){
+      html += (m.items || m.topics).map(function(t){
         return '<div class="mix-topic">'
           + '<div class="mix-topic-body">'
           + '<div class="mix-topic-title">' + escapeHtml(t.title) + '</div>'
-          + '<div class="mix-topic-sub">' + escapeHtml(t.subtitle) + '</div>'
+          + '<div class="mix-topic-sub">' + escapeHtml(t.subtitle || "") + '</div>'
           + '</div>'
           + '<button class="mix-topic-act" title="Play this one" '
-          + 'onclick="event.stopPropagation(); startBankTopic(\'' + t.id + '\')">'
+          + 'onclick="event.stopPropagation(); playMixFrom(\'' + t.id + '\')">'
           + '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">'
           + '<path d="M8 5v14l11-7z"/></svg></button>'
           + '</div>';
@@ -2232,8 +2283,31 @@
 
   function playMix(){
     var m = mixById(currentMixId);
-    if(!m || !m.topics.length){ toast("Add a topic first"); return; }
-    startBankTopic(m.topics[0].id);
+    if(!m || !m.items.length){ toast("Add a topic first"); return; }
+    playMixItem(m.items[0]);
+  }
+
+  // Works for both kinds of entry: a bank topic and a typed one both end up
+  // as a query on the same pipeline, through the same script cache.
+  function playMixItem(item){
+    var key = "mix_" + item.id.replace(/[^a-z0-9]/gi, "") + "_" + Date.now();
+    TOPICS[key] = {
+      title: item.title,
+      source: "DailyFAM",
+      caption: "Live captions will appear here as this plays\u2014",
+      prompt: item.query,
+      bankTopicId: item.custom ? "" : item.id,
+      titleOverridden: true
+    };
+    generate(key);
+  }
+
+  function playMixFrom(itemId){
+    var m = mixById(currentMixId);
+    if(!m) return;
+    for(var i = 0; i < m.items.length; i++){
+      if(m.items[i].id === itemId){ playMixItem(m.items[i]); return; }
+    }
   }
 
   function openMixMenu(){
@@ -2298,14 +2372,47 @@
     if(!m) return;
     pickerMixId = m.id;
     pickerNewName = m.name;
-    pickerSelection = m.topic_ids.slice();
+    pickerSelection = (m.items || []).map(function(i){
+      return i.custom ? { id: i.id, query: i.query, title: i.title } : i.id;
+    });
     openMixPicker(m.name);
   }
 
   function openMixPicker(name){
     document.getElementById("pickerTitle").textContent = name;
+    var box = document.getElementById("pickerSearch");
+    if(box) box.value = "";
     renderMixPicker();
     navigate("mixpicker");
+  }
+
+  // What the listener has chosen: bank ids as strings, typed topics as
+  // objects. The server owns the rules; this only collects.
+  function selectionIndex(id){
+    for(var i = 0; i < pickerSelection.length; i++){
+      var sel = pickerSelection[i];
+      if(typeof sel === "string" ? sel === id : sel.id === id) return i;
+    }
+    return -1;
+  }
+  function typedSelections(){
+    return pickerSelection.filter(function(s){ return typeof s !== "string"; });
+  }
+
+  function onPickerSearch(){ renderMixPicker(); }
+
+  // Anything they type is a valid topic - there is no "no results". The bank
+  // is a shortcut, not a menu, so an unmatched search offers to add itself.
+  function addTypedTopic(){
+    var box = document.getElementById("pickerSearch");
+    var text = box.value.trim();
+    if(!text) return;
+    var id = "typed:" + text.toLowerCase();
+    if(selectionIndex(id) === -1){
+      pickerSelection.push({ id: id, query: text, title: text });
+    }
+    box.value = "";
+    renderMixPicker();
   }
 
   function renderMixPicker(){
@@ -2316,20 +2423,63 @@
         + '<span style="color:var(--copper);cursor:pointer" onclick="reloadTopicBank()">Try again</span></div>';
       return;
     }
+    var term = (document.getElementById("pickerSearch") || {}).value || "";
+    term = term.trim().toLowerCase();
+
     document.getElementById("pickerCount").textContent = pickerSelection.length
       ? pickerSelection.length + (pickerSelection.length === 1 ? " topic chosen" : " topics chosen")
       : "Nothing chosen yet.";
-    document.getElementById("pickerBody").innerHTML = topicBank.map(function(t){
-      var on = pickerSelection.indexOf(t.id) !== -1;
-      return '<div class="mix-topic' + (on ? " chosen" : "") + '" '
-        + 'onclick="toggleMixTopic(\'' + t.id + '\')">'
+
+    var html = "";
+
+    // Offer the typed question first, so the fastest path is always "type it
+    // and hit add" rather than "read the list, fail to find it, give up".
+    if(term){
+      var typedId = "typed:" + term;
+      var already = selectionIndex(typedId) !== -1;
+      html += '<div class="mix-topic typed-offer' + (already ? " chosen" : "") + '" '
+        + 'onclick="addTypedTopic()">'
         + '<div class="mix-topic-body">'
-        + '<div class="mix-topic-title">' + escapeHtml(t.title) + '</div>'
-        + '<div class="mix-topic-sub">' + escapeHtml(t.subtitle) + '</div>'
+        + '<div class="mix-topic-title">' + escapeHtml(document.getElementById("pickerSearch").value.trim()) + '</div>'
+        + '<div class="mix-topic-sub">' + (already ? "Already in this mix" : "Add this as your own topic") + '</div>'
         + '</div>'
-        + '<div class="mix-topic-act">' + (on ? "\u2713" : "+") + '</div>'
+        + '<div class="mix-topic-act">' + (already ? "\u2713" : "+") + '</div>'
         + '</div>';
-    }).join("");
+    }
+
+    // Then anything the listener already typed into this mix.
+    var typed = typedSelections();
+    if(typed.length){
+      html += '<div class="mix-meta" style="margin:14px 0 8px;">Your own topics</div>';
+      html += typed.map(function(sel){
+        return '<div class="mix-topic chosen" onclick="toggleMixTopic(\'' + sel.id + '\')">'
+          + '<div class="mix-topic-body">'
+          + '<div class="mix-topic-title">' + escapeHtml(sel.title) + '</div>'
+          + '<div class="mix-topic-sub">Added by you</div>'
+          + '</div><div class="mix-topic-act">\u2713</div></div>';
+      }).join("");
+    }
+
+    var matches = topicBank.filter(function(t){
+      if(!term) return true;
+      return (t.title + " " + t.subtitle + " " + t.query).toLowerCase().indexOf(term) !== -1;
+    });
+    if(matches.length){
+      html += '<div class="mix-meta" style="margin:14px 0 8px;">'
+        + (term ? "Matching topics" : "Suggested topics") + '</div>';
+      html += matches.map(function(t){
+        var on = selectionIndex(t.id) !== -1;
+        return '<div class="mix-topic' + (on ? " chosen" : "") + '" '
+          + 'onclick="toggleMixTopic(\'' + t.id + '\')">'
+          + '<div class="mix-topic-body">'
+          + '<div class="mix-topic-title">' + escapeHtml(t.title) + '</div>'
+          + '<div class="mix-topic-sub">' + escapeHtml(t.subtitle) + '</div>'
+          + '</div>'
+          + '<div class="mix-topic-act">' + (on ? "\u2713" : "+") + '</div>'
+          + '</div>';
+      }).join("");
+    }
+    document.getElementById("pickerBody").innerHTML = html;
   }
 
   function reloadTopicBank(){
@@ -2340,7 +2490,7 @@
   }
 
   function toggleMixTopic(id){
-    var at = pickerSelection.indexOf(id);
+    var at = selectionIndex(id);
     if(at === -1) pickerSelection.push(id); else pickerSelection.splice(at, 1);
     renderMixPicker();
   }
@@ -2349,13 +2499,19 @@
     if(pickerMixId) openMix(pickerMixId); else openPlayFAM();
   }
 
+  function pickerPayload(){
+    return pickerSelection.map(function(sel){
+      return typeof sel === "string" ? sel : { query: sel.query, title: sel.title };
+    });
+  }
+
   function saveMixPicker(){
     if(pickerMixId){
-      saveMix("PATCH", "/api/mixes/" + pickerMixId, { topic_ids: pickerSelection },
+      saveMix("PATCH", "/api/mixes/" + pickerMixId, { topic_ids: pickerPayload() },
               function(m){ openMix(m.id); });
     } else {
       saveMix("POST", "/api/mixes",
-              { name: pickerNewName, topic_ids: pickerSelection },
+              { name: pickerNewName, topic_ids: pickerPayload() },
               function(m){ openMix(m.id); });
     }
   }
@@ -2844,20 +3000,74 @@
   }
 
   // ---------------- Explore ----------------
-  // A vertical feed of episodes OTHER listeners have already generated. The
-  // defining property is negative: this tab never causes a script to be
-  // written. Every card is a live entry in the shared script cache, and
-  // playing one sends cached_only, which the pipeline refuses to satisfy by
-  // generating. That refusal is the guarantee - an interface promise would be
-  // one refactor away from quietly costing money on every scroll.
+  // Reels, not a list. One episode fills the screen, the next is deliberately
+  // hidden, and a swipe up deals another. Not knowing what is coming is the
+  // whole mechanic: there is nothing to scan, nothing to skip past, and no
+  // decision to make except whether to stay.
   //
-  // Nothing personal can appear here: only shareable queries are ever written
-  // to that cache in the first place.
-  var exploreEpisodes = [];
+  // It also never generates. Every card is a live entry in the shared script
+  // cache - something another listener already paid for - and playing one
+  // sends cached_only, which the pipeline refuses to satisfy by generating.
+  var reelQueue = [];        // shuffled, consumed from the front
+  var reelHistory = [];      // what has been dealt, so swipe-down can go back
+  var reelCurrent = null;
+  var reelBusy = false;
+  // If every card is stale, "drop the dud and deal the next" becomes an
+  // infinite loop that blanks the screen and hammers the server. Three
+  // failures in a row means the problem is the feed, not the card.
+  var reelFailures = 0;
 
   function openExplore(){
     setTab("explore");
+    if(reelCurrent){ renderReel(); return; }   // keep the listener's place
     loadExplore();
+  }
+
+  function loadExplore(){
+    setReelText("Loading…", "", "");
+    fetch("/api/explore?limit=60")
+      .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
+      .then(function(data){
+        var eps = data.episodes || [];
+        if(!eps.length){
+          setReelText("Nothing here yet",
+            data.reason || "Explore fills up as people search. Every episode anyone "
+            + "generates lands here for everyone else to hear.", "");
+          document.getElementById("reelHint").style.visibility = "hidden";
+          return;
+        }
+        // Shuffled, so the same person opening it twice does not get the same
+        // run. Ordering by recency would make it a feed; this makes it a deal.
+        reelQueue = shuffledPool(eps.slice());
+        reelHistory = [];
+        reelCurrent = null;
+        reelFailures = 0;
+        nextReel();
+      })
+      .catch(function(){
+        setReelText("Could not reach the feed",
+          "Search still works — this fills in when the server is back.", "");
+      });
+  }
+
+  function setReelText(title, sub, kicker){
+    document.getElementById("reelTitle").textContent = title;
+    document.getElementById("reelSub").textContent = sub || "";
+    document.getElementById("reelKicker").textContent = kicker || "";
+    document.getElementById("reelCount").textContent = "";
+  }
+
+  function renderReel(){
+    if(!reelCurrent) return;
+    var ep = reelCurrent;
+    document.getElementById("reelKicker").textContent = "Someone asked";
+    document.getElementById("reelTitle").textContent = ep.title;
+    document.getElementById("reelSub").textContent =
+      relativeAge(ep.age_seconds) + " · " + ep.minutes + " min"
+      + (ep.thread ? " · leads to " + ep.thread : "");
+    document.getElementById("reelCount").textContent =
+      (reelHistory.length) + " played";
+    document.getElementById("reelHint").style.visibility = "visible";
   }
 
   function relativeAge(seconds){
@@ -2870,68 +3080,138 @@
     return days + (days === 1 ? " day ago" : " days ago");
   }
 
-  function loadExplore(){
-    var el = document.getElementById("exploreFeed");
-    if(!el) return;
-    if(!el.innerHTML){
-      el.innerHTML = '<div class="explore-card" style="opacity:0.5">Loading…</div>';
+  // Deal the next one. The queue refills from what has already been shown
+  // rather than ending: an empty screen at the bottom of a reel is a stop,
+  // and there is nothing here that expires from being heard twice.
+  function nextReel(){
+    if(reelBusy) return;
+    if(!reelQueue.length){
+      if(!reelHistory.length) return;
+      reelQueue = shuffledPool(reelHistory.slice());
+      reelHistory = [];
     }
-    fetch("/api/explore")
-      .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
-      .then(function(data){
-        exploreEpisodes = data.episodes || [];
-        renderExplore(data.reason || "");
-      })
-      .catch(function(){
-        el.innerHTML = '<div class="explore-empty">Could not reach the feed. '
-          + 'Search still works — this fills in when the server is back.</div>';
-      });
+    if(reelCurrent) reelHistory.push(reelCurrent);
+    reelCurrent = reelQueue.shift();
+    turnReel();
   }
 
-  function renderExplore(reason){
-    var el = document.getElementById("exploreFeed");
-    if(!exploreEpisodes.length){
-      // Honest about why: an empty Explore is the normal state of a new
-      // install, not a fault, and saying so beats an blank screen.
-      el.innerHTML = '<div class="explore-empty">'
-        + escapeHtml(reason || "Nothing here yet. Explore fills up as people search — "
-          + "every episode anyone generates lands here for everyone else to hear.")
-        + '</div>';
-      return;
-    }
-    el.innerHTML = exploreEpisodes.map(function(ep, i){
-      return '<div class="explore-card" onclick="playExplore(' + i + ')">'
-        + '<div class="explore-meta">' + escapeHtml(relativeAge(ep.age_seconds))
-        + ' \u00b7 ' + ep.minutes + ' min'
-        + (ep.plays > 1 ? ' \u00b7 ' + ep.plays + ' plays' : '') + '</div>'
-        + '<div class="explore-title">' + escapeHtml(ep.title) + '</div>'
-        + (ep.thread ? '<div class="explore-thread">Leads to: '
-            + escapeHtml(ep.thread) + '</div>' : '')
-        + '<div class="explore-play">'
-        + '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">'
-        + '<path d="M8 5v14l11-7z"/></svg> Play</div>'
-        + '</div>';
-    }).join("");
+  function previousReel(){
+    if(reelBusy || !reelHistory.length) return;
+    if(reelCurrent) reelQueue.unshift(reelCurrent);
+    reelCurrent = reelHistory.pop();
+    turnReel();
   }
 
-  function playExplore(i){
-    var ep = exploreEpisodes[i];
+  function turnReel(){
+    reelBusy = true;
+    var stage = document.getElementById("reelStage");
+    stage.classList.add("turning");
+    stopSpeech();
+    setTimeout(function(){
+      renderReel();
+      stage.classList.remove("turning");
+      reelBusy = false;
+      playReel();
+    }, 200);
+  }
+
+  function playReel(){
+    var ep = reelCurrent;
     if(!ep) return;
-    var key = "explore_" + i + "_" + Date.now();
-    TOPICS[key] = {
-      title: ep.title,
-      source: "Explore",
-      caption: "Live captions will appear here as this plays\u2014",
-      prompt: ep.query,
-      // The whole point of the tab. If the entry expired between the feed
-      // loading and this tap, the server refuses and the card is dropped -
-      // it never quietly turns into a generation someone pays for.
-      cachedOnly: true,
-      exploreMinutes: ep.minutes,
-      titleOverridden: true
-    };
-    generate(key);
+    setReelPlaying(true);
+    FamAudio.play(ep.query, ep.minutes, {
+      onFirstAudio: function(){
+        reelFailures = 0;          // a card that plays clears the streak
+        startReelProgress(ep.minutes * 60);
+      },
+      onEnd: function(){
+        stopReelProgress();
+        setReelPlaying(false);
+        // Running out is the same gesture as swiping up, without the swipe.
+        nextReel();
+      },
+      onError: function(err){
+        // A card can expire between the feed loading and this play. The
+        // server refuses rather than generating, so this costs nothing -
+        // drop the dud and deal the next one.
+        stopReelProgress();
+        setReelPlaying(false);
+        reelFailures++;
+        if(reelFailures >= 3){
+          reelCurrent = null;
+          setReelText("These episodes have expired",
+            "Explore only replays what is still in the shared cache, and this "
+            + "batch has aged out. Pull to refresh, or search for something.", "");
+          document.getElementById("reelHint").style.visibility = "hidden";
+          return;
+        }
+        toast(err && err.message ? err.message : "That one has expired");
+        nextReel();
+      }
+    }, "", selectedVoice, { user: famUserId(), cachedOnly: true });
   }
+
+  function reelTogglePlay(){
+    if(!reelCurrent) return;
+    // isActive means an episode is loaded; isPaused distinguishes paused from
+    // playing. There is no isPlaying, and assuming one made pause resume.
+    if(!FamAudio.isActive()){ playReel(); return; }
+    if(FamAudio.isPaused()){ FamAudio.resume(); setReelPlaying(true); }
+    else { FamAudio.pause(); setReelPlaying(false); }
+  }
+
+  function setReelPlaying(on){
+    var el = document.getElementById("reelPlay");
+    el.innerHTML = on
+      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>'
+      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  }
+
+  var reelTimer = null;
+  function startReelProgress(totalSeconds){
+    stopReelProgress();
+    reelTimer = setInterval(function(){
+      var pct = Math.min(100, (FamAudio.position() / totalSeconds) * 100);
+      document.getElementById("reelFill").style.width = pct + "%";
+    }, 200);
+  }
+  function stopReelProgress(){
+    if(reelTimer){ clearInterval(reelTimer); reelTimer = null; }
+    document.getElementById("reelFill").style.width = "0%";
+  }
+
+  // Swipe up / down, wheel, and arrow keys all do the same thing.
+  (function(){
+    var stage = document.getElementById("reelStage");
+    if(!stage) return;
+    var startY = null, locked = false;
+    function guard(fn){
+      if(locked) return;
+      locked = true;
+      fn();
+      setTimeout(function(){ locked = false; }, 500);
+    }
+    stage.addEventListener("touchstart", function(e){ startY = e.touches[0].clientY; },
+                           { passive: true });
+    stage.addEventListener("touchend", function(e){
+      if(startY === null) return;
+      var dy = startY - e.changedTouches[0].clientY;
+      startY = null;
+      if(dy > 45) guard(nextReel);
+      else if(dy < -45) guard(previousReel);
+    }, { passive: true });
+    stage.addEventListener("wheel", function(e){
+      if(e.deltaY > 14) guard(nextReel);
+      else if(e.deltaY < -14) guard(previousReel);
+    }, { passive: true });
+    document.addEventListener("keydown", function(e){
+      var active = document.querySelector(".screen.active");
+      if(!active || active.id !== "screen-explore") return;
+      if(e.key === "ArrowDown") guard(nextReel);
+      else if(e.key === "ArrowUp") guard(previousReel);
+      else if(e.key === " "){ e.preventDefault(); reelTogglePlay(); }
+    });
+  })();
 
 
   // ---------------- Splash screen ----------------

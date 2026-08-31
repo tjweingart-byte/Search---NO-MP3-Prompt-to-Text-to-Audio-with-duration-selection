@@ -1437,3 +1437,56 @@ in the payload) or a myFAM-style taste signal would order it better, but
 recency is honest and cheap and does not need a model. The feed is also
 global - there is no "near you" or "people like you" - which is the same
 missing follow graph noted for myFAM.
+
+## 35. Typed topics, and Explore as a slot machine
+
+**playFAM is now DailyFAM** (labels only - the ids stay `playfam`/mixes, so
+the code and the URL do not have to be re-read to be understood).
+
+**A mix can now hold a question the listener typed.** The bank was a hard
+constraint before; it is now a shortcut. `MixItem` distinguishes the two, and
+the distinction is kept because *the cost differs*: a bank topic is shared by
+everyone who has it in a mix, so the second listener's copy is free, while a
+typed one is only shared with people who phrase the same question the same way
+- for a niche question, nobody. That is a script a day for one person, and it
+is the right trade for "what my council is doing about the high street", which
+no shared bank will ever contain. `custom_count` is on the wire so the
+interface can eventually say so.
+
+Storage moved to one JSON column so a mix keeps the order of mixed entry types,
+with the old comma-separated `topic_ids` kept as the bank-only view an older
+row would have written. `Mix.topic_ids` is now derived rather than stored,
+which is why every existing test kept passing unchanged.
+
+**Explore is now reels rather than a list.** One episode fills the screen, the
+next is deliberately not visible, and a swipe up deals another. The point is
+the absence: nothing to scan, nothing to skip past, no decision except whether
+to stay. The queue is shuffled rather than ordered by recency - ordering makes
+it a feed, shuffling makes it a deal - and it refills from what has already
+been shown rather than ending, because an empty screen at the bottom of a reel
+is a stop and nothing here expires from being heard twice. Swipe, wheel and
+arrow keys all drive it; running out of audio advances without the swipe.
+
+**Three bugs, all found by driving a browser.**
+
+*Every failed card cascaded into an infinite auto-advance.* "Drop the dud and
+deal the next" is right for one stale card and catastrophic when the whole
+batch is stale: it blanked the screen and hammered the server in a loop. Three
+failures in a row now stops and says the batch has aged out. A card that plays
+clears the streak.
+
+*Demo mode built the pipeline with `cache=None`,* which made Explore
+structurally impossible without credentials - and Explore is the one surface
+that needs none, because it only replays. Demo mode now swaps the model and
+nothing else, which also means it exercises the real cache hit/miss path
+rather than a path that only exists in demo.
+
+*`FamAudio` has no `isPlaying`.* The reel's play/pause guarded on
+`FamAudio.isPlaying && FamAudio.isPlaying()`, which is always false, so pause
+resumed instead of pausing. The real signals are `isActive()` and `isPaused()`.
+
+**Worth noting about the demo:** seeding the cache with arbitrary keys produced
+a feed that listed episodes it could not play. Explore's cards are only real if
+they are stored under the key the pipeline will compute - `cache_key(query,
+minutes, ...)` - which is a useful reminder that the feed and the player must
+agree on the key or the tab is a menu of dead links.

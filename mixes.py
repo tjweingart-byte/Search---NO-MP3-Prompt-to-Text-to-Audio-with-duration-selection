@@ -15,6 +15,8 @@ the bank and unknown ids are rejected rather than silently stored.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sqlite3
 import threading
@@ -23,11 +25,12 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from topics import BANK_BY_ID
+from topics import BANK_BY_ID, tags_for_text
 
 log = logging.getLogger(__name__)
 
 MAX_NAME = 60
+MAX_QUERY = 200
 MAX_TOPICS = 20
 MAX_MIXES_PER_USER = 30
 
@@ -36,23 +39,81 @@ class MixError(ValueError):
     """Something the listener did wrong, phrased so it can be shown to them."""
 
 
+@dataclass(frozen=True)
+class MixItem:
+    """One line in a mix: a bank topic, or something the listener typed.
+
+    Both play the same way - a query goes to the pipeline and the shared
+    script cache - but they cost differently, and the interface says so. A
+    bank topic is shared by everyone who has it in a mix, so the second
+    listener's copy is free. A typed one is only shared with people who happen
+    to phrase the same question the same way, which for a niche question is
+    nobody: it is a script a day, for one person.
+    """
+
+    id: str
+    title: str
+    query: str
+    custom: bool
+    subtitle: str = ""
+    icon: str = "leaf"
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id, "title": self.title, "query": self.query,
+            "custom": self.custom, "subtitle": self.subtitle, "icon": self.icon,
+        }
+
+
+def _bank_item(topic_id: str) -> MixItem:
+    topic = BANK_BY_ID[topic_id]
+    return MixItem(topic.id, topic.title, topic.query, False, topic.subtitle, topic.icon)
+
+
+def custom_item(query: str, title: str = "") -> MixItem:
+    """A topic the listener typed. Its id is derived from the query, so the
+    same question added twice is one entry rather than two."""
+    query = " ".join(str(query).split())[:MAX_QUERY]
+    if not query:
+        raise MixError("Type what you want to hear about.")
+    ident = "q:" + hashlib.sha1(query.lower().encode("utf-8")).hexdigest()[:10]
+    title = " ".join(str(title).split())[:MAX_NAME] or query[:1].upper() + query[1:]
+    tags = tags_for_text(query)
+    return MixItem(ident, title, query, True, "Added by you", _ICON_FOR_TAG.get(
+        tags[0] if tags else "", "leaf"))
+
+
+#: A typed topic still deserves a picture. Reuses the bank's icon vocabulary.
+_ICON_FOR_TAG = {
+    "sports": "sports", "business": "business", "money": "business",
+    "tech": "tech", "science": "rocket", "health": "leaf",
+    "culture": "music", "world": "business",
+}
+
+
 @dataclass
 class Mix:
     id: str
     user_id: str
     name: str
-    topic_ids: list[str]
+    items: list[MixItem]
     created_at: float
     updated_at: float
+
+    @property
+    def topic_ids(self) -> list[str]:
+        """Bank topics only - what the shared-cost design is measured on."""
+        return [i.id for i in self.items if not i.custom]
 
     def as_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "topic_ids": list(self.topic_ids),
-            "topics": [
-                BANK_BY_ID[t].as_dict() for t in self.topic_ids if t in BANK_BY_ID
-            ],
+            "items": [i.as_dict() for i in self.items],
+            # Kept for anything still reading `topics`; bank entries only.
+            "topics": [i.as_dict() for i in self.items if not i.custom],
+            "custom_count": sum(1 for i in self.items if i.custom),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -65,22 +126,41 @@ def clean_name(name: str) -> str:
     return name
 
 
-def clean_topics(topic_ids: Sequence[str]) -> list[str]:
-    """Validated against the shared bank, de-duplicated, order preserved.
+def clean_items(raw: Sequence) -> list[MixItem]:
+    """Normalise whatever the interface sent into an ordered list of items.
 
-    An unknown id is an error rather than something to drop quietly: a mix
-    that silently loses a topic looks like the app forgot, which is exactly
-    the kind of invisible failure this project keeps paying for.
+    Accepts bank ids as bare strings, and typed topics as
+    `{"query": "...", "title": "..."}`. De-duplicated, order preserved.
+
+    An unknown bank id is an error rather than something to drop quietly: a
+    mix that silently loses a topic looks like the app forgot, which is the
+    kind of invisible failure this project keeps paying for. A *typed* topic
+    cannot be unknown - it is whatever they wrote.
     """
-    seen: list[str] = []
-    for topic_id in topic_ids:
-        if topic_id not in BANK_BY_ID:
-            raise MixError(f"There is no topic called {topic_id!r}.")
-        if topic_id not in seen:
-            seen.append(topic_id)
-    if len(seen) > MAX_TOPICS:
+    items: list[MixItem] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if isinstance(entry, str):
+            if entry not in BANK_BY_ID:
+                raise MixError(f"There is no topic called {entry!r}.")
+            item = _bank_item(entry)
+        elif isinstance(entry, dict) and entry.get("query"):
+            item = custom_item(entry["query"], entry.get("title", ""))
+        elif isinstance(entry, dict) and entry.get("id") in BANK_BY_ID:
+            item = _bank_item(entry["id"])
+        else:
+            raise MixError("A mix entry needs either a topic id or a question.")
+        if item.id not in seen:
+            seen.add(item.id)
+            items.append(item)
+    if len(items) > MAX_TOPICS:
         raise MixError(f"A mix holds up to {MAX_TOPICS} topics.")
-    return seen
+    return items
+
+
+def clean_topics(topic_ids: Sequence[str]) -> list[str]:
+    """Bank-only helper kept for callers that deal purely in bank ids."""
+    return [i.id for i in clean_items(topic_ids)]
 
 
 class MixStore:
@@ -99,6 +179,13 @@ class MixStore:
                    )"""
             )
             conn.execute("CREATE INDEX IF NOT EXISTS mixes_user ON mixes(user_id, created_at)")
+            # Mixes shipped holding bank ids only. Typed topics need more than
+            # an id, so the full ordered list moved to JSON; `topic_ids` stays
+            # as the bank-only view an older row would have written.
+            try:
+                conn.execute("ALTER TABLE mixes ADD COLUMN items TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -109,15 +196,27 @@ class MixStore:
         return conn
 
     def _row_to_mix(self, row) -> Mix:
-        return Mix(row[0], row[1], row[2],
-                   [t for t in row[3].split(",") if t], row[4], row[5])
+        items: list[MixItem] = []
+        raw = row[6] if len(row) > 6 else ""
+        if raw:
+            try:
+                items = [
+                    MixItem(d["id"], d["title"], d["query"], d["custom"],
+                            d.get("subtitle", ""), d.get("icon", "leaf"))
+                    for d in json.loads(raw)
+                ]
+            except Exception:
+                log.exception("unreadable mix items; falling back to bank ids")
+        if not items:
+            items = [_bank_item(t) for t in row[3].split(",") if t in BANK_BY_ID]
+        return Mix(row[0], row[1], row[2], items, row[4], row[5])
 
     def list_for_user(self, user_id: str) -> list[Mix]:
         if not user_id:
             return []
         try:
             rows = self._conn().execute(
-                "SELECT id, user_id, name, topic_ids, created_at, updated_at"
+                "SELECT id, user_id, name, topic_ids, created_at, updated_at, items"
                 " FROM mixes WHERE user_id = ? ORDER BY created_at",
                 (user_id,),
             ).fetchall()
@@ -129,7 +228,7 @@ class MixStore:
     def get(self, user_id: str, mix_id: str) -> Optional[Mix]:
         try:
             row = self._conn().execute(
-                "SELECT id, user_id, name, topic_ids, created_at, updated_at"
+                "SELECT id, user_id, name, topic_ids, created_at, updated_at, items"
                 " FROM mixes WHERE id = ? AND user_id = ?",
                 (mix_id, user_id),
             ).fetchone()
@@ -138,22 +237,23 @@ class MixStore:
             return None
         return self._row_to_mix(row) if row else None
 
-    def create(self, user_id: str, name: str, topic_ids: Sequence[str] = ()) -> Mix:
+    def create(self, user_id: str, name: str, topic_ids: Sequence = ()) -> Mix:
         if not user_id:
             raise MixError("No listener id; mixes are saved per person.")
         name = clean_name(name)
-        topics = clean_topics(topic_ids)
+        items = clean_items(topic_ids)
         existing = self.list_for_user(user_id)
         if len(existing) >= MAX_MIXES_PER_USER:
             raise MixError(f"You already have {MAX_MIXES_PER_USER} mixes.")
         if any(m.name.lower() == name.lower() for m in existing):
             raise MixError(f"You already have a mix called {name}.")
         now = time.time()
-        mix = Mix(uuid.uuid4().hex[:12], user_id, name, topics, now, now)
+        mix = Mix(uuid.uuid4().hex[:12], user_id, name, items, now, now)
         self._conn().execute(
-            "INSERT INTO mixes (id, user_id, name, topic_ids, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (mix.id, user_id, name, ",".join(topics), now, now),
+            "INSERT INTO mixes (id, user_id, name, topic_ids, created_at, updated_at, items)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (mix.id, user_id, name, ",".join(mix.topic_ids), now, now,
+             json.dumps([i.as_dict() for i in items])),
         )
         return mix
 
@@ -162,7 +262,7 @@ class MixStore:
         user_id: str,
         mix_id: str,
         name: Optional[str] = None,
-        topic_ids: Optional[Sequence[str]] = None,
+        topic_ids: Optional[Sequence] = None,
     ) -> Mix:
         mix = self.get(user_id, mix_id)
         if not mix:
@@ -176,12 +276,13 @@ class MixStore:
             if clash:
                 raise MixError(f"You already have a mix called {mix.name}.")
         if topic_ids is not None:
-            mix.topic_ids = clean_topics(topic_ids)
+            mix.items = clean_items(topic_ids)
         mix.updated_at = time.time()
         self._conn().execute(
-            "UPDATE mixes SET name = ?, topic_ids = ?, updated_at = ?"
+            "UPDATE mixes SET name = ?, topic_ids = ?, updated_at = ?, items = ?"
             " WHERE id = ? AND user_id = ?",
-            (mix.name, ",".join(mix.topic_ids), mix.updated_at, mix_id, user_id),
+            (mix.name, ",".join(mix.topic_ids), mix.updated_at,
+             json.dumps([i.as_dict() for i in mix.items]), mix_id, user_id),
         )
         return mix
 

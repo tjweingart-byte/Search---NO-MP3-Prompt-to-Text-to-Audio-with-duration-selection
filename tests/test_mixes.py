@@ -162,3 +162,65 @@ def test_the_picker_serves_the_whole_bank(client):
 
 def test_starters_are_offered_for_an_empty_page(client):
     assert client.get("/api/mixes?user=new").json()["starters"]
+
+
+# --- topics the listener types --------------------------------------------
+
+
+def test_a_mix_can_hold_a_question_the_listener_typed(store):
+    mix = store.create("u", "Local", [{"query": "what my council is doing about the high street"}])
+    assert len(mix.items) == 1
+    item = mix.items[0]
+    assert item.custom is True
+    assert item.query == "what my council is doing about the high street"
+    assert item.title.startswith("What my council")
+
+
+def test_typed_and_bank_topics_keep_their_order(store):
+    mix = store.create("u", "M", [
+        {"query": "a typed one"}, "fed-next-move", {"query": "another typed one"}
+    ])
+    assert [i.custom for i in mix.items] == [True, False, True]
+
+
+def test_bank_and_typed_topics_are_told_apart(store):
+    """The cost story differs, so the model has to keep them distinguishable."""
+    mix = store.create("u", "M", ["ai-agents", {"query": "something niche"}])
+    body = mix.as_dict()
+    assert body["topic_ids"] == ["ai-agents"], "a typed topic is not a bank topic"
+    assert body["custom_count"] == 1
+    assert len(body["items"]) == 2
+
+
+def test_the_same_question_twice_is_one_entry(store):
+    mix = store.create("u", "M", [
+        {"query": "how do heat pumps work"}, {"query": "How Do Heat Pumps Work"}
+    ])
+    assert len(mix.items) == 1
+
+
+def test_an_empty_question_is_refused(store):
+    with pytest.raises(M.MixError):
+        store.create("u", "M", [{"query": "   "}])
+
+
+def test_typed_topics_survive_a_restart(tmp_path):
+    path = str(tmp_path / "m.db")
+    M.MixStore(path).create("u", "M", [{"query": "a typed topic"}, "ai-agents"])
+    items = M.MixStore(path).list_for_user("u")[0].items
+    assert [(i.title, i.custom) for i in items] == [("A typed topic", True),
+                                                    ("Why Everyone Is Talking About AI Agents", False)]
+
+
+def test_a_typed_topic_gets_an_icon_from_its_subject(store):
+    mix = store.create("u", "M", [{"query": "how the fed sets interest rates"}])
+    assert mix.items[0].icon == "business"
+
+
+def test_a_typed_topic_can_be_added_over_http(client):
+    made = client.post("/api/mixes", json={
+        "user": "u", "name": "Local",
+        "topic_ids": ["ai-agents", {"query": "what my council is doing"}]
+    }).json()
+    assert made["custom_count"] == 1
+    assert [i["custom"] for i in made["items"]] == [False, True]

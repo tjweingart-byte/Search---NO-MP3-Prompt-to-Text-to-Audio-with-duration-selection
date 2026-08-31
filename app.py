@@ -15,7 +15,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from collections import defaultdict
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -112,8 +112,13 @@ DEMO_MODE = not settings.anthropic_api_key
 def _make_pipeline(voice: Optional[str] = None) -> PodcastPipeline:
     engine = engine_for_voice(voice)
     if DEMO_MODE:
+        # Demo mode swaps the model, not the plumbing. It used to pass
+        # cache=None, which quietly made Explore impossible without
+        # credentials - and Explore is the one surface that needs no
+        # credentials at all, since it only ever replays. Keeping the real
+        # cache also means demo mode exercises the real hit/miss path.
         return PodcastPipeline(
-            generator=DemoGenerator(), engine=engine, cache=None, voice=voice
+            generator=DemoGenerator(), engine=engine, cache=SCRIPT_CACHE, voice=voice
         )
     return PodcastPipeline(engine=engine, cache=SCRIPT_CACHE, voice=voice)
 
@@ -219,7 +224,10 @@ MIXES = mixes_mod.MixStore(os.environ.get("MIXES_DB", "mixes.db"))
 class MixRequest(BaseModel):
     user: str = Field(..., max_length=64)
     name: Optional[str] = Field(None, max_length=mixes_mod.MAX_NAME)
-    topic_ids: Optional[list[str]] = None
+    #: Bank ids as strings, or {"query": "..."} for a topic the listener typed.
+    #: Validated in mixes.clean_items rather than here, so one place owns the
+    #: rules and the message the listener sees.
+    topic_ids: Optional[list[Union[str, dict]]] = None
 
 
 @app.get("/api/topics")

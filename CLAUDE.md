@@ -12,6 +12,8 @@ Three surfaces, all backed by generated audio:
    today.* This is the only surface that fully works.
 2. **myFAM** — a browse page of trending / recommended / for-you episodes.
    Tapping a tile generates and plays that episode.
+2b. **DailyFAM** (was playFAM) — named daily mixes. A mix holds topic ids or
+   questions the listener typed, never audio, so it is fresh every morning.
 3. **explore** (was dailyFAM) — a vertical feed of episodes *other listeners
    have already generated*. It never writes a script: cards come from the
    shared cache and playing one sends `cached_only`, which the pipeline

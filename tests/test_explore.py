@@ -175,3 +175,12 @@ def test_tapping_an_expired_card_is_a_409_not_a_generation(client, monkeypatch):
     assert res.status_code == 409
     assert gen.calls == 0
     assert "Explore" in res.json()["error"]
+
+
+def test_demo_mode_can_still_replay_explore(monkeypatch, tmp_path):
+    """Explore needs no credentials - it only replays - so demo mode must not
+    switch off the cache underneath it."""
+    monkeypatch.setattr(appmod, "DEMO_MODE", True)
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", SqliteScriptCache(str(tmp_path / "d.db")))
+    pipeline = appmod._make_pipeline()
+    assert pipeline.cache is not None, "demo mode disabled the cache Explore is built on"
