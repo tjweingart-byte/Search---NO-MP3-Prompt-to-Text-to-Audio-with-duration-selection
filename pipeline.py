@@ -463,7 +463,7 @@ class PodcastPipeline:
             canonical = None
             if settings.cache_semantic_key:
                 canonical = await canonical_key(plan.query, self.generator.client)
-            key = cache_key(plan.query, plan.minutes, canonical, plan.context)
+            key = cache_key(plan.query, plan.minutes, canonical, plan.context, plan.search)
         if self.cache and shareable:
             cached = self.cache.get(key)
             if cached:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import asynccontextmanager
 from collections import defaultdict
 from typing import Optional
 
@@ -27,7 +28,15 @@ from config import settings
 from pipeline import GenerationStats, PodcastPipeline
 from script_generator import ScriptGenerator, plan_episode
 import voice_store
-from tts import TTSUnavailable, build_engine, default_voice, engine_for_voice, engine_report, list_voices
+from tts import (
+    TTSUnavailable,
+    build_engine,
+    default_voice,
+    engine_for_voice,
+    engine_report,
+    list_voices,
+    warm_up,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("podcast")
@@ -43,10 +52,25 @@ if VOICE_STORE["adopted"]:
     )
 log.info("voices: %s", voice_store.describe())
 
-app = FastAPI(title="Search to Podcast", version="1.0.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Pay the voice model's load cost now rather than on the first listener.
+    await warm_up()
+    yield
+
+
+app = FastAPI(title="Search to Podcast", version="1.0.0", lifespan=lifespan)
 
 # A streamed WAV opens with a 44-byte header, which is not audio.
 WAV_HEADER_BYTES = 44
+
+# Hold this much audio before playing anything. Models stream in bursts, so
+# starting on the very first sentence means a stall becomes an audible hole a
+# second in. With a fast model this costs almost nothing: synthesis runs many
+# times faster than speech, so a few seconds of audio arrives in a fraction of
+# a second. It is the difference between "starts instantly" and "starts
+# instantly and keeps going".
+PREROLL_SECONDS = 1.5
 
 _last_request: dict[str, float] = defaultdict(float)
 
@@ -115,7 +139,7 @@ def _rate_limit(request: Request) -> None:
     _last_request[client] = now
 
 
-def _validated_plan(q: str, minutes: int, context: str = ""):
+def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None = None):
     q = (q or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="Ask a question first.")
@@ -126,7 +150,7 @@ def _validated_plan(q: str, minutes: int, context: str = ""):
             status_code=400,
             detail=f"Length must be {settings.min_minutes}-{settings.max_minutes} minutes.",
         )
-    return plan_episode(q, minutes, (context or "").strip()[:300])
+    return plan_episode(q, minutes, (context or "").strip()[:300], search)
 
 
 class ScriptRequest(BaseModel):
@@ -140,7 +164,7 @@ async def health() -> dict:
         "status": "ok",
         "mode": "demo" if DEMO_MODE else "live",
         "model": settings.model,
-        "web_search": settings.enable_web_search,
+        "web_search_default": settings.enable_web_search,
         "http": {"version": describe_http_version(), "http2_negotiated": http2_enabled()},
         "api_key_configured": bool(settings.anthropic_api_key),
         "sample_rate": build_engine().sample_rate,
@@ -189,6 +213,7 @@ async def audio(
     fmt: str = Query("wav", pattern="^(wav|pcm)$"),
     context: str = Query("", description="Topic the listener just heard, for a follow-up"),
     voice: str = Query("", description="Voice id from /api/voices"),
+    search: bool = Query(False, description="Look up live sources; adds 10-25s before audio"),
 ):
     """Stream the episode.
 
@@ -197,7 +222,7 @@ async def audio(
     chunks itself and therefore starts sooner and seeks better.
     """
     _rate_limit(request)
-    plan = _validated_plan(q, minutes, context)
+    plan = _validated_plan(q, minutes, context, search)
 
     try:
         pipeline = _make_pipeline(voice or None)
@@ -217,10 +242,11 @@ async def audio(
     # browser as a successful, silent, empty episode. Priming here means such a
     # failure becomes a proper error the interface can show.
     primed: list[bytes] = []
+    preroll_bytes = int(PREROLL_SECONDS * sample_rate * 2)
     try:
         async for chunk in source:
             primed.append(chunk)
-            if sum(len(c) for c in primed) > WAV_HEADER_BYTES:
+            if sum(len(c) for c in primed) - WAV_HEADER_BYTES >= preroll_bytes:
                 break
     except Exception as exc:
         log.exception("generation failed before any audio was produced")

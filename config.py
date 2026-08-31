@@ -31,9 +31,11 @@ class Settings:
     anthropic_api_key: str = field(
         default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", "")
     )
-    # claude-opus-5 is the default. Set MODEL=claude-sonnet-5 for a cheaper,
-    # lower-latency script pass; the pipeline is model-agnostic.
-    model: str = field(default_factory=lambda: os.environ.get("MODEL", "claude-opus-5"))
+    # Speed IS the product here: the listener must hear an answer within about
+    # a second. Opus with web search took 20-30s to produce its first sentence,
+    # which no amount of clever buffering can disguise. Sonnet 5 answers from
+    # what it knows almost immediately. MODEL=claude-opus-5 for depth over speed.
+    model: str = field(default_factory=lambda: os.environ.get("MODEL", "claude-sonnet-5"))
     max_output_tokens: int = _env_int("MAX_OUTPUT_TOKENS", 16000)
     # HTTP/2 to api.anthropic.com is broken by some proxies and TLS-inspecting
     # middleboxes, which surfaces only as "Connection error". HTTP/1.1 is the
@@ -51,9 +53,13 @@ class Settings:
     allow_topups: bool = field(
         default_factory=lambda: os.environ.get("ALLOW_TOPUPS", "0") not in ("0", "false", "False")
     )
-    # Ground the episode in live sources with Claude's server-side web search.
+    # OFF by default. Web search is the single biggest cost in time-to-first-word
+    # - it front-loads 10-25 seconds before the model writes anything - and the
+    # whole product promise is that audio starts almost immediately. Turn it on
+    # per request with `search=1`, for a question that genuinely needs today's
+    # facts and where the listener will accept waiting for them.
     enable_web_search: bool = field(
-        default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "1") not in ("0", "false", "False")
+        default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "0") not in ("0", "false", "False")
     )
     # Each search adds seconds before the first researched sentence, and the
     # listener hears that wait as preamble. Three is enough for a briefing.

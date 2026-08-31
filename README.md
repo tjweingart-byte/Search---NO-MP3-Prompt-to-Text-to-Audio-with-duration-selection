@@ -1,8 +1,12 @@
 # Search → Podcast
 
-Ask a question, pick a length from 1 to 10 minutes, and hear a spoken briefing
-that starts playing within a couple of seconds and runs for exactly the length
-you asked for.
+Ask a question, pick a length from 1 to 10 minutes, and hear the answer.
+**Audio starts in about half a second** and runs for the length you asked for.
+
+Speed is the product. The default answers from what the model already knows, so
+there is nothing between pressing the button and hearing the answer. Add
+`search=1` to a request when a question genuinely needs today's facts and the
+listener will accept waiting 10-25 seconds for them.
 
 Written by Claude (with live web search), read aloud straight off the script.
 **No MP3, no audio file, no encoder** — the samples go from the speech engine to

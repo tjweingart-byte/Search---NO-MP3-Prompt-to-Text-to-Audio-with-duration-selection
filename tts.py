@@ -529,6 +529,21 @@ def engine_for_voice(voice: str | None) -> TTSEngine:
     return build_engine()
 
 
+async def warm_up() -> None:
+    """Load the speech model before the first listener needs it.
+
+    A neural voice takes a second or more to load, and that cost would otherwise
+    land on the first episode of the day - exactly where it is most visible.
+    Doing it at startup makes every request behave like the second one.
+    """
+    engine = build_engine()
+    try:
+        await engine.synth("Ready.", 150)
+        log.info("speech engine %s warmed up", engine.name)
+    except Exception as exc:  # pragma: no cover - never block startup
+        log.warning("could not warm up %s: %s", engine.name, exc)
+
+
 def engine_report() -> dict:
     """What the server can actually do right now — surfaced in /api/health."""
     return {

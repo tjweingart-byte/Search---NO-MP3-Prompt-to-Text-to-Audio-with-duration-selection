@@ -117,3 +117,51 @@ def test_demo_mode_serves_playable_audio_without_credentials(client, monkeypatch
 def test_health_reports_demo_mode(client, monkeypatch):
     monkeypatch.setattr(appmod, "DEMO_MODE", True)
     assert client.get("/api/health").json()["mode"] == "demo"
+
+
+# --------------------------------------------------------------------------
+# Speed is the product
+#
+# The promise is: type a question, hear the answer within about a second.
+# Live web search put 10-25 seconds in front of the first word, which no amount
+# of buffering can disguise, so it is off unless a request asks for it.
+# --------------------------------------------------------------------------
+
+
+def test_web_search_is_off_by_default():
+    """It is the single biggest cost in time-to-first-word."""
+    from script_generator import plan_episode
+
+    assert appmod.settings.enable_web_search is False
+    assert plan_episode("anything", 3).search is False
+
+
+def test_search_can_be_requested_per_episode():
+    from script_generator import plan_episode
+
+    assert plan_episode("todays results", 3, search=True).search is True
+
+
+def test_a_searched_episode_is_cached_separately():
+    """An instant answer and a researched one are different episodes."""
+    from cache import cache_key
+
+    assert cache_key("a topic", 3, None, "", False) != cache_key("a topic", 3, None, "", True)
+
+
+def test_the_default_model_is_a_fast_one():
+    """Opus took 20-30s to its first sentence; that is not this product."""
+    assert appmod.settings.model in {"claude-sonnet-5", "claude-haiku-4-5"}
+
+
+def test_audio_is_buffered_before_playback_begins():
+    """Models stream in bursts; starting on sentence one makes a stall audible."""
+    assert appmod.PREROLL_SECONDS >= 1.0
+
+
+def test_the_prompt_bans_preamble_openings():
+    """The reported failure: 'here's what I can tell you about...'"""
+    from script_generator import SYSTEM_PROMPT
+
+    assert "Here's what I can tell you about" in SYSTEM_PROMPT
+    assert "Banned openings" in SYSTEM_PROMPT

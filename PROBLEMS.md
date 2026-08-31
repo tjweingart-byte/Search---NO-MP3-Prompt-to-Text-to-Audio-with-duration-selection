@@ -909,3 +909,48 @@ five-minute one stretched to fill the slider.
 The rewrite cannot be judged from here - it needs reading against real queries,
 and the judgement is editorial rather than technical. `write.py` prints a script
 in seconds without generating audio, which is the loop for improving it.
+
+
+---
+
+## 24. Optimising the wait instead of removing it
+
+The product is one sentence: type a question, hear the answer within about a
+second. Sections 15, 17, 21 and 23 are all elaborate machinery for *disguising*
+a twenty to thirty second wait - an adaptive opener, refills, a pacing control
+law, a headroom target. None of them asked why the wait existed.
+
+It existed because every query went through the slowest model with live web
+search attached. Web search front-loads 10-25 seconds before the model writes a
+single word. No buffering strategy can hide that, and every attempt to hide it
+made the product worse: first a gap, then filler, then more filler.
+
+**What changed**
+
+* **Web search is off by default**, opt-in per request (`search=1`). Most
+  questions do not need today's facts, and the ones that do can wait knowingly.
+* **The default model is `claude-sonnet-5`**, which answers from what it knows
+  almost immediately, rather than `claude-opus-5`.
+* **The voice model is loaded at startup**, not on the first listener - it was
+  costing 1.5-3 seconds on the first episode, exactly where it showed most.
+* **A 1.5 second pre-roll** before playback begins. Models stream in bursts, so
+  starting on the very first sentence turns any stall into an audible hole a
+  second in. At many-times-realtime synthesis this costs almost nothing.
+* **The prompt bans preamble outright**, by name: "Here's what I can tell you
+  about...", "Let's talk about...", "There's a lot to unpack here...". If the
+  first sentence would survive having a different topic substituted into it, it
+  is wrong.
+
+**Measured, end to end, with a real speech engine:**
+
+```
+time to first audio : 0.69s / 0.53s / 0.51s
+no gaps in any run
+```
+
+Against 20-30 seconds and a gap before.
+
+**The lesson worth keeping.** Every fix from §15 onward optimised the machinery
+around a wait that should not have existed. The question "why is this slow?"
+was never asked, only "what can we play while it is slow?" - and the answer to
+that question is always filler.

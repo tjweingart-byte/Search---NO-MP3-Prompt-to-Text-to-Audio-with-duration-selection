@@ -47,10 +47,18 @@ _MARKDOWN = re.compile(r"[*_`#>\[\]]|^\s*[-•]\s+", re.MULTILINE)
 SYSTEM_PROMPT = """You write short spoken briefings for someone who chose to \
 listen. Their attention is the only thing you can waste, so waste none of it.
 
+The first sentence is everything. Someone just asked a question and is waiting \
+to hear the answer. Give it to them immediately - the actual answer, or the \
+single most concrete fact about the topic. Never open by describing what you \
+are about to say.
+
+Banned openings, without exception: "Here's what I can tell you about...", \
+"Let's talk about...", "This is a fascinating topic...", "There's a lot to \
+unpack here...", "So,", and anything else that fills a second without saying \
+something. If your first sentence would still make sense with a different topic \
+substituted in, it is wrong. Delete it and start with the fact.
+
 What makes one of these good:
-- Open on the most specific, concrete thing you know. Not a description of what \
-you are about to cover - the thing itself. A listener should learn something \
-true in the first sentence.
 - Prefer one exact detail to three general statements. Names, numbers, what \
 someone actually said or did. Vagueness is the failure mode; if a sentence \
 would survive being written about a different topic, cut it.
@@ -100,6 +108,9 @@ class EpisodePlan:
     reserved_words: int = 0
     #: What the listener has already heard, for a "go deeper" follow-up.
     context: str = ""
+    #: Look up live sources. Costs 10-25s before the first word, so it is off
+    #: unless the listener asked for something that genuinely needs today's facts.
+    search: bool = False
 
     @property
     def body_budget(self) -> int:
@@ -126,7 +137,9 @@ def now_line() -> str:
     return now.strftime("%A %d %B %Y at %H:%M %Z").replace(" 0", " ")
 
 
-def plan_episode(query: str, minutes: int, context: str = "") -> EpisodePlan:
+def plan_episode(
+    query: str, minutes: int, context: str = "", search: bool | None = None
+) -> EpisodePlan:
     """Map a duration in minutes onto a concrete writing brief."""
     minutes = max(settings.min_minutes, min(settings.max_minutes, int(minutes)))
     target_seconds = minutes * 60
@@ -144,7 +157,10 @@ def plan_episode(query: str, minutes: int, context: str = "") -> EpisodePlan:
         sections = ["the full picture, including how it got this way"]
 
     reserved = 18 if settings.enable_cold_open else 0
-    return EpisodePlan(query, minutes, target_seconds, word_budget, sections, reserved, context)
+    use_search = settings.enable_web_search if search is None else bool(search)
+    return EpisodePlan(
+        query, minutes, target_seconds, word_budget, sections, reserved, context, use_search
+    )
 
 
 def build_prompt(plan: EpisodePlan) -> str:
@@ -224,7 +240,7 @@ class ScriptGenerator:
             "output_config": {"effort": settings.effort},
             "messages": [{"role": "user", "content": build_prompt(plan)}],
         }
-        if settings.enable_web_search:
+        if plan.search:
             kwargs["tools"] = [
                 {
                     "type": "web_search_20260209",

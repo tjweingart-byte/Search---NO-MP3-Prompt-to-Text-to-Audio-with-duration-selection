@@ -40,6 +40,20 @@ scripts; it stores scripts, not audio, for exactly this reason.
 Corollary: **the cold open is a workaround for on-demand latency.** Do not
 extend it to the browse surfaces. Prefetch there instead.
 
+## The one-sentence spec
+
+**Type a question, and within about a second audio starts giving the answer.**
+Everything else is negotiable; this is not. Any change that puts seconds in
+front of the first word is wrong, however clever the thing filling those
+seconds is.
+
+What that rules out, learned the hard way: live web search on every query (it
+front-loads 10-25 seconds), the slowest model by default, and any form of
+preamble used to disguise a wait. Search is now opt-in per request; the default
+answers from what the model already knows, immediately.
+
+Measured on the current build: **0.5s to first audio, no gaps.**
+
 ## The problem that matters most right now
 
 **The scripts are not good enough.** Not the voice - the writing. That is the

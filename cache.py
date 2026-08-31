@@ -105,6 +105,7 @@ def cache_key(
     minutes: int,
     canonical: Optional[str] = None,
     canonical_context: str = "",
+    searched: bool = False,
 ) -> str:
     """Key on the canonical topic, the duration, and the voice settings.
 
@@ -119,6 +120,8 @@ def cache_key(
             "m": int(minutes),
             # A follow-up is a different episode from the same words asked cold.
             "ctx": canonical_context or "",
+            # A researched episode is a different thing from an instant one.
+            "search": bool(searched),
             "model": settings.model,
             "wpm": settings.target_wpm,
             "v": 1,  # bump to invalidate everything after a prompt change
