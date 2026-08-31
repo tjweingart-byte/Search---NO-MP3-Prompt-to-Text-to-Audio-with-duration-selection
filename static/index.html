@@ -207,11 +207,11 @@
      "further in". */
   .wordmark{ display:flex; align-items:center; gap:1px; font-family:'Fraunces', serif;
     font-weight:500; font-size:27px; color:var(--text); letter-spacing:-0.01em; }
-  .wordmark .wm-f{ color:var(--copper); font-family:'Space Grotesk', sans-serif;
+  .wm-f{ color:var(--copper); font-family:'Space Grotesk', sans-serif;
     font-weight:700; letter-spacing:0.01em; }
-  .wordmark .wm-a{ display:inline-flex; width:0.62em; height:0.62em; color:var(--copper);
+  .wm-a{ display:inline-flex; width:0.62em; height:0.62em; color:var(--copper);
     margin:0 0.02em; }
-  .wordmark .wm-a svg{ width:100%; height:100%; }
+  .wm-a svg{ width:100%; height:100%; }
 
   /* Go Deeper: what is unfinished, and what the endings left open. Above the
      recommendations because a thread someone already has is worth more than a
@@ -278,7 +278,8 @@
       radial-gradient(120% 80% at 50% 0%, rgba(212,168,83,0.10), transparent 60%), var(--bg);
     touch-action:pan-x; overflow:hidden; user-select:none; }
   .reel-head{ display:flex; align-items:center; justify-content:space-between; flex:none; }
-  .reel-brand{ font-family:'Fraunces', serif; font-size:19px; color:var(--text); }
+  .reel-brand{ display:flex; align-items:center; gap:1px; font-family:'Fraunces', serif;
+    font-size:19px; color:var(--text); }
   .reel-count{ font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.08em;
     color:var(--text-muted); }
   .reel-body{ flex:1; display:flex; flex-direction:column; justify-content:center;
@@ -927,7 +928,7 @@
       <section class="screen" id="screen-explore">
         <div class="reel-stage" id="reelStage">
           <div class="reel-head">
-            <div class="reel-brand">explore</div>
+            <div class="reel-brand" aria-label="exploreFAM">explore<span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span></div>
             <div class="reel-count" id="reelCount"></div>
           </div>
 
