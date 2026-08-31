@@ -72,9 +72,13 @@
   .brandrow .hand{ font-size:14px; }
   .brandrow .badge{ font-family:'JetBrains Mono', monospace; font-size:9.5px; font-weight:700; letter-spacing:0.1em; background:var(--copper); color:var(--ink); padding:4px 8px; border-radius:6px; }
   .avatar-mini{ width:28px; height:28px; border-radius:50%; background:var(--copper); color:var(--ink); display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; cursor:pointer; }
-  .fam-logo{ display:flex; align-items:center; justify-content:center; gap:1px; padding:0 0 22px; }
-  .fam-logo .fl-f, .fam-logo .fl-m{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:30px; color:var(--text); letter-spacing:-0.01em; }
-  .fam-logo svg{ margin:0 -1px; position:relative; top:1px; }
+  /* The same mark as the myFAM / DailyFAM / explore headings, at hero size.
+     Only the scale is set here; the letterforms and the chevron come from
+     .wm-f and .wm-a, so the brand can only ever change in one place. */
+  .fam-logo{ display:flex; align-items:center; justify-content:center; gap:1px;
+    padding:0 0 22px; font-size:30px; }
+  .fam-logo .wm-f{ font-size:30px; }
+  .fam-logo .wm-a{ width:0.66em; height:0.66em; }
   .icon-btn{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border-strong); display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; background:none; }
   .icon-btn:active{ background:rgba(244,239,228,0.06); }
 
@@ -717,10 +721,8 @@
       <div class="statusbar"><span>9:41</span><span>●●●</span></div>
 
       <div class="splash" id="splashScreen">
-        <div class="fam-logo" style="padding:0;">
-          <span class="fl-f">F</span>
-          <svg width="21" height="26" viewBox="0 0 60 74" fill="none" stroke="var(--copper)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 32 L30 8 L46 32 M14 66 L30 42 L46 66"/></svg>
-          <span class="fl-m">M</span>
+        <div class="fam-logo" style="padding:0;" aria-label="FAM">
+          <span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span>
         </div>
       </div>
 
@@ -728,10 +730,8 @@
       <section class="screen" id="screen-home">
         <div class="scroll" style="display:flex; flex-direction:column;">
           <div style="flex:0 0 25%;"></div>
-          <div class="fam-logo">
-            <span class="fl-f">F</span>
-            <svg width="21" height="26" viewBox="0 0 60 74" fill="none" stroke="var(--copper)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 32 L30 8 L46 32 M14 66 L30 42 L46 66"/></svg>
-            <span class="fl-m">M</span>
+          <div class="fam-logo" aria-label="FAM">
+            <span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span>
           </div>
           <div class="home-hero">
           <div class="fam-input-box">
