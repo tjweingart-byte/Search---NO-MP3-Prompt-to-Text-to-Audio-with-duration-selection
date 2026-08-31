@@ -154,7 +154,10 @@ window.FamAudio = (function () {
               // a play that reached the server is a fact, and a client-side
               // report of one is a claim that can be lost or duplicated.
               (listener && listener.user ? "&user=" + encodeURIComponent(listener.user) : "") +
-              (listener && listener.topicId ? "&topic_id=" + encodeURIComponent(listener.topicId) : "");
+              (listener && listener.topicId ? "&topic_id=" + encodeURIComponent(listener.topicId) : "") +
+              // Explore replays only. The server refuses to generate on a miss,
+              // so a stale card costs a 409 rather than a model call.
+              (listener && listener.cachedOnly ? "&cached_only=true" : "");
 
     ctx.resume().then(function () {
       return fetch(url, { signal: controller.signal });

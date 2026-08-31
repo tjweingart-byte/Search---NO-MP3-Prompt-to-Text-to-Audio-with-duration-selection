@@ -12,8 +12,10 @@ Three surfaces, all backed by generated audio:
    today.* This is the only surface that fully works.
 2. **myFAM** — a browse page of trending / recommended / for-you episodes.
    Tapping a tile generates and plays that episode.
-3. **dailyFAM** — stories-style, infinitely swipeable, episodes generating as
-   the listener moves through them.
+3. **explore** (was dailyFAM) — a vertical feed of episodes *other listeners
+   have already generated*. It never writes a script: cards come from the
+   shared cache and playing one sends `cached_only`, which the pipeline
+   refuses to satisfy by generating.
 
 myFAM and dailyFAM are **personalised**, driven by a per-user model that updates
 as they interact with the app.

@@ -26,7 +26,7 @@ from anthropic_client import describe_http_version, http2_enabled
 from cache import MemoryScriptCache, SqliteScriptCache, build_cache
 from demo_script import DemoGenerator
 from config import settings
-from pipeline import GenerationStats, PodcastPipeline
+from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import topics as topics_mod
 import mixes as mixes_mod
@@ -142,7 +142,8 @@ def _rate_limit(request: Request) -> None:
     _last_request[client] = now
 
 
-def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None = None):
+def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None = None,
+                    cached_only: bool = False):
     q = (q or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="Ask a question first.")
@@ -153,7 +154,7 @@ def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None
             status_code=400,
             detail=f"Length must be {settings.min_minutes}-{settings.max_minutes} minutes.",
         )
-    return plan_episode(q, minutes, (context or "").strip()[:300], search)
+    return plan_episode(q, minutes, (context or "").strip()[:300], search, cached_only)
 
 
 class ScriptRequest(BaseModel):
@@ -304,6 +305,34 @@ async def record_event(req: EventRequest, request: Request):
     return {"ok": True}
 
 
+@app.get("/api/explore")
+async def explore(request: Request, limit: int = Query(30, ge=1, le=60)):
+    """Episodes other listeners have already generated, newest first.
+
+    This endpoint costs nothing and, by design, can cause nothing to be
+    generated: it reads finished scripts out of the cache. Everything in that
+    cache passed the personal-query filter before it was written, so it is
+    already safe to show someone else.
+    """
+    _rate_limit(request)
+    store = SCRIPT_CACHE if SCRIPT_CACHE is not None else build_cache()
+    if store is None:
+        return {"episodes": [], "reason": "The shared cache is switched off."}
+    now = time.time()
+    episodes = [
+        {
+            "query": entry["query"],
+            "title": entry["query"][:1].upper() + entry["query"][1:],
+            "minutes": entry["minutes"],
+            "plays": entry["plays"],
+            "thread": entry["thread"],
+            "age_seconds": max(0.0, now - entry["created"]),
+        }
+        for entry in store.recent(limit)
+    ]
+    return {"episodes": episodes}
+
+
 @app.get("/api/next")
 async def next_thread(
     request: Request,
@@ -341,6 +370,7 @@ async def audio(
     voice: str = Query("", description="Voice id from /api/voices"),
     search: bool = Query(False, description="Look up live sources; adds 10-25s before audio"),
     user: str = Query("", max_length=64, description="Anonymous listener id, for myFAM"),
+    cached_only: bool = Query(False, description="Replay only; never generate. Used by Explore"),
     topic_id: str = Query("", max_length=64, description="Bank topic id, when played from myFAM"),
 ):
     """Stream the episode.
@@ -350,7 +380,7 @@ async def audio(
     chunks itself and therefore starts sooner and seeks better.
     """
     _rate_limit(request)
-    plan = _validated_plan(q, minutes, context, search)
+    plan = _validated_plan(q, minutes, context, search, cached_only)
 
     try:
         pipeline = _make_pipeline(voice or None)
@@ -376,6 +406,10 @@ async def audio(
             primed.append(chunk)
             if sum(len(c) for c in primed) - WAV_HEADER_BYTES >= preroll_bytes:
                 break
+    except NotCached as exc:
+        # Expected, not a fault: the entry expired between listing and tapping.
+        # The interface drops the card and moves on.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         log.exception("generation failed before any audio was produced")
         raise HTTPException(status_code=502, detail=friendly_error(exc)) from exc

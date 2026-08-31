@@ -271,6 +271,11 @@ class EpisodePlan:
     #: Look up live sources. Costs 10-25s before the first word, so it is off
     #: unless the listener asked for something that genuinely needs today's facts.
     search: bool = False
+    #: Replay only. A cache miss must fail rather than generate - Explore shows
+    #: other people's finished episodes and must never spend a model call, so
+    #: the guarantee lives in the pipeline rather than in the interface's good
+    #: intentions.
+    cached_only: bool = False
 
     @property
     def body_budget(self) -> int:
@@ -298,7 +303,8 @@ def now_line() -> str:
 
 
 def plan_episode(
-    query: str, minutes: int, context: str = "", search: bool | None = None
+    query: str, minutes: int, context: str = "", search: bool | None = None,
+    cached_only: bool = False,
 ) -> EpisodePlan:
     """Map a duration in minutes onto a concrete writing brief."""
     minutes = max(settings.min_minutes, min(settings.max_minutes, int(minutes)))
@@ -320,7 +326,8 @@ def plan_episode(
     reserved = 18 if settings.enable_cold_open else 0
     use_search = settings.enable_web_search if search is None else bool(search)
     return EpisodePlan(
-        query, minutes, target_seconds, word_budget, sections, reserved, context, use_search
+        query, minutes, target_seconds, word_budget, sections, reserved, context,
+        use_search, cached_only,
     )
 
 

@@ -36,6 +36,15 @@ log = logging.getLogger(__name__)
 #: Sentinel meaning "use the configured cache" - see PodcastPipeline.__init__.
 AUTO = "auto"
 
+
+class NotCached(Exception):
+    """A replay-only request found nothing in the cache.
+
+    Explore is built on the promise that it never spends a model call. If that
+    promise lived only in the interface it would be one refactor away from
+    being broken silently and expensively, so the pipeline refuses instead.
+    """
+
 QUEUE_DEPTH = 4
 # Silence inserted between sentences so the delivery does not sound rushed.
 SENTENCE_GAP = 0.12
@@ -498,6 +507,14 @@ class PodcastPipeline:
                 async for chunk in self._finish(pace, stats):
                     yield chunk
                 return
+        if plan.cached_only:
+            # Nothing to replay, and generating is exactly what this request
+            # promised not to do.
+            raise NotCached(
+                "That episode is no longer in the cache. Explore only replays "
+                "episodes other listeners have already generated."
+            )
+
         stats.cache = "miss" if self.cache else "off"
 
         # --- Generate ------------------------------------------------------
@@ -539,7 +556,7 @@ class PodcastPipeline:
 
         if self.cache and shareable and stats.script:
             ttl = ttl_for(plan.query)
-            self.cache.put(key, stats.script, ttl, plan.query, stats.thread)
+            self.cache.put(key, stats.script, ttl, plan.query, stats.thread, plan.minutes)
             log.info("cached %d sentences for %r (ttl %ds)", len(stats.script), plan.query, ttl)
 
         async for chunk in self._finish(pace, stats):

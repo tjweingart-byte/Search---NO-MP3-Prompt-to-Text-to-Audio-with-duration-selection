@@ -1386,3 +1386,54 @@ and generates the mix. That is the right next step and the right place for
 prefetch: a mix names exactly which scripts are worth warming, per listener,
 before they press play, which is the case `CLAUDE.md` has been arguing for all
 along. Until then the mix generates on tap like everything else.
+
+## 34. Explore: a surface defined by what it cannot do
+
+**dailyFAM is now explore**, and its defining property is negative: it must
+never cause a script to be written. Every card is a live entry in the shared
+script cache - something another listener already paid to generate - and the
+tab exists to get more value out of scripts that already exist rather than to
+create new ones.
+
+**The guarantee lives in the pipeline, not the interface.** `EpisodePlan` grew
+a `cached_only` flag; a cache miss under that flag raises `NotCached` instead
+of generating. If the rule lived in the frontend it would be one refactor from
+being broken silently *and expensively* - the failure mode would be a feed that
+quietly costs a model call per scroll, which is exactly the kind of invisible
+loss this project has been bitten by. The test asserts it against a generator
+that counts its calls and fails if it is ever asked to write.
+
+Three cases the tests pin: a miss refuses; a hit replays without generating; and
+a miss with caching switched off entirely still refuses rather than falling
+through to "generate everything".
+
+**Replaying needs the duration.** The cache stored the query and the script but
+not the length it was written for, and a one-minute script replayed as a
+five-minute episode is padded with silence. `minutes` is now a column (added by
+the same ALTER TABLE migration pattern as `thread`), entries without one are
+skipped rather than guessed at, and the player shows the episode's own length
+rather than the listener's default - otherwise Explore looks like it ignored
+the length setting.
+
+**Privacy comes for free, and that is worth stating explicitly.** Only
+shareable queries are ever written to the cache - the personal-query filter
+runs before the write - so everything Explore can possibly show has already
+passed it. That makes the filter load-bearing in a way it was not before: it is
+now the thing standing between someone's private question and a public feed.
+There is a test that a personal query never reaches `recent()`.
+
+**A stale card is a 409, not a fault.** An entry can expire between the feed
+loading and a tap. The API answers 409 with a message naming Explore, because
+this is an expected outcome rather than a server error, and the interface can
+tell the difference.
+
+**Removed with it:** the prototype's hardcoded `DAILYFAM_TITLES`, its
+eight-day bucketing and the stories-style stage. They were a demo of a feature
+that now has real data behind it, and keeping both would have meant two feeds
+with no way to tell which was real.
+
+**Still open.** Explore ranks by recency alone. Popularity (`plays` is already
+in the payload) or a myFAM-style taste signal would order it better, but
+recency is honest and cheap and does not need a model. The feed is also
+global - there is no "near you" or "people like you" - which is the same
+missing follow graph noted for myFAM.

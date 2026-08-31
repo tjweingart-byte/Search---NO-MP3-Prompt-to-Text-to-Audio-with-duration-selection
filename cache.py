@@ -140,13 +140,15 @@ class ScriptCache(Protocol):
     #: Kept beside the sentences rather than inside them so a replayed episode
     #: can never speak it by accident.
     def thread(self, key: str) -> str: ...
+    #: Live entries, newest first. Explore replays these and never generates.
+    def recent(self, limit: int = 40) -> list[dict]: ...
 
 
 class MemoryScriptCache:
     """Process-local cache. Fine for tests and single-worker development."""
 
     def __init__(self) -> None:
-        self._data: dict[str, tuple[float, list[str], str]] = {}
+        self._data: dict[str, tuple[float, list[str], str, str, int]] = {}
         self.hits = 0
         self.misses = 0
 
@@ -159,9 +161,20 @@ class MemoryScriptCache:
         return list(entry[1])
 
     def put(
-        self, key: str, sentences: list[str], ttl: int, query: str = "", thread: str = ""
+        self, key: str, sentences: list[str], ttl: int, query: str = "",
+        thread: str = "", minutes: int = 0
     ) -> None:
-        self._data[key] = (time.time() + ttl, list(sentences), thread)
+        self._data[key] = (time.time() + ttl, list(sentences), thread, query, int(minutes))
+
+    def recent(self, limit: int = 40) -> list[dict]:
+        live = [
+            {"key": k, "query": v[3], "minutes": v[4], "created": v[0],
+             "plays": 0, "thread": v[2]}
+            for k, v in self._data.items()
+            if v[0] >= time.time() and v[3] and v[4] > 0
+        ]
+        live.sort(key=lambda e: -e["created"])
+        return live[:limit]
 
     def thread(self, key: str) -> str:
         entry = self._data.get(key)
@@ -199,10 +212,16 @@ class SqliteScriptCache:
             # Added after the table shipped, so existing caches need widening
             # rather than recreating - a cache file is not worth a migration
             # framework, and losing it would only cost one regeneration.
-            try:
-                conn.execute("ALTER TABLE scripts ADD COLUMN thread TEXT NOT NULL DEFAULT ''")
-            except sqlite3.OperationalError:
-                pass  # already there
+            for column, ddl in (
+                ("thread", "ALTER TABLE scripts ADD COLUMN thread TEXT NOT NULL DEFAULT ''"),
+                # Explore replays cached scripts, and a script cannot be
+                # replayed without knowing how long it was written to run.
+                ("minutes", "ALTER TABLE scripts ADD COLUMN minutes INTEGER NOT NULL DEFAULT 0"),
+            ):
+                try:
+                    conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass  # already there
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -231,7 +250,8 @@ class SqliteScriptCache:
             return None
 
     def put(
-        self, key: str, sentences: list[str], ttl: int, query: str = "", thread: str = ""
+        self, key: str, sentences: list[str], ttl: int, query: str = "",
+        thread: str = "", minutes: int = 0
     ) -> None:
         if not sentences:
             return
@@ -239,9 +259,10 @@ class SqliteScriptCache:
             now = time.time()
             self._conn().execute(
                 "INSERT OR REPLACE INTO scripts"
-                " (key, expires, created, hits, query, sentences, thread)"
-                " VALUES (?, ?, ?, 0, ?, ?, ?)",
-                (key, now + ttl, now, query[:500], json.dumps(sentences), thread[:200]),
+                " (key, expires, created, hits, query, sentences, thread, minutes)"
+                " VALUES (?, ?, ?, 0, ?, ?, ?, ?)",
+                (key, now + ttl, now, query[:500], json.dumps(sentences),
+                 thread[:200], int(minutes)),
             )
         except Exception:
             log.exception("script cache write failed; continuing")
@@ -257,6 +278,34 @@ class SqliteScriptCache:
         except Exception:
             log.exception("script cache thread read failed")
             return ""
+
+    def recent(self, limit: int = 40) -> list[dict]:
+        """Live cache entries, newest first - the raw material for Explore.
+
+        Only *shareable* queries are ever written here (see `is_shareable`),
+        so everything in this table is already safe to show another listener.
+        That property is what makes an Explore feed possible at all, and it is
+        a reason to be careful about ever loosening the personal-query filter.
+
+        Entries with no recorded duration are skipped rather than guessed at: a
+        script written for one minute replayed as a five-minute episode would
+        be padded with silence.
+        """
+        try:
+            rows = self._conn().execute(
+                "SELECT key, query, minutes, created, hits, thread FROM scripts"
+                " WHERE expires >= ? AND query != '' AND minutes > 0"
+                " ORDER BY created DESC LIMIT ?",
+                (time.time(), int(limit)),
+            ).fetchall()
+        except Exception:
+            log.exception("could not read recent scripts")
+            return []
+        return [
+            {"key": r[0], "query": r[1], "minutes": r[2], "created": r[3],
+             "plays": r[4], "thread": r[5] or ""}
+            for r in rows
+        ]
 
     def purge_expired(self) -> int:
         try:
