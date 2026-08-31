@@ -76,7 +76,6 @@
      Only the scale is set here; the letterforms and the chevron come from
      .wm-f and .wm-a, so the brand can only ever change in one place. */
   .fam-logo{ text-align:center; padding:0 0 22px; font-size:30px; line-height:1.1; }
-  .fam-logo .wm-f{ font-size:30px; }
   .icon-btn{ width:32px; height:32px; border-radius:50%; border:1px solid var(--border-strong); display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; background:none; }
   .icon-btn:active{ background:rgba(244,239,228,0.06); }
 
@@ -209,12 +208,17 @@
      "further in". */
   .wordmark{ white-space:nowrap; font-family:'Fraunces', serif;
     font-weight:500; font-size:27px; color:var(--text); letter-spacing:-0.01em; }
-  .wm-f{ color:var(--copper); font-family:'Space Grotesk', sans-serif;
-    font-weight:700; letter-spacing:0.01em; }
+  /* Drawn, not set. Widths are the glyphs' own aspect ratios against one cap
+     height, so they stay in proportion at any size. */
+  .wm-glyph{ display:inline-block; height:0.65em; color:var(--copper);
+    vertical-align:baseline; }
+  .wm-glyph svg{ display:block; width:100%; height:100%; }
+  .wm-glyph.f{ width:0.50em; }
+  .wm-glyph.m{ width:0.575em; }
   /* One cap height tall, bottom on the baseline: the mark now measures the
      same as the letters either side of it. */
   .wm-a{ display:inline-block; width:0.65em; height:0.65em; color:var(--copper);
-    margin:0 0.03em; vertical-align:baseline; }
+    margin:0 0.07em; vertical-align:baseline; }
   .wm-a svg{ display:block; width:100%; height:100%; }
 
   /* Go Deeper: what is unfinished, and what the endings left open. Above the
@@ -722,7 +726,7 @@
 
       <div class="splash" id="splashScreen">
         <div class="fam-logo" style="padding:0;" aria-label="FAM">
-          <span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span>
+          <span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.3 4.3 13.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6h10"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.3 4.3 15.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span>
         </div>
       </div>
 
@@ -731,7 +735,7 @@
         <div class="scroll" style="display:flex; flex-direction:column;">
           <div style="flex:0 0 25%;"></div>
           <div class="fam-logo" aria-label="FAM">
-            <span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span>
+            <span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.3 4.3 13.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6h10"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.3 4.3 15.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span>
           </div>
           <div class="home-hero">
           <div class="fam-input-box">
@@ -757,7 +761,7 @@
       <section class="screen active" id="screen-myfam">
         <div class="scroll">
           <div class="myfam-header">
-            <h2 class="wordmark" aria-label="myFAM">my<span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span></h2>
+            <h2 class="wordmark" aria-label="myFAM">my<span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.3 4.3 13.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6h10"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.3 4.3 15.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span></h2>
             <button class="myfam-dots-btn" onclick="toast('More options (concept)')">•••</button>
           </div>
           <div class="myfam-searchrow">
@@ -797,7 +801,7 @@
       <section class="screen" id="screen-playfam">
         <div class="scroll">
           <div class="myfam-header">
-            <h2 class="wordmark" aria-label="DailyFAM">Daily<span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span></h2>
+            <h2 class="wordmark" aria-label="DailyFAM">Daily<span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.3 4.3 13.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6h10"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.3 4.3 15.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span></h2>
             <button class="myfam-dots-btn" onclick="openNewMix()">+</button>
           </div>
           <div class="connect-sub" style="margin:2px 0 16px;">
@@ -928,7 +932,7 @@
       <section class="screen" id="screen-explore">
         <div class="reel-stage" id="reelStage">
           <div class="reel-head">
-            <div class="reel-brand" aria-label="exploreFAM">explore<span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span></div>
+            <div class="reel-brand" aria-label="exploreFAM">explore<span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.3 4.3 13.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6h10"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.3 4.3 17.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.3 4.3 15.4 17.4" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span></div>
             <div class="reel-count" id="reelCount"></div>
           </div>
 
