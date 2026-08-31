@@ -748,3 +748,74 @@ rate and realtime factor, with `--save` to write a WAV to listen to.
 
 If the models cannot be downloaded on the target machine either, the app keeps
 working on the existing fallbacks and says so; it does not fail.
+
+
+---
+
+## 21. The gap, properly understood
+
+Reported as a consistent 5-7 second pause near the start - "appears to the
+viewer as a glitch". §15 and §17 had each improved this without eliminating it,
+because both fixes were aimed at the wrong variable.
+
+### Finding the real mechanism
+
+Two hypotheses were tested and killed first. Piper is far slower to synthesise
+than espeak (~10x realtime against ~330x), so that looked likely - but sweeping
+simulated synthesis speed from 10x down to 3x produced no gaps at all, because
+anything faster than realtime keeps the stream ahead. And time-to-first-audio,
+while it did rise from 0.5s to ~2.8s with a neural voice, is a delay before
+playback, not a hole in it.
+
+The pipeline was then made to report on itself: per-sentence synthesis time, and
+a running comparison of audio produced against wall clock consumed - which is
+exactly when a listener hears silence. With a realistically short opener and a
+30-second researched call, it named the mechanism immediately:
+
+```
+opener ran dry after 6.8s; refilling
+opener ran dry after 13.7s; refilling     <- the second and last refill
+STARVED after 31.2s: only 29.5s of audio made in 31.2s of wall clock
+GAP: 7.9s of dead air, 20.4s into playback
+```
+
+`MAX_OPENER_REFILLS = 2` covered about twenty seconds. Research took thirty. The
+listener heard the difference - and because the cap was fixed, so was the gap,
+which is why it was *consistent* at 5-7 seconds.
+
+### The control law
+
+Removing the cap fixed the gap and created a worse problem: the opener produced
+**75 seconds of preamble to cover a 30 second wait**. Audio is synthesised many
+times faster than it is heard, so any wall-clock budget lets the opener sprint
+ahead of the listener.
+
+The opener is now paced to the listener rather than the clock. It speaks only
+while the audio produced is less than `OPENER_HEADROOM_TARGET` (8s) ahead of the
+wall clock, then waits. That is precisely the buffer needed never to fall
+silent, and it self-regulates to roughly real time. Top-ups are triggered by
+seconds of speech held rather than sentence count, and fetched *before* the
+buffer drains, so an API call never interrupts speech.
+
+Measured, at 8x-realtime synthesis:
+
+| Research takes | Gaps | Opener fetches | Opener spoken |
+|---|---|---|---|
+| 10s | none | 0 | one batch |
+| 30s | none | 3 | 36s |
+| 45s | none | 4 | 49s |
+
+### What this does not fix
+
+**A slow researched call still means a long introduction.** If research takes
+thirty seconds the listener must hear thirty seconds of *something*, and that
+something is preamble. The gap is now structurally impossible up to a 60 second
+ceiling, but the cure for a long opener is a faster script, not a longer opener:
+
+- `MAX_WEB_SEARCHES` is now 3 rather than 5. Each search costs seconds.
+- `ENABLE_WEB_SEARCH=0` removes the dominant cost for evergreen topics.
+- A faster model (`MODEL=claude-sonnet-5`) reduces time to first sentence.
+- On the browse surfaces, prefetching removes the wait entirely (`CLAUDE.md`).
+
+Every episode now logs `first_audio_at`, `opener_fills`, `min_headroom` and
+`starved`, so this is diagnosable from a log line rather than by ear.

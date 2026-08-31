@@ -47,7 +47,9 @@ class Settings:
     enable_web_search: bool = field(
         default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "1") not in ("0", "false", "False")
     )
-    max_web_searches: int = _env_int("MAX_WEB_SEARCHES", 5)
+    # Each search adds seconds before the first researched sentence, and the
+    # listener hears that wait as preamble. Three is enough for a briefing.
+    max_web_searches: int = _env_int("MAX_WEB_SEARCHES", 3)
 
     # --- Cold open --------------------------------------------------------
     # A small, fast model writes one framing sentence with no tools while the
@@ -64,7 +66,10 @@ class Settings:
     cold_open_words: int = _env_int("COLD_OPEN_WORDS", 70)
     # Longest the opener may keep talking while waiting for the main script.
     # Past this a gap is preferable to endless preamble.
-    cold_open_max_seconds: float = _env_float("COLD_OPEN_MAX_SECONDS", 25.0)
+    # Wall-clock ceiling on the opener. Long enough to cover a researched call
+    # (web search plus a slow model can run past 30s); past it a gap is better
+    # than talking indefinitely about nothing.
+    cold_open_max_seconds: float = _env_float("COLD_OPEN_MAX_SECONDS", 60.0)
     # How long to let the main script fail before any opener is spoken, so a
     # bad key produces a clean error rather than an intro to nothing.
     cold_open_grace: float = _env_float("COLD_OPEN_GRACE", 0.35)

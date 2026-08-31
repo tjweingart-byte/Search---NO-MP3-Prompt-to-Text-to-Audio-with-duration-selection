@@ -463,3 +463,76 @@ def test_the_opener_is_extended_rather_than_running_into_silence():
     asyncio.run(run())
     openers = [s for s in stats.script if s.startswith("Only one")]
     assert len(openers) > 1, "a one-sentence opener must be refilled, not left to run dry"
+
+
+# --------------------------------------------------------------------------
+# The opener must never let the stream fall silent
+#
+# Regression for the reported "consistent 5-7 second pause". The opener used to
+# get a fixed number of top-ups, covering roughly twenty seconds; a researched
+# call can take longer, and the listener heard the difference as dead air.
+# --------------------------------------------------------------------------
+
+
+class ShortOpenerSlowBody:
+    """A one-sentence opener and a script that takes a long time to start."""
+
+    def __init__(self, delay: float):
+        self.delay = delay
+        self.opener_calls = 0
+
+    async def cold_open(self, plan):
+        self.opener_calls += 1
+        yield "One short framing sentence."
+
+    async def stream_sentences(self, plan):
+        await asyncio.sleep(self.delay)
+        for i in range(80):
+            yield f"Body sentence {i} of the researched briefing."
+
+    async def top_up(self, plan, spoken_so_far, words_needed):
+        for i in range(40):
+            yield f"Extra {i}."
+
+
+def _run_with_slow_body(delay, minutes=3):
+    plan = plan_episode("a topic", minutes)
+    stats = GenerationStats()
+    generator = ShortOpenerSlowBody(delay)
+    pipeline = PodcastPipeline(generator=generator, engine=DebugEngine(), cache=None)
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    return stats, generator
+
+
+@pytest.mark.parametrize("delay", [0.5, 2.0])
+def test_the_stream_never_starves_while_the_script_is_written(delay):
+    """Audio produced must stay ahead of the wall clock the whole way."""
+    stats, _ = _run_with_slow_body(delay)
+    assert not stats.starved, (
+        f"the listener heard silence: min headroom {stats.min_headroom:.1f}s"
+    )
+    assert stats.min_headroom > 0
+
+
+def test_the_opener_is_topped_up_when_one_batch_is_not_enough():
+    """A single short opener cannot cover a slow script, so more is fetched."""
+    stats, generator = _run_with_slow_body(2.0)
+    assert generator.opener_calls > 1, "the opener should have been refilled"
+
+
+def test_a_fast_script_wastes_no_preamble():
+    """The opener is paced to the listener, so a quick script uses almost none."""
+    stats, generator = _run_with_slow_body(0.0)
+    assert generator.opener_calls == 1, "no top-up should be needed"
+    openers = [s for s in stats.script if s.startswith("One short")]
+    assert len(openers) <= 2, f"spoke {len(openers)} opener sentences for a fast script"
+
+
+def test_duration_still_lands_despite_a_long_opener():
+    stats, _ = _run_with_slow_body(2.0)
+    assert abs(stats.audio_seconds - 180) <= 4.0

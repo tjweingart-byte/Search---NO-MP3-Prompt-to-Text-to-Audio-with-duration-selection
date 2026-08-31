@@ -21,7 +21,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
-from audio_utils import PaceController, silence, streaming_wav_header
+import time
+
+from audio_utils import PaceController, pcm_duration, silence, streaming_wav_header
 from cache import ScriptCache, build_cache, cache_key, canonical_key, is_shareable, ttl_for
 from config import settings
 from script_generator import EpisodePlan, ScriptGenerator, count_words
@@ -44,8 +46,18 @@ TOPUP_THRESHOLD = 4.0
 # Cap the number of extra requests, so a model that keeps under-writing cannot
 # turn one episode into an unbounded fan-out of API calls.
 MAX_TOPUPS = 2
-# How many times the opener may be extended while waiting for the main script.
-MAX_OPENER_REFILLS = 2
+# Keep this much unspoken opener in hand: comfortably longer than one API call
+# (~1s) so a fill never interrupts speech, but low enough that we are not
+# re-fetching after every sentence.
+OPENER_BUFFER_TARGET = 6.0
+
+# How far ahead of the listener the opener keeps the stream. Enough that a slow
+# script cannot cause silence; small enough that a fast one wastes no preamble.
+OPENER_HEADROOM_TARGET = 8.0
+
+# Hard ceiling on opener fetches, so a wedged script call cannot fan out into
+# unbounded API calls. The real limit is COLD_OPEN_MAX_SECONDS.
+MAX_OPENER_FILLS = 12
 # Residual gap after the last top-up, closed with room tone rather than a cut.
 MAX_TAIL_SILENCE = 6.0
 
@@ -71,6 +83,13 @@ class _Pump:
             self.primed = True
         return self.pending[0] if self.pending else None
 
+    async def peek(self) -> None:
+        """Wait until an item is available, without consuming it."""
+        if self.pending:
+            return
+        item = await self.queue.get()
+        self.pending.append(item)
+
     def ready(self) -> bool:
         """Is there an item available right now, without waiting?"""
         return bool(self.pending) or not self.queue.empty()
@@ -86,6 +105,12 @@ class _Pump:
             await self.task
         except BaseException:
             pass
+
+
+def _buffered_seconds(sentences: list[str]) -> float:
+    """Roughly how long the unspoken opener sentences would take to say."""
+    words = sum(count_words(s) for s in sentences)
+    return words / settings.target_wpm * 60.0
 
 
 async def _replay(sentences: list[str]) -> AsyncIterator[str]:
@@ -111,6 +136,19 @@ class GenerationStats:
     cache: str = "off"
     #: Whether a fast-model opener covered the research latency.
     cold_open: bool = False
+    #: When generation began, for audio-produced vs wall-clock comparisons.
+    started_at: float = field(default_factory=time.perf_counter)
+    #: Total seconds spent inside the speech engine.
+    synth_seconds: float = 0.0
+    #: Smallest margin between audio produced and wall clock. Negative means
+    #: the listener heard silence.
+    min_headroom: float = 999.0
+    #: True if the stream ever fell behind realtime.
+    starved: bool = False
+    #: Wall clock at which the first audio left the pipeline.
+    first_audio_at: float = 0.0
+    #: How many times the opener was topped up while waiting for the script.
+    opener_fills: int = 0
     script: list[str] = field(default_factory=list)
 
     @property
@@ -130,6 +168,11 @@ class GenerationStats:
             "topups": self.topups,
             "cache": self.cache,
             "cold_open": self.cold_open,
+            "synth_seconds": round(self.synth_seconds, 2),
+            "min_headroom": round(self.min_headroom, 1) if self.min_headroom < 999 else None,
+            "starved": self.starved,
+            "first_audio_at": round(self.first_audio_at, 2),
+            "opener_fills": self.opener_fills,
         }
 
 
@@ -228,13 +271,40 @@ class PodcastPipeline:
             stats.truncated = True
             return
 
+        started = time.perf_counter()
         pcm = await self.engine.synth(sentence, wpm, self.voice)
+        synth_seconds = time.perf_counter() - started
         if not pcm:
             return
+
+        # Compare audio produced against wall clock consumed. A listener hears
+        # silence exactly when the second overtakes the first, so this is the
+        # number that matters, and it is logged for every sentence.
+        audio_seconds = pcm_duration(len(pcm), self.engine.sample_rate)
+        stats.synth_seconds += synth_seconds
+        elapsed_wall = time.perf_counter() - stats.started_at
+        headroom = pace.elapsed + audio_seconds - elapsed_wall
+        if headroom < stats.min_headroom:
+            stats.min_headroom = headroom
+        log.debug(
+            "sentence %d: %.2fs audio in %.2fs (%.0fx realtime), headroom %.1fs",
+            stats.sentences + 1, audio_seconds, synth_seconds,
+            audio_seconds / synth_seconds if synth_seconds else 0, headroom,
+        )
+        if headroom < 0 and not stats.starved:
+            stats.starved = True
+            log.warning(
+                "STARVED after %.1fs: only %.1fs of audio made in %.1fs of wall clock. "
+                "The listener hears silence here. Synthesis so far: %.1fs.",
+                elapsed_wall, pace.elapsed + audio_seconds, elapsed_wall, stats.synth_seconds,
+            )
         pace.observe(len(pcm) + len(gap), words)
         stats.sentences += 1
         stats.words += words
         stats.script.append(sentence)
+        if not stats.first_audio_at:
+            stats.first_audio_at = time.perf_counter() - stats.started_at
+            log.info("first audio ready after %.2fs", stats.first_audio_at)
         yield pcm
         yield gap
 
@@ -247,71 +317,115 @@ class PodcastPipeline:
         pace: PaceController,
         stats: GenerationStats,
     ) -> AsyncIterator[bytes]:
-        """Speak framing sentences for exactly as long as the body needs.
+        """Keep talking until the researched script arrives.
 
-        The cold open exists to cover research latency. A single fixed sentence
-        only covers a few seconds, so if research runs longer the listener gets
-        the worst possible outcome - speech, dead air, speech - which sounds
-        broken in a way that simply waiting does not.
+        The opener exists to cover research latency. Its old failure was running
+        out: a fixed number of refills covered about twenty seconds, and a
+        researched call can take longer than that, so the listener heard the
+        difference as dead air.
 
-        So the opener is written as several short framing sentences and released
-        one at a time, and before each one we ask whether the main script has
-        arrived yet. The moment it has, the opener stops mid-flow and the real
-        briefing takes over seamlessly. Slow research gets more introduction;
-        fast research gets almost none. Unused sentences are discarded.
+        Two changes make that structurally impossible up to a hard ceiling:
 
-        Two guards: nothing is spoken if the body has already failed (there is
-        no point introducing an episode that will not come), and the opener will
-        not run past `max_seconds` of stalling, after which a gap is preferable
-        to endless preamble.
+        * **The budget is time, not a refill count.** More material is fetched
+          for as long as the script is still coming.
+        * **Refills are started before the current batch runs out**, not after.
+          Fetching only once the last sentence has been spoken leaves a hole the
+          width of an API call, every time.
+
+        Past `COLD_OPEN_MAX_SECONDS` it stops regardless: at some point a gap is
+        better than talking indefinitely about nothing.
         """
         spoken_any = False
-        refills = 0
-        # One task watches for the body's first sentence; its completion is the
-        # signal to stop introducing and start briefing.
+        fills = 0
+        buffer: list[str] = []
+        exhausted = False
         waiting = asyncio.create_task(body.prime())
+        pumps = [opener]
         try:
-            # Give the body a moment to fail before committing to an opener.
-            # Credential and model errors surface almost instantly, and playing
-            # an introduction to an episode that then dies is worse than a
-            # clean error - it is the silent-failure bug all over again.
+            # Let the script fail before committing to an opener: playing an
+            # introduction to an episode that then dies is the silent-failure
+            # bug all over again.
             await asyncio.wait({waiting}, timeout=settings.cold_open_grace)
-
             if waiting.done():
                 try:
                     first = waiting.result()
                 except Exception:  # pragma: no cover - defensive
                     first = None
                 if first is None or isinstance(first, Exception):
-                    # The script failed or came back empty. Say nothing.
                     return
 
-            # At least one framing sentence always plays, because the main
-            # script is written on the understanding that the episode has
-            # already been opened - without it the briefing starts mid-thought.
-            # Beyond the first, more are spoken only while the script is still
-            # being written.
+            deadline = time.perf_counter() + settings.cold_open_max_seconds
             spoken_count = 0
-            deadline = pace.elapsed + settings.cold_open_max_seconds
-            while (spoken_count == 0 or not waiting.done()) and pace.elapsed < deadline:
-                item = await opener.next()
-                if item is None or isinstance(item, Exception):
-                    if isinstance(item, Exception):
-                        log.warning("cold open failed; continuing", exc_info=item)
-                        break
-                    # The opener ran out while the script is still being
-                    # written. Rather than let the listener fall into silence,
-                    # ask for more. Capped, because past a point more preamble
-                    # is worse than a gap.
-                    if refills < MAX_OPENER_REFILLS and not waiting.done():
-                        refills += 1
-                        log.info("opener ran dry after %.1fs; refilling", pace.elapsed)
-                        await opener.close()
-                        opener = self._start(cold_open(plan))
-                        continue
+
+            # The control law: keep the listener a fixed distance ahead of
+            # themselves, and no further.
+            #
+            # Audio is synthesised many times faster than it is heard, so a
+            # wall-clock budget lets the opener run away - an earlier version
+            # produced 75 seconds of preamble to cover a 30 second wait.
+            # Instead, speak only while the audio produced is less than
+            # OPENER_HEADROOM_TARGET seconds ahead of the wall clock. That is
+            # exactly the buffer needed to never fall silent, and it paces the
+            # opener to roughly real time, so a fast script wastes almost none
+            # of it.
+            while True:
+                if waiting.done() and spoken_count > 0:
+                    break
+                if time.perf_counter() >= deadline:
+                    log.warning("opener hit its %.0fs ceiling; the script is very slow",
+                                settings.cold_open_max_seconds)
                     break
 
-                async for chunk in self._speak_one(item, pace, stats):
+                wall = time.perf_counter() - stats.started_at
+                headroom = pace.elapsed - wall
+
+                if spoken_count > 0 and headroom >= OPENER_HEADROOM_TARGET:
+                    # Comfortably ahead: stop talking and wait for the script.
+                    await asyncio.wait({waiting}, timeout=0.25)
+                    continue
+
+                while opener.ready():
+                    item = await opener.next()
+                    if item is None:
+                        exhausted = True
+                        break
+                    if isinstance(item, Exception):
+                        log.warning("cold open failed; continuing", exc_info=item)
+                        exhausted = True
+                        break
+                    buffer.append(item)
+
+                # Top up on seconds of speech held, and start the next fill
+                # before the buffer drains so the API call overlaps with speech.
+                held = _buffered_seconds(buffer)
+                if (
+                    held < OPENER_BUFFER_TARGET
+                    and not waiting.done()
+                    and fills < MAX_OPENER_FILLS
+                    and time.perf_counter() < deadline
+                    and (exhausted or not opener.ready())
+                ):
+                    fills += 1
+                    log.info(
+                        "opener fill %d (%.1fs held, %.1fs spoken, %.1fs headroom)",
+                        fills, held, pace.elapsed, headroom,
+                    )
+                    opener = self._start(cold_open(plan))
+                    pumps.append(opener)
+                    exhausted = False
+
+                if not buffer:
+                    if waiting.done():
+                        break
+                    await asyncio.wait(
+                        {waiting, asyncio.ensure_future(opener.peek())},
+                        timeout=0.5,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    continue
+
+                sentence = buffer.pop(0)
+                async for chunk in self._speak_one(sentence, pace, stats):
                     spoken_any = True
                     yield chunk
                 spoken_count += 1
@@ -319,10 +433,11 @@ class PodcastPipeline:
                     break
 
             stats.cold_open = spoken_any
+            stats.opener_fills = fills
         finally:
-            await opener.close()
+            for pump in pumps:
+                await pump.close()
             if not waiting.done():
-                # Leave the body stream intact; only stop watching it here.
                 await asyncio.wait({waiting})
 
     async def stream_pcm(

@@ -57,9 +57,14 @@ extend it to the browse surfaces. Prefetch there instead.
    Note: voice is deliberately **not** part of the script cache key, because a
    voice changes the audio and not the words. Switching voice therefore reuses
    the cached script — measured at ~90 ms and zero API cost.
-3. **The cold-open → script gap.** Mitigated by the adaptive opener and refill
-   (PROBLEMS.md §15, §17), not eliminated. Prefetch removes it on browse
-   surfaces; on search it is bounded by how fast the researched call returns.
+3. ~~**The cold-open → script gap**~~ — *fixed* (PROBLEMS.md §21). The opener is
+   paced to the listener: it speaks only while less than 8s ahead of the wall
+   clock, tops up on seconds-of-speech-held, and fetches before the buffer
+   drains. Silence is now structurally impossible up to a 60s ceiling.
+   **What remains is not a bug but a consequence:** a 30s researched call means
+   30s of preamble, because the listener must hear *something*. The cure is a
+   faster script - fewer web searches, a faster model, or prefetch on the
+   browse surfaces - not a longer opener.
 4. **Personalisation needs state the app does not have**: user identity, an
    interaction log, and a recommender. Everything today is stateless.
 
