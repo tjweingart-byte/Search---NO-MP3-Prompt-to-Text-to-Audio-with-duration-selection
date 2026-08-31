@@ -167,13 +167,6 @@
   .search-bar{ margin:12px 18px 0; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:11px 14px; display:flex; align-items:center; gap:9px; color:var(--text-muted); font-size:13px; }
   .myfam-searchrow{ display:flex; align-items:center; gap:8px; padding:8px 18px 0; }
   .search-bar-lg{ flex:1; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:12px 14px; display:flex; align-items:center; gap:9px; color:var(--text-muted); font-size:13px; cursor:pointer; }
-  .playfam-btn{
-    flex:none; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-    background:var(--copper); color:var(--ink); border:none; border-radius:14px; width:58px; height:48px;
-    cursor:pointer;
-  }
-  .playfam-btn span{ font-family:'JetBrains Mono', monospace; font-size:7.5px; font-weight:700; letter-spacing:0.02em; }
-  .playfam-btn:active{ transform:scale(0.95); }
 
   .myfam-dots-btn{ background:none; border:none; color:var(--text-muted); font-size:15px; letter-spacing:1px; cursor:pointer; padding:6px; line-height:1; }
 
@@ -703,10 +696,6 @@
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
               <span>Search FAM</span>
             </div>
-            <button class="playfam-btn" onclick="openPlayFAM()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg>
-              <span>playFAMs</span>
-            </button>
           </div>
           <div id="myfamFeed"></div>
           <div class="seeds-refresh" onclick="refreshSeedsFeed()">
