@@ -819,3 +819,34 @@ ceiling, but the cure for a long opener is a faster script, not a longer opener:
 
 Every episode now logs `first_audio_at`, `opener_fills`, `min_headroom` and
 `starved`, so this is diagnosable from a log line rather than by ear.
+
+
+---
+
+## 22. Voice models were being re-downloaded for every new version
+
+Each release was handed over as a fresh `fam-podcast N` folder, and voice models
+lived in `voices/` *inside* it. So moving from version 6 to version 7 looked
+like a fresh install: no voices, download sixty megabytes again. The models are
+large and change far less often than the code, so tying their lifetime to the
+code's was simply the wrong choice.
+
+They now live once per user in `~/.fam/voices`, resolved in one place
+(`voice_store.py`) that every entry point uses - the server, `setup_voices.py`,
+`verify_voice.py` and the tests - so they cannot drift apart. `FAM_VOICES_DIR`
+overrides it for deployments and tests; the older `VOICES_DIR` is still honoured.
+
+**Existing downloads are adopted, not re-fetched.** On startup, if the shared
+store is empty and an older project folder has voices, they are copied across.
+Three properties make that safe to run automatically on every launch:
+
+* **Copy, not move.** The old folder keeps working if anything goes wrong, and
+  can be deleted whenever the user chooses. `--move-legacy` moves instead.
+* **Written via a `.partial` name, then renamed.** An interrupted copy can never
+  leave a half-written model that looks installed.
+* **Idempotent, and never overwrites.** It only runs when the shared store is
+  empty, and skips any voice already present. A model whose `.onnx.json` sidecar
+  is missing is skipped rather than half-adopted, since Piper needs both.
+
+The result is the workflow that was asked for: unzip, install requirements, run.
+No voice step at all after the first time.

@@ -43,8 +43,10 @@ extend it to the browse surfaces. Prefetch there instead.
 ## Open problems, in the order they hurt
 
 1. ~~**Voice quality**~~ — *addressed, needs verifying on a real machine.* Piper
-   is now a pip dependency (`piper-tts`) with voice models in `voices/`,
-   installed by `python setup_voices.py`. It ships **with the app** rather than
+   is now a pip dependency (`piper-tts`) with voice models in a **shared
+   per-user folder** (`~/.fam/voices`, see `voice_store.py`) installed by
+   `python setup_voices.py`. They deliberately live outside the project so a new
+   version of the app reuses them instead of re-downloading. It ships **with the app** rather than
    depending on the host OS: espeak only exists if apt-installed and macOS `say`
    does not exist on a Linux server, so relying on either means the deployed app
    sounds worse than the laptop it was built on. Hosted neural voices were not

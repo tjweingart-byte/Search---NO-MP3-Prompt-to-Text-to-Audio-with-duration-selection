@@ -16,8 +16,9 @@ import asyncio
 import sys
 import time
 
+import voice_store
 from audio_utils import pcm_duration
-from tts import PiperEngine, engine_for_voice, list_voices
+from tts import engine_for_voice, list_voices
 
 SENTENCE = (
     "This is a test of the voice that ships with the app. "
@@ -26,6 +27,13 @@ SENTENCE = (
 
 
 async def main() -> int:
+    # Adopt from an older project folder if the shared store is empty, so this
+    # reports on the same voices the app will use.
+    store = voice_store.ensure_ready()
+    print(f"Voice store: {store['dir']}")
+    if store["adopted"]:
+        print(f"Reused from a previous version: {', '.join(store['adopted'])}")
+
     voices = list_voices()
     print(f"{len(voices)} voice(s) available:\n")
 
@@ -33,6 +41,7 @@ async def main() -> int:
     if not piper:
         print("  No neural (piper) voices installed.")
         print("  Run: pip install -r requirements.txt && python setup_voices.py")
+        print(f"  They will be stored in {store['dir']} and reused by every version.")
         print("  The app still works, using a lower-quality fallback voice.\n")
 
     worst = 0.0

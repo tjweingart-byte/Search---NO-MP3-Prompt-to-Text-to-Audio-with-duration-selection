@@ -202,13 +202,12 @@ class PiperEngine(TTSEngine):
 
     @staticmethod
     def installed_models() -> list:
-        """Every .onnx voice in the project's voices directory."""
+        """Every .onnx voice in the shared voice store."""
         import pathlib
 
-        directory = pathlib.Path(settings.voices_dir)
-        if not directory.is_dir():
-            return []
-        return sorted(p for p in directory.glob("*.onnx") if p.is_file())
+        import voice_store
+
+        return voice_store.installed(pathlib.Path(settings.voices_dir))
 
     @classmethod
     def voices(cls) -> list[Voice]:

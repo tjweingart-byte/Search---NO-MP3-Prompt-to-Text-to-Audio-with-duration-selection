@@ -26,10 +26,22 @@ from demo_script import DemoGenerator
 from config import settings
 from pipeline import GenerationStats, PodcastPipeline
 from script_generator import ScriptGenerator, plan_episode
+import voice_store
 from tts import TTSUnavailable, build_engine, default_voice, engine_for_voice, engine_report, list_voices
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("podcast")
+
+# Prepare the shared voice store before anything asks it what it holds. On the
+# first run of a new version this adopts voices an older project folder already
+# downloaded; every run after, it is a no-op.
+VOICE_STORE = voice_store.ensure_ready()
+if VOICE_STORE["adopted"]:
+    log.info(
+        "reused %d voice(s) from a previous version of the app: %s",
+        len(VOICE_STORE["adopted"]), ", ".join(VOICE_STORE["adopted"]),
+    )
+log.info("voices: %s", voice_store.describe())
 
 app = FastAPI(title="Search to Podcast", version="1.0.0")
 
@@ -140,13 +152,18 @@ async def health() -> dict:
             "model": settings.cold_open_model,
         },
         "cache": _cache_report(),
+        "voice_store": VOICE_STORE["dir"],
     }
 
 
 @app.get("/api/voices")
 async def voices() -> dict:
     """Voices this server can speak in, best first."""
-    return {"default": default_voice(), "voices": [v.as_dict() for v in list_voices()]}
+    return {
+        "default": default_voice(),
+        "store": VOICE_STORE["dir"],
+        "voices": [v.as_dict() for v in list_voices()],
+    }
 
 
 @app.post("/api/script")

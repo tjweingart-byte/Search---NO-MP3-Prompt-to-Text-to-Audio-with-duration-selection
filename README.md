@@ -79,7 +79,8 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `audio_utils.py` | Live WAV header, silence, the pacing controller |
 | `cache.py` | Shared script cache: key normalization, TTL policy, SQLite store |
 | `demo_script.py` | Built-in sample script used when there are no credentials |
-| `setup_voices.py` | Installs the neural voices the app ships with |
+| `voice_store.py` | Resolves the one shared voice folder every entry point uses |
+| `setup_voices.py` | Installs the neural voices into the shared folder |
 | `verify_voice.py` | Proves the voices work on this machine, and how fast |
 | `compare_models.py` | Generate one query on several models and compare cost, speed and text |
 | `anthropic_client.py` | Builds the Anthropic client; pins the HTTP version |
@@ -150,11 +151,28 @@ including when the model misses its word budget by ±30%.
 `GET /api/voices` reports what the machine can actually speak, best-sounding
 first, and the player has a picker under the speed/length pill.
 
+**Voices are installed once per user, not once per copy of the project.** They
+live in `~/.fam/voices`, outside any project folder, so unzipping a new version
+of the app finds them already there.
+
+First time only:
+
 ```bash
 pip install -r requirements.txt
-python setup_voices.py       # installs the neural voices into voices/
+python setup_voices.py       # downloads into ~/.fam/voices
 python verify_voice.py       # proves they work, and how fast
 ```
+
+Every version after that:
+
+```bash
+pip install -r requirements.txt
+./run.sh
+```
+
+`setup_voices.py` is safe to re-run: it downloads only what is missing, and it
+first adopts any voices an older project folder already downloaded. Override the
+location with `FAM_VOICES_DIR` if you need to.
 
 | Engine | Quality | Where it comes from |
 |---|---|---|
@@ -167,9 +185,9 @@ the project rather than something the host provides. espeak only exists if
 someone installed it and macOS `say` does not exist on a Linux server at all, so
 an app relying on either sounds different — and worse — once deployed.
 
-`setup_voices.py` fetches four voices (two US, two UK) into `voices/`. They are
-a few tens of MB each and are not committed; run it once after cloning, and as a
-build step when deploying.
+`setup_voices.py` fetches four voices (two US, two UK). They are a few tens of
+MB each and are never committed. For deployment, run it as a build step with
+`FAM_VOICES_DIR` pointing somewhere on the image or a mounted volume.
 
 Voice is deliberately **not** part of the script cache key: it changes the audio,
 not the words. Switching voice reuses the cached script, so it costs no model

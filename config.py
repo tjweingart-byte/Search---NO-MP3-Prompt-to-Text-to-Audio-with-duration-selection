@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+import voice_store
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -113,10 +115,11 @@ class Settings:
     # --- TTS --------------------------------------------------------------
     # auto | piper | espeak | debug
     tts_engine: str = field(default_factory=lambda: os.environ.get("TTS_ENGINE", "auto"))
-    # Voices that ship with the app. Populated by `python setup_voices.py`;
-    # every .onnx in here becomes selectable. Kept in the project rather than
-    # relying on the host OS, so a deployed server sounds like the laptop.
-    voices_dir: str = field(default_factory=lambda: os.environ.get("VOICES_DIR", "voices"))
+    # Voice models live in one shared per-user folder (~/.fam/voices by
+    # default), NOT inside the project, so a new version of the app finds the
+    # voices already downloaded instead of fetching them again. Override with
+    # FAM_VOICES_DIR. See voice_store.py.
+    voices_dir: str = field(default_factory=lambda: str(voice_store.voices_dir()))
     # Pin one of them as the default; otherwise the first installed is used.
     piper_model: str = field(default_factory=lambda: os.environ.get("PIPER_MODEL", ""))
     espeak_binary: str = field(
