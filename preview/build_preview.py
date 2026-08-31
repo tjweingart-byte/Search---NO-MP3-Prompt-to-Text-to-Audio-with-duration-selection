@@ -104,6 +104,16 @@ def load_fixtures() -> dict:
         "/api/topics": {"topics": bank},
         "/api/explore": explore,
         "/api/next": {"thread": "why the shipping lanes run through Omani water"},
+        # Two open threads; the shim seeds two part-heard episodes alongside
+        # them, so Go Deeper opens as a full grid rather than one lonely card.
+        "/api/godeeper": {"threads": [
+            {"thread": "why the shipping lanes run through Omani water",
+             "title": "The Two-Mile Lane That Moves the Oil",
+             "from_title": "Why the Strait of Hormuz Moves the Oil Price", "at": 0},
+            {"thread": "how NIL money changed college football recruiting",
+             "title": "The New College Football Arms Race",
+             "from_title": "Who Really Pays for a Stadium", "at": 0},
+        ]},
         "/api/voices": {"voices": [
             {"id": "preview:narrator", "label": "Narrator (preview)", "engine": "preview"}
         ], "default": "preview:narrator"},
@@ -207,6 +217,20 @@ SHIM = """
              custom_count: items.filter(function (i) { return i.custom; }).length,
              created_at: 0, updated_at: 0 };
   }
+
+  // Two part-heard episodes, so the preview shows Go Deeper as it looks once
+  // someone has been using the app. Seeded once and then left alone, so
+  // anything you do to it in the preview sticks.
+  try {
+    if (!localStorage.getItem("fam_resume")) {
+      localStorage.setItem("fam_resume", JSON.stringify({
+        "why everyone is talking about AI agents":
+          { minutes: 7, at: 259, saved: Date.now() },
+        "who actually makes the world's chips":
+          { minutes: 6, at: 50, saved: Date.now() - 9000 }
+      }));
+    }
+  } catch (e) { /* private browsing: the section is simply emptier */ }
 
   // Say what this is, once, without covering anything up.
   window.addEventListener("load", function () {

@@ -796,7 +796,7 @@
       <section class="screen" id="screen-playfam">
         <div class="scroll">
           <div class="myfam-header">
-            <h2>DailyFAM</h2>
+            <h2 class="wordmark" aria-label="DailyFAM">Daily<span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span></h2>
             <button class="myfam-dots-btn" onclick="openNewMix()">+</button>
           </div>
           <div class="connect-sub" style="margin:2px 0 16px;">
@@ -2855,11 +2855,19 @@
       });
     });
     cards.sort(function(a, b){ return b.saved - a.saved; });
-    threads.forEach(function(t){
-      cards.push({ kind: "thread", query: t.thread, minutes: selectedLengthMinutes,
-                   title: t.title, from: t.from_title });
+    var threadCards = threads.map(function(t){
+      return { kind: "thread", query: t.thread, minutes: selectedLengthMinutes,
+               title: t.title, from: t.from_title };
     });
-    return cards.slice(0, 4);
+    // Alternated rather than grouped: four part-heard episodes in a block
+    // reads as a backlog, and the mix is what makes the section feel like a
+    // set of ways in rather than a list of chores.
+    var out = [];
+    while(out.length < 4 && (cards.length || threadCards.length)){
+      if(cards.length) out.push(cards.shift());
+      if(out.length < 4 && threadCards.length) out.push(threadCards.shift());
+    }
+    return out;
   }
 
   function renderGoDeeper(threads){
