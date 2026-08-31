@@ -54,6 +54,19 @@ answers from what the model already knows, immediately.
 
 Measured on the current build: **0.5s to first audio, no gaps.**
 
+**A slow answer is not inevitable - it is a scheduling choice.** The wait only
+exists if generation starts when the button is pressed. It does not have to:
+
+* **Prefetch on typing pause.** 800ms after someone stops typing, the script is
+  written into the cache. Pressing play is then a cache hit. Measured against an
+  18-second researched call: **18.30s -> 0.12s.** The slow work happens during a
+  pause the user was taking anyway.
+* The same reasoning extends to the browse surfaces, where what someone might
+  tap is known even earlier.
+
+So "current information costs 10-25 seconds" is false as stated. It costs that
+much *if you start when they ask*. Start earlier and it costs nothing.
+
 ## The problem that matters most right now
 
 **The scripts are not good enough.** Not the voice - the writing. That is the

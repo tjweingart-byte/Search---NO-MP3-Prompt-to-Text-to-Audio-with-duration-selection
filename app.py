@@ -10,6 +10,7 @@ Endpoints
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -22,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from anthropic_client import describe_http_version, http2_enabled
-from cache import MemoryScriptCache, SqliteScriptCache, build_cache
+from cache import MemoryScriptCache, SqliteScriptCache, build_cache, cache_key, is_shareable, ttl_for
 from demo_script import DemoGenerator
 from config import settings
 from pipeline import GenerationStats, PodcastPipeline
@@ -73,6 +74,10 @@ WAV_HEADER_BYTES = 44
 PREROLL_SECONDS = 1.5
 
 _last_request: dict[str, float] = defaultdict(float)
+
+# Prefetches in flight, so a second keystroke pause does not start the same
+# script twice.
+_PREFETCHING: set[str] = set()
 
 
 def friendly_error(exc: Exception) -> str:
@@ -156,6 +161,7 @@ def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None
 class ScriptRequest(BaseModel):
     query: str = Field(..., max_length=500)
     minutes: int = Field(..., ge=1, le=10)
+    search: bool = False
 
 
 @app.get("/api/health")
@@ -178,6 +184,53 @@ async def health() -> dict:
         "cache": _cache_report(),
         "voice_store": VOICE_STORE["dir"],
     }
+
+
+@app.post("/api/prefetch")
+async def prefetch(req: ScriptRequest, request: Request) -> dict:
+    """Start writing a briefing before the listener asks for it.
+
+    The expensive, slow part of an episode is the script; the audio is nearly
+    free. So the moment someone stops typing, we write the script and put it in
+    the cache. If they then press play, `/api/audio` finds it already there and
+    the model wait disappears entirely - the listener hears audio as fast as the
+    speech engine can produce it.
+
+    This is the same reasoning as a shop estimating delivery when an item goes
+    in the basket rather than at checkout: do the slow work during the pause the
+    user is already taking.
+
+    A prefetch nobody uses costs one script and no audio. It returns as soon as
+    the work is started, so typing is never blocked.
+    """
+    plan = _validated_plan(req.query, req.minutes, "", req.search)
+    if SCRIPT_CACHE is None or DEMO_MODE or not is_shareable(plan.query):
+        return {"status": "skipped"}
+
+    key = cache_key(plan.query, plan.minutes, None, plan.context, plan.search)
+    if SCRIPT_CACHE.get(key) is not None:
+        return {"status": "ready"}
+
+    if key in _PREFETCHING:
+        return {"status": "already running"}
+
+    async def build() -> None:
+        try:
+            generator = ScriptGenerator()
+            sentences = [s async for s in generator.stream_sentences(plan)]
+            if sentences:
+                SCRIPT_CACHE.put(key, sentences, ttl_for(plan.query), plan.query)
+                log.info("prefetched %d sentences for %r", len(sentences), plan.query)
+        except Exception:
+            # A failed prefetch must never surface to the listener; they will
+            # simply take the normal path when they press play.
+            log.info("prefetch failed for %r; will generate on demand", plan.query)
+        finally:
+            _PREFETCHING.discard(key)
+
+    _PREFETCHING.add(key)
+    asyncio.create_task(build())
+    return {"status": "started"}
 
 
 @app.get("/api/voices")

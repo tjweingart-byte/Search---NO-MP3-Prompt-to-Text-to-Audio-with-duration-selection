@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -165,3 +166,71 @@ def test_the_prompt_bans_preamble_openings():
 
     assert "Here's what I can tell you about" in SYSTEM_PROMPT
     assert "Banned openings" in SYSTEM_PROMPT
+
+
+# --------------------------------------------------------------------------
+# Prefetch: do the slow work during the pause the user is already taking
+# --------------------------------------------------------------------------
+
+
+def test_prefetch_puts_a_script_in_the_cache(client, monkeypatch):
+    """The whole point: pressing play then costs no model call."""
+    from cache import MemoryScriptCache, cache_key
+
+    cache = MemoryScriptCache()
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", cache)
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "ScriptGenerator", lambda *a, **k: FakeGenerator())
+
+    res = client.post("/api/prefetch", json={"query": "a real question here", "minutes": 1})
+    assert res.json()["status"] == "started"
+
+    key = cache_key("a real question here", 1, None, "", False)
+    # The prefetch runs as a background task on the app's event loop. Making
+    # requests drives that loop; sleeping on this thread does not.
+    for _ in range(100):
+        if cache.get(key) is not None:
+            break
+        client.get("/api/health")
+        time.sleep(0.01)
+    assert cache.get(key), "the prefetched script should be waiting in the cache"
+
+
+def test_prefetch_reports_ready_when_it_already_has_one(client, monkeypatch):
+    from cache import MemoryScriptCache, cache_key
+
+    cache = MemoryScriptCache()
+    cache.put(cache_key("a real question here", 1, None, "", False), ["Done."], 60, "q")
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", cache)
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+
+    res = client.post("/api/prefetch", json={"query": "a real question here", "minutes": 1})
+    assert res.json()["status"] == "ready"
+
+
+def test_prefetch_never_stores_a_personal_query(client, monkeypatch):
+    from cache import MemoryScriptCache
+
+    cache = MemoryScriptCache()
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", cache)
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+
+    res = client.post("/api/prefetch", json={"query": "summarise my lab results", "minutes": 1})
+    assert res.json()["status"] == "skipped"
+
+
+def test_prefetch_failure_is_invisible(client, monkeypatch):
+    """A failed prefetch must never surface; the listener just takes the slow path."""
+    from cache import MemoryScriptCache
+
+    class Broken:
+        async def stream_sentences(self, plan):
+            raise RuntimeError("model down")
+            yield ""  # pragma: no cover
+
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", MemoryScriptCache())
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "ScriptGenerator", lambda *a, **k: Broken())
+
+    res = client.post("/api/prefetch", json={"query": "a real question here", "minutes": 1})
+    assert res.status_code == 200

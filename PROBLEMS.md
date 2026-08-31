@@ -954,3 +954,41 @@ Against 20-30 seconds and a gap before.
 around a wait that should not have existed. The question "why is this slow?"
 was never asked, only "what can we play while it is slow?" - and the answer to
 that question is always filler.
+
+
+---
+
+## 25. Two things: narrated timestamps, and prefetching the wait away
+
+**"Here is what I have as of Sunday, August 30..."** was mine. §17 told the
+script to say what its picture was current as of "the first time it matters",
+and the model turned that into an opening disclaimer. A listener does not want a
+timestamp read to them. The prompt now bans announcing currency outright, and
+permits timing only where it changes the meaning - "the count is still going" -
+said in passing rather than as a preamble.
+
+**Prefetch, which was the user's idea and a better one than anything above.**
+The observation: a shop estimates delivery when an item goes in the basket, not
+at checkout. It does the slow work during a pause the customer is taking anyway.
+
+Applied here: the expensive part of an episode is the script; the audio is
+nearly free. So 800ms after someone stops typing, `/api/prefetch` writes the
+script into the cache. When they press play, `/api/audio` finds it there and the
+model wait has already happened.
+
+Measured against a stand-in API that takes 18 seconds to answer:
+
+```
+cold press   : time to first audio 18.30s
+prefetched   : time to first audio  0.12s
+```
+
+**This corrects something stated wrongly earlier in this log.** §24 framed live
+search as costing 10-25 seconds, full stop. That is only true if generation
+starts when the button is pressed. It does not have to. The wait is a scheduling
+choice, not a property of the work.
+
+Guards: only after a real pause (800ms) and a real question (12+ characters);
+never the same script twice; never a personal query; a failed prefetch is
+silent and the listener simply takes the normal path. An unused prefetch costs
+one script and no audio.
