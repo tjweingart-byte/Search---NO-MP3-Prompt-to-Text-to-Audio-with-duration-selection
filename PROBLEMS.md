@@ -1051,3 +1051,35 @@ recorded in `CLAUDE.md`; the mechanism is not in the codebase.
 The ordinary script cache is untouched and still does the cheap half of the same
 job: a repeat of the same query is a hit. Measured after removal - 0.70s to
 first audio cold, 0.11s on the repeat, no gaps.
+
+
+---
+
+## 28. Teaching the voice by example rather than by rule
+
+The user asked whether supplying sample scripts - one minute, two minutes, three
+minutes - would help. It is the strongest lever available, and better than
+anything attempted so far.
+
+Every attempt to fix the writing until now has been a *rule*: "prefer one exact
+detail to three general statements", "cut anything the listener could have
+guessed". Models follow rules loosely and imitate examples closely. Two or three
+briefings written the way they should sound will do more than another twenty
+adjectives of instruction.
+
+`examples/` is now read at import. Each file is `<minutes>-<slug>.txt`: first
+line the query, blank line, then the script. They are shown to the model as the
+house voice, explicitly framed as sound to imitate rather than facts to borrow,
+since borrowing a fact from an example would be a hallucination.
+
+Including the length in the filename is deliberate: how a briefing grows from
+one minute to five is exactly where padding creeps in, and demonstrating that is
+more reliable than describing it.
+
+An empty folder changes the prompt not at all, and a malformed file is skipped
+with a warning rather than breaking generation.
+
+**Cost note.** Three examples add roughly 1,500-2,000 input tokens per request -
+about a third of a cent on Sonnet. It also pushes the system prompt over the
+minimum cacheable prefix, which §9 noted it was previously too short to reach,
+so the examples may end up close to free on repeat traffic.

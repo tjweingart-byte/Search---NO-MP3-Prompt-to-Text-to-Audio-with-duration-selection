@@ -27,6 +27,57 @@ from config import settings
 
 log = logging.getLogger(__name__)
 
+
+def load_style_examples() -> list[tuple[str, str]]:
+    """Briefings from examples/ that show the model the house voice.
+
+    Rules describe a style; examples demonstrate one, and a model matches a
+    demonstration far more closely than a description. This is the most direct
+    control there is over how the writing sounds.
+
+    Files are `<minutes>-<slug>.txt`: first line the query, blank line, then the
+    script. Read once at import; an empty folder changes nothing.
+    """
+    import pathlib
+
+    directory = pathlib.Path(__file__).resolve().parent / "examples"
+    found: list[tuple[str, str]] = []
+    if not directory.is_dir():
+        return found
+
+    for path in sorted(directory.glob("*.txt")):
+        try:
+            head, _, body = path.read_text(encoding="utf-8").partition("\n\n")
+        except OSError:
+            continue
+        query, script = head.strip(), body.strip()
+        if query and script:
+            found.append((query, script))
+        else:
+            log.warning("skipping style example %s: expected a query, a blank line, then the script",
+                        path.name)
+    if found:
+        log.info("loaded %d style example(s) from examples/", len(found))
+    return found
+
+
+STYLE_EXAMPLES = load_style_examples()
+
+
+def style_example_block() -> str:
+    """The examples, formatted for the system prompt. Empty when there are none."""
+    if not STYLE_EXAMPLES:
+        return ""
+    parts = [
+        "\nThis is the house voice. Match its rhythm, its directness and the way "
+        "it opens and closes. Do not borrow its facts or its topics - only how it "
+        "sounds:\n"
+    ]
+    for query, script in STYLE_EXAMPLES:
+        words = len(script.split())
+        parts.append(f'<example query="{query}" words="{words}">\n{script}\n</example>\n')
+    return "\n".join(parts)
+
 # The last few openers spoken by this server. Fed back into the prompt so a
 # listener working through several episodes does not hear the same shape of
 # introduction every time - the single most noticeable tell of a generated show.
@@ -98,6 +149,11 @@ person says them - "about twelve percent", "nineteen ninety-eight".
 - No greeting, no sign-off, no "welcome back", no "let's dive in", no naming \
 the show, and never mention being an AI or describe your own process.
 """
+
+
+def system_prompt() -> str:
+    """The house rules, plus any examples of the voice they describe."""
+    return SYSTEM_PROMPT + style_example_block()
 
 
 @dataclass
@@ -241,7 +297,7 @@ class ScriptGenerator:
         kwargs: dict = {
             "model": settings.model,
             "max_tokens": settings.max_output_tokens,
-            "system": SYSTEM_PROMPT,
+            "system": system_prompt(),
             "output_config": {"effort": settings.effort},
             "messages": [{"role": "user", "content": build_prompt(plan)}],
         }

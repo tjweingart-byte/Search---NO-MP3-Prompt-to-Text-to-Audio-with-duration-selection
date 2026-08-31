@@ -80,6 +80,12 @@ makes a briefing worth hearing; that rewrite is untested against real output.
 generating audio. That is the loop for improving this, and it is a judgement
 call rather than an engineering one.
 
+**`examples/` is the strongest lever on the writing.** Briefings dropped in
+there are shown to the model as the house voice. Rules describe a style loosely;
+examples are matched closely, so two or three good ones move the output more
+than any amount of further prompt wording. Prefer adding an example over adding
+another rule.
+
 ## Open problems, in the order they hurt
 
 1. ~~**Voice quality**~~ — *addressed, needs verifying on a real machine.* Piper

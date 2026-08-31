@@ -636,3 +636,55 @@ def test_the_brief_no_longer_imposes_a_section_template():
     prompt = build_prompt(plan_episode("recap of a golf tournament", 5))
     for beat in ("one-line hook", "the essential background", "what to watch next"):
         assert beat not in prompt, f"the {beat!r} template beat is still being imposed"
+
+
+# --------------------------------------------------------------------------
+# Style examples
+#
+# Rules describe a style; examples demonstrate one, and a model matches a
+# demonstration far more closely. This is the most direct control over the
+# writing, so the loading has to be predictable.
+# --------------------------------------------------------------------------
+
+
+def test_no_examples_leaves_the_prompt_untouched(monkeypatch):
+    import script_generator as sg
+
+    monkeypatch.setattr(sg, "STYLE_EXAMPLES", [])
+    assert sg.system_prompt() == sg.SYSTEM_PROMPT
+
+
+def test_examples_reach_the_model_framed_as_voice_not_fact(monkeypatch):
+    """A borrowed fact would be a hallucination; only the sound should carry."""
+    import script_generator as sg
+
+    monkeypatch.setattr(
+        sg, "STYLE_EXAMPLES", [("the offside rule", "A player is offside if...")]
+    )
+    prompt = sg.system_prompt()
+    assert "A player is offside if..." in prompt
+    assert "house voice" in prompt
+    assert "not borrow its facts" in prompt
+
+
+def test_examples_are_read_from_disk(tmp_path, monkeypatch):
+    import script_generator as sg
+
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "1-a-topic.txt").write_text(
+        "what is a heat pump\n\nIt moves heat rather than making it.\n"
+    )
+    monkeypatch.setattr(sg, "__file__", str(tmp_path / "script_generator.py"))
+    loaded = sg.load_style_examples()
+    assert loaded == [("what is a heat pump", "It moves heat rather than making it.")]
+
+
+def test_a_malformed_example_is_skipped_not_fatal(tmp_path, monkeypatch):
+    """A typo in one file must not stop the app writing anything at all."""
+    import script_generator as sg
+
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "1-broken.txt").write_text("no blank line so no script")
+    (tmp_path / "examples" / "2-fine.txt").write_text("a query\n\nA script.\n")
+    monkeypatch.setattr(sg, "__file__", str(tmp_path / "script_generator.py"))
+    assert sg.load_style_examples() == [("a query", "A script.")]
