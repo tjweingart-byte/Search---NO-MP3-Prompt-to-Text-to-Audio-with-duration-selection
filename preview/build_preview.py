@@ -214,8 +214,10 @@ SHIM = """
   window.addEventListener("load", function () {
     var bar = document.createElement("div");
     bar.textContent = "Preview build \\u00b7 interface only \\u00b7 no scripts, no audio";
-    bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;" +
-      "padding:5px 8px;text-align:center;font:600 9px/1.3 monospace;" +
+    // Top, not bottom: at the bottom it sat over the tab bar, which is the
+    // one piece of chrome a preview must never obscure.
+    bar.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;" +
+      "padding:4px 8px;text-align:center;font:600 9px/1.3 monospace;" +
       "letter-spacing:.06em;color:#0d0b12;background:#d4a853;";
     document.body.appendChild(bar);
     setTimeout(function () { bar.style.transition = "opacity .6s"; bar.style.opacity = "0"; }, 6000);

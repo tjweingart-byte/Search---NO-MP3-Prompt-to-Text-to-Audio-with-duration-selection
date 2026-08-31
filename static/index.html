@@ -212,7 +212,7 @@
   /* Explore, reels-style. One episode fills the screen and the next is
      deliberately not visible: not knowing what is coming is the point, so
      there is nothing to scan, skip past, or decide about. */
-  .reel-stage{ position:absolute; inset:0; bottom:56px; display:flex; flex-direction:column;
+  .reel-stage{ flex:1; min-height:0; display:flex; flex-direction:column;
     padding:20px 20px 12px; background:
       radial-gradient(120% 80% at 50% 0%, rgba(212,168,83,0.10), transparent 60%), var(--bg);
     touch-action:pan-x; overflow:hidden; user-select:none; }
@@ -517,14 +517,38 @@
   .speed-pill{ font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:600; background:var(--surface-2); border-radius:20px; padding:5px 10px; color:var(--text); cursor:pointer; }
 
   /* -------- tabbar -------- */
-  .tabbar{ flex:none; display:flex; align-items:center; justify-content:space-around; padding:10px 10px 14px; border-top:1px solid var(--border); background:var(--bg); }
-  .tabbar .tab{ display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; }
-  .tabbar .tab .lbl{ font-family:'JetBrains Mono', monospace; font-size:8.5px; color:var(--text-muted); }
+  /* Five tabs with search raised on a circle in the middle. Search is the
+     one thing someone opens the app to do, so it gets the thumb's easiest
+     reach and a shape nothing else has - findable without reading. */
+  .tabbar{ flex:none; position:relative; display:flex; align-items:flex-end;
+    justify-content:space-around; padding:10px 8px 14px; border-top:1px solid var(--border);
+    background:var(--bg); }
+  .tabbar .tab{ display:flex; flex-direction:column; align-items:center; gap:3px;
+    cursor:pointer; flex:1; min-width:0; }
+  .tabbar .tab .lbl{ font-family:'JetBrains Mono', monospace; font-size:8.5px;
+    color:var(--text-muted); white-space:nowrap; }
   .tabbar .tab.active .lbl{ color:var(--copper); font-weight:700; }
-  .tabbar .tab .dot{ width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; }
-  .tabbar .tab.active .dot{ background:var(--copper); }
-  .tabbar .tab .dot svg{ stroke:var(--text-muted); }
-  .tabbar .tab.active .dot svg{ stroke:var(--ink); }
+  .tabbar .tab .dot{ width:22px; height:22px; border-radius:50%; display:flex;
+    align-items:center; justify-content:center; color:var(--text-muted); }
+  .tabbar .tab.active .dot{ background:var(--copper); color:var(--ink); }
+  .tabbar .tab:focus-visible{ outline:2px solid var(--copper); outline-offset:3px; border-radius:8px; }
+
+  /* The centre tab breaks the row: a larger disc lifted above the bar's top
+     edge, so it reads as the primary action rather than the third of five. */
+  .tabbar .tab.centre{ flex:0 0 auto; }
+  .tabbar .tab.centre .dot{
+    width:50px; height:50px; margin-top:-24px; margin-bottom:2px;
+    background:var(--surface); color:var(--text);
+    border:1px solid var(--border-strong);
+    box-shadow:0 6px 18px rgba(0,0,0,0.35);
+    transition:transform 140ms ease, background 140ms ease;
+  }
+  .tabbar .tab.centre:active .dot{ transform:scale(0.94); }
+  .tabbar .tab.centre.active .dot{ background:var(--copper); color:var(--ink);
+    border-color:var(--copper); }
+  @media (prefers-reduced-motion: reduce){
+    .tabbar .tab.centre .dot{ transition:none; }
+  }
 
   .next-hint{
     flex:none; display:none; align-items:center; justify-content:center; gap:6px;
@@ -659,13 +683,12 @@
         </div>
 
         <div class="tabbar">
-          <div class="tab active" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
-          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
-          <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
+          <div class="tab centre active" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
+          <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
+          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
-        <div class="generating" id="gen-home"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
       </section>
 
       <!-- ============ MYFAM HOME (renamed Branches) ============ -->
@@ -693,11 +716,11 @@
         </div>
 
         <div class="tabbar">
-          <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
-          <div class="tab active" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
-          <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab active" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
+          <div class="tab centre" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
+          <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
+          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
       </section>
 
@@ -716,11 +739,11 @@
           <div id="mixList"></div>
         </div>
         <div class="tabbar">
-          <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
-          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab active" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
-          <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab active" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
+          <div class="tab centre" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
+          <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
+          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
       </section>
 
@@ -870,11 +893,11 @@
         </div>
         <div class="generating" id="gen-explore"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
         <div class="tabbar">
-          <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
-          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
-          <div class="tab active" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
+          <div class="tab centre" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
+          <div class="tab active" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
+          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
       </section>
 
@@ -892,11 +915,11 @@
           <div id="threadList"></div>
         </div>
         <div class="tabbar">
-          <div class="tab" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><div class="lbl">FAM</div></div>
-          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
-          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
-          <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab active" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
+          <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
+          <div class="tab centre" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
+          <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
+          <div class="tab active" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
         </div>
       </section>
 

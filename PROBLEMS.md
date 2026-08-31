@@ -1490,3 +1490,28 @@ a feed that listed episodes it could not play. Explore's cards are only real if
 they are stored under the key the pipeline will compute - `cache_key(query,
 minutes, ...)` - which is a useful reminder that the feed and the player must
 agree on the key or the tab is a menu of dead links.
+
+## 36. The Explore dead end, and a tab bar built around search
+
+**Explore had no way out.** `.reel-stage` was `position:absolute; inset:0;
+bottom:56px`, but `.screen` is a flex column with no `position`, so `inset:0`
+resolved against an ancestor further up and the stage painted straight over
+the tab bar. The `56px` was a guess at the bar's height that never applied to
+anything.
+
+The fix is to stop positioning it at all: the stage is now an ordinary
+`flex:1` child of the flex-column screen, so the bar sits below it by
+construction and the magic number is gone. Worth noting the class of bug -
+an absolutely positioned element whose containing block is not what the author
+assumed, hiding chrome the user needs. The browser check now clicks a tab from
+inside Explore rather than only asserting the bar exists, because "present in
+the DOM" was true the whole time it was unusable.
+
+**The tab bar now has search in the middle, raised on a disc.** Five tabs, in
+order: myFAM, DailyFAM, search, explore, Messages. Search is the one thing
+someone opens the app to do, so it gets the easiest thumb position and a shape
+nothing else in the bar has - findable without reading a label, which is why
+it is the only tab without one.
+
+All five bars are generated from one list in the build edit rather than hand-
+edited in five places; they had already drifted once when playFAM was added.
