@@ -79,8 +79,25 @@ failure modes seen so far:
 * **Storytelling as decoration** (wrong): "picture this", scene-setting,
   atmosphere. This is what makes a listener think *get to the point*.
 
+The aim is **annexation**: not inviting the listener in, but absorbing them
+before they decide to come, so that leaving takes a deliberate act. Three
+mechanics carry it:
+
+* **No exits.** A closed loop is a place to stop. Every resolution opens the
+  next question. Summaries, recaps and "so, to sum up" hand the listener their
+  coat.
+* **Endings widen, they do not conclude.** The last line points at what this is
+  part of or what happens next. They should finish *inside* the subject.
+* **Speak from inside.** No orienting, no justifying the topic. Begin as though
+  continuing a conversation they were already in.
+
 The guard: every sentence must carry information. Atmosphere alone is cut. The
 point should be arriving continuously, from the first line, inside the story.
+
+This also has an architectural consequence for the browse surfaces: if an
+episode ends by widening rather than concluding, the natural next move is the
+next episode - which is exactly what dailyFAM's infinite swipe and myFAM's tiles
+are for. The ending of one is the entry to the next.
 
 Note this **replaced an earlier rule** that said to open with the answer
 immediately. That was news-writing — the inverted pyramid — and it is the

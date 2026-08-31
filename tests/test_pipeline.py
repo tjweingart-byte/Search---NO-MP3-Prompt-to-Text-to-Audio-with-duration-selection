@@ -734,3 +734,36 @@ def test_length_describes_story_scope_not_a_section_template():
     assert "full arc" in long
     for beat in ("one-line hook", "the essential background", "what to watch next"):
         assert beat not in long
+
+
+# --------------------------------------------------------------------------
+# Annexation: hold the listener rather than conclude at them
+#
+# A good ending is still an exit - it gives permission to leave. The aim is that
+# leaving takes a deliberate act, so every resolution opens the next question
+# and the last line widens instead of wrapping up.
+# --------------------------------------------------------------------------
+
+
+def test_the_prompt_forbids_building_exits():
+    from script_generator import SYSTEM_PROMPT
+
+    assert "Never build an exit" in SYSTEM_PROMPT
+    assert "Do not end. Widen" in SYSTEM_PROMPT
+    for exit_signal in ("to sum up", "in conclusion", "the bottom line is"):
+        assert exit_signal in SYSTEM_PROMPT, f"{exit_signal!r} should be banned by name"
+
+
+def test_the_prompt_asks_the_writer_to_speak_from_inside():
+    """Annexation means the listener is already in, not being shown round."""
+    from script_generator import SYSTEM_PROMPT
+
+    assert "Speak from inside" in SYSTEM_PROMPT
+    assert "as you may know" in SYSTEM_PROMPT
+    assert "point of view" in SYSTEM_PROMPT
+
+
+def test_the_brief_asks_for_momentum_and_a_widening_end():
+    prompt = build_prompt(plan_episode("a topic", 3))
+    assert "make the next thing matter more" in prompt
+    assert "End inside the subject" in prompt
