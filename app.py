@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from collections import defaultdict
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -187,7 +187,9 @@ async def health() -> dict:
 
 
 @app.post("/api/prefetch")
-async def prefetch(req: ScriptRequest, request: Request) -> dict:
+async def prefetch(
+    req: ScriptRequest, request: Request, background: BackgroundTasks
+) -> dict:
     """Start writing a briefing before the listener asks for it.
 
     The expensive, slow part of an episode is the script; the audio is nearly
@@ -229,7 +231,17 @@ async def prefetch(req: ScriptRequest, request: Request) -> dict:
             _PREFETCHING.discard(key)
 
     _PREFETCHING.add(key)
-    asyncio.create_task(build())
+    # Starlette runs this AFTER the response has been sent, so the browser is
+    # not kept waiting, and it holds a strong reference to the coroutine for
+    # its whole life.
+    #
+    # `asyncio.create_task` was wrong here: the event loop keeps only a weak
+    # reference to a task, so a fire-and-forget prefetch could be garbage
+    # collected part-way through and silently never finish. Because a failed
+    # prefetch is deliberately invisible, that showed up only as the wait
+    # occasionally not being removed - and as a test that failed on some
+    # machines and not others.
+    background.add_task(build)
     return {"status": "started"}
 
 

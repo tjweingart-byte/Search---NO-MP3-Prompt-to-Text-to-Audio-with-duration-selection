@@ -992,3 +992,39 @@ Guards: only after a real pause (800ms) and a real question (12+ characters);
 never the same script twice; never a personal query; a failed prefetch is
 silent and the listener simply takes the normal path. An unused prefetch costs
 one script and no audio.
+
+
+---
+
+## 26. A prefetch that could vanish mid-flight
+
+Reported from a clean install on Python 3.12.6: `test_prefetch_puts_a_script_in_the_cache`
+failed while everything else passed. It passed here, which was luck - running it
+twenty times in a row failed **seven**.
+
+**Cause.** The endpoint started its work with `asyncio.create_task(build())` and
+kept no reference to the result. The event loop holds only a *weak* reference to
+a task, so a fire-and-forget coroutine can be garbage collected part-way through
+and simply stop. Python's own documentation warns about exactly this.
+
+**Why it mattered more than a flaky test.** A failed prefetch is deliberately
+silent - the listener just takes the normal path - so in production this would
+have shown up only as the wait occasionally not being removed, at random, with
+nothing in the logs. The feature built specifically to make the app feel instant
+would have worked most of the time and quietly not worked the rest.
+
+**Fix.** Starlette's `BackgroundTasks`. It runs after the response is sent, so
+the browser is never kept waiting, and the task is owned by the request rather
+than floating free. Twenty consecutive runs of the test now pass, as do five
+consecutive full-suite runs.
+
+**The test was strengthened, not weakened.** It had been polling with a retry
+loop - which existed only to paper over this bug. That is gone: the assertion is
+now immediate, because the test client runs background tasks to completion. A
+second test parses the endpoint's AST and fails if `asyncio.create_task`
+reappears, and a third proves end to end that a prefetched episode plays without
+touching the model.
+
+Verified unaffected: the shared voice store still resolves to `~/.fam/voices`,
+`setup_voices.py --list` reads it, startup reports it, and prefetch still turns
+an 18-second model call into 0.11s to first audio.

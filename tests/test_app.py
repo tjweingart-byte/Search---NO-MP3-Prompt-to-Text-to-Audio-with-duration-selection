@@ -185,14 +185,12 @@ def test_prefetch_puts_a_script_in_the_cache(client, monkeypatch):
     res = client.post("/api/prefetch", json={"query": "a real question here", "minutes": 1})
     assert res.json()["status"] == "started"
 
+    # No polling: the prefetch runs as a Starlette background task, which the
+    # test client runs to completion before returning. If this ever needs a
+    # sleep or a retry loop again, the work has become detached from the
+    # request and can be garbage collected mid-flight - which is exactly the
+    # bug this asserts against.
     key = cache_key("a real question here", 1, None, "", False)
-    # The prefetch runs as a background task on the app's event loop. Making
-    # requests drives that loop; sleeping on this thread does not.
-    for _ in range(100):
-        if cache.get(key) is not None:
-            break
-        client.get("/api/health")
-        time.sleep(0.01)
     assert cache.get(key), "the prefetched script should be waiting in the cache"
 
 
@@ -234,3 +232,56 @@ def test_prefetch_failure_is_invisible(client, monkeypatch):
 
     res = client.post("/api/prefetch", json={"query": "a real question here", "minutes": 1})
     assert res.status_code == 200
+
+
+def test_a_prefetch_cannot_be_garbage_collected_mid_flight(client, monkeypatch):
+    """Regression: the work must be owned by the request, not detached.
+
+    `asyncio.create_task` was used originally. The event loop keeps only a weak
+    reference to a task, so a fire-and-forget prefetch could be collected
+    part-way through and silently never finish - invisible in production
+    because a failed prefetch is deliberately silent, and flaky in tests.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(appmod.prefetch)))
+    calls = {
+        ast.unparse(node.func)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "asyncio.create_task" not in calls, (
+        "prefetch must not detach its work from the request; use BackgroundTasks"
+    )
+    assert "background.add_task" in calls
+
+
+def test_a_finished_prefetch_makes_the_episode_a_cache_hit(client, monkeypatch):
+    """End to end: prefetching is what removes the wait, so prove it removes it."""
+    from cache import MemoryScriptCache
+
+    import pipeline as pipeline_mod
+
+    cache = MemoryScriptCache()
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", cache)
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "ScriptGenerator", lambda *a, **k: FakeGenerator())
+
+    client.post("/api/prefetch", json={"query": "a real question here", "minutes": 1})
+
+    stats = {}
+
+    def make(voice=None):
+        pipe = pipeline_mod.PodcastPipeline(
+            generator=FailingGenerator(), engine=DebugEngine(), cache=cache, voice=voice
+        )
+        stats["pipeline"] = pipe
+        return pipe
+
+    # The generator would raise if it were called; a cache hit means it is not.
+    monkeypatch.setattr(appmod, "_make_pipeline", make)
+    res = client.get("/api/audio?q=a real question here&minutes=1&fmt=pcm")
+    assert res.status_code == 200, "a prefetched episode must play without the model"
+    assert len(res.content) > 0
