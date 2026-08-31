@@ -202,6 +202,74 @@
     justify-content:center; color:var(--text-muted); opacity:0.5; }
 
   /* Explore: a vertical feed of episodes that already exist. */
+  /* --- myFAM ------------------------------------------------------------
+     The wordmark: the A is a pair of chevrons, the same mark the app uses for
+     "further in". */
+  .wordmark{ display:flex; align-items:center; gap:1px; font-family:'Fraunces', serif;
+    font-weight:500; font-size:27px; color:var(--text); letter-spacing:-0.01em; }
+  .wordmark .wm-f{ color:var(--copper); font-family:'Space Grotesk', sans-serif;
+    font-weight:700; letter-spacing:0.01em; }
+  .wordmark .wm-a{ display:inline-flex; width:0.62em; height:0.62em; color:var(--copper);
+    margin:0 0.02em; }
+  .wordmark .wm-a svg{ width:100%; height:100%; }
+
+  /* Go Deeper: what is unfinished, and what the endings left open. Above the
+     recommendations because a thread someone already has is worth more than a
+     suggestion they have not met. */
+  .gd-head{ display:flex; align-items:baseline; justify-content:space-between;
+    margin:18px 0 10px; }
+  .gd-kicker{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--copper); font-weight:700; }
+  .gd-count{ font-family:'JetBrains Mono', monospace; font-size:9.5px; color:var(--text-muted); }
+  .gd-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .gd-card{ position:relative; overflow:hidden; padding:12px 13px 13px; border-radius:12px;
+    background:var(--surface); border:1px solid var(--border); cursor:pointer;
+    display:flex; flex-direction:column; justify-content:space-between; min-height:74px; }
+  .gd-card:active{ transform:scale(0.99); }
+  .gd-card-title{ font-family:'Fraunces', serif; font-weight:500; font-size:12.5px;
+    line-height:1.3; color:var(--text); margin-bottom:8px; }
+  .gd-card-meta{ font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.06em;
+    text-transform:uppercase; color:var(--copper); }
+  .gd-card.resume .gd-card-meta{ color:var(--text-muted); }
+  .gd-bar{ position:absolute; left:0; right:0; bottom:0; height:3px; background:var(--border-strong); }
+  .gd-bar span{ display:block; height:100%; background:var(--copper); }
+  .gd-ask{ display:flex; align-items:center; gap:8px; margin-top:10px; padding:13px 14px;
+    border:1px dashed var(--border-strong); border-radius:12px; color:var(--text-muted);
+    font-size:11.5px; cursor:pointer; }
+  .gd-ask b{ color:var(--copper); font-weight:700; }
+
+  /* Section headings speak instead of labelling: a sentence about why these
+     are here, in the display face rather than a mono kicker. */
+  .feed-title{ font-family:'Fraunces', serif; font-weight:400; font-size:20px;
+    line-height:1.25; color:var(--text); margin:26px 0 12px; text-wrap:balance; }
+
+  /* Cards carry their reason. A recommendation that cannot say why it is
+     there reads as arbitrary, and the tag doubles as the picture's caption. */
+  .seed-card .seed-tag{ position:absolute; left:12px; bottom:9px;
+    font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.1em;
+    text-transform:uppercase; color:#5a5347; }
+  .feed-rail .seed-thumb{ position:relative; }
+  .seed-why{ font-size:10px; line-height:1.4; color:var(--text-muted); margin-top:6px; }
+  .seed-why b{ color:var(--copper); font-weight:700; }
+
+  /* Now playing, docked above the tab bar. */
+  .nowbar{ flex:none; position:relative; display:flex; align-items:center; gap:11px;
+    margin:0 12px 8px; padding:9px 10px; border-radius:14px; overflow:hidden;
+    background:var(--surface); border:1px solid var(--border-strong); cursor:pointer; }
+  .nowbar-thumb{ flex:0 0 38px; height:38px; border-radius:9px; background:var(--paper);
+    color:var(--ink); display:flex; align-items:center; justify-content:center; }
+  .nowbar-body{ flex:1; min-width:0; }
+  .nowbar-title{ font-family:'Fraunces', serif; font-weight:500; font-size:12px;
+    color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .nowbar-meta{ font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.07em;
+    text-transform:uppercase; color:var(--text-muted); margin-top:3px; }
+  .nowbar-play{ flex:none; width:32px; height:32px; border-radius:50%; border:none;
+    background:var(--copper); color:var(--ink); display:flex; align-items:center;
+    justify-content:center; cursor:pointer; }
+  .nowbar-progress{ position:absolute; left:0; right:0; bottom:0; height:2px;
+    background:var(--border-strong); }
+  .nowbar-fill{ height:100%; width:0%; background:var(--copper); transition:width 200ms linear; }
+
   /* Explore, reels-style. One episode fills the screen and the next is
      deliberately not visible: not knowing what is coming is the point, so
      there is nothing to scan, skip past, or decide about. */
@@ -688,7 +756,7 @@
       <section class="screen active" id="screen-myfam">
         <div class="scroll">
           <div class="myfam-header">
-            <h2>myFAM</h2>
+            <h2 class="wordmark" aria-label="myFAM">my<span class="wm-f">F</span><span class="wm-a" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-f">M</span></h2>
             <button class="myfam-dots-btn" onclick="toast('More options (concept)')">•••</button>
           </div>
           <div class="myfam-searchrow">
@@ -697,6 +765,7 @@
               <span>Search FAM</span>
             </div>
           </div>
+          <div id="goDeeperBlock"></div>
           <div id="myfamFeed"></div>
           <div class="seeds-refresh" onclick="refreshSeedsFeed()">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 12a10 10 0 0116-7.7M22 12a10 10 0 01-16 7.7M2 4v6h6M22 20v-6h-6"/></svg>
@@ -704,6 +773,15 @@
           </div>
         </div>
 
+        <div class="nowbar" id="nowBar" onclick="openNowPlaying()" hidden>
+          <div class="nowbar-thumb" id="nowThumb"></div>
+          <div class="nowbar-body">
+            <div class="nowbar-title" id="nowTitle"></div>
+            <div class="nowbar-meta" id="nowMeta"></div>
+          </div>
+          <button class="nowbar-play" id="nowPlay" onclick="event.stopPropagation(); toggleNowBar()"></button>
+          <div class="nowbar-progress"><div class="nowbar-fill" id="nowFill"></div></div>
+        </div>
         <div class="tabbar">
           <div class="tab active" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
           <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
@@ -1430,6 +1508,66 @@
     });
   }
 
+  // ---------------- Now playing bar ----------------
+  // Docked above the tab bar on myFAM so a part-heard episode is one tap
+  // away rather than something to go and find again.
+  var nowBarState = null;
+  var nowBarTimer = null;
+
+  function showNowBar(title, query, minutes, source){
+    nowBarState = { title: title, query: query, minutes: minutes, source: source || "" };
+    var bar = document.getElementById("nowBar");
+    if(!bar) return;
+    bar.hidden = false;
+    document.getElementById("nowThumb").innerHTML =
+      '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 12a8 8 0 0116 0v5a2 2 0 01-2 2h-2v-6h4"/><path d="M4 12v5a2 2 0 002 2h2v-6H4"/></svg>';
+    document.getElementById("nowTitle").textContent = title;
+    setNowBarPlaying(true);
+    startNowBarTicker();
+  }
+
+  function setNowBarPlaying(on){
+    var btn = document.getElementById("nowPlay");
+    if(!btn) return;
+    btn.innerHTML = on
+      ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>'
+      : '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  }
+
+  function startNowBarTicker(){
+    stopNowBarTicker();
+    nowBarTimer = setInterval(function(){
+      if(!nowBarState) return;
+      var total = nowBarState.minutes * 60;
+      var at = FamAudio.position();
+      var left = Math.max(0, total - at);
+      document.getElementById("nowMeta").textContent =
+        (nowBarState.source ? nowBarState.source + " \u00b7 " : "") + formatTime(left) + " left";
+      document.getElementById("nowFill").style.width =
+        Math.min(100, (at / total) * 100) + "%";
+      // Written continuously rather than only on pause, so closing the tab
+      // mid-episode still leaves a way back in.
+      noteResume(nowBarState.query, nowBarState.minutes, at);
+    }, 1000);
+  }
+  function stopNowBarTicker(){
+    if(nowBarTimer){ clearInterval(nowBarTimer); nowBarTimer = null; }
+  }
+  function hideNowBar(){
+    stopNowBarTicker();
+    nowBarState = null;
+    var bar = document.getElementById("nowBar");
+    if(bar) bar.hidden = true;
+  }
+  function toggleNowBar(){
+    if(!FamAudio.isActive()) return;
+    if(FamAudio.isPaused()){ FamAudio.resume(); setNowBarPlaying(true); }
+    else { FamAudio.pause(); setNowBarPlaying(false); }
+  }
+  function openNowPlaying(){
+    if(nowBarState) navigate("player");
+  }
+
   function speakText(title, captionHtml, onEnd, context, bankTopicId, opts){
     opts = opts || {};
     // Explore replays a script that was written for a specific length. Asking
@@ -1445,6 +1583,8 @@
         startProgress(totalSeconds);
         applyPlaybackSpeed();   // honour the speed already chosen in the pill
         onGenerationStarted();
+        showNowBar(TOPICS[currentPlayingTopicKey] ? TOPICS[currentPlayingTopicKey].title : title,
+                   title, minutes, opts.source || "");
         // The script finishes well before the audio does, so by now the
         // thread is usually already in the cache and the chip is ready
         // before the listener thinks to reach for Go Deeper.
@@ -1459,8 +1599,12 @@
         // client knows it happened.
         if(!reportedOutcome){
           reportedOutcome = true;
-          recordFamEvent("complete", episodeTopicId, title);
+          // The thread rides along on the completion, so Go Deeper can offer
+          // it back later without another lookup.
+          recordFamEvent("complete", episodeTopicId, title, episodeThread);
         }
+        noteResume(title, minutes, 0);   // finished: nothing left to resume
+        hideNowBar();
         if(onEnd) onEnd();
       },
       onError: function(err){
@@ -2551,7 +2695,7 @@
   }
 
   function openMyFamTab(){
-    loadMyFamFeed();
+    loadMyFamFeed();     // also loads Go Deeper
     setTab("myfam");
   }
   function openSearchFAM(){
@@ -2597,43 +2741,169 @@
   // Why each section exists, shown to the listener. A feed that cannot say
   // why it picked something reads as arbitrary, and "followers" in particular
   // would otherwise imply a social graph this app does not have.
-  var SECTION_WHY = {
-    trending: "Most played across FAM right now",
-    might_like: "Next to what you listen to, not more of it",
-    followers: "From people who listen to what you listen to",
-    from_history: "Closest to what you have played"
+  // Each section says what it is in its own voice. The old mono kickers
+  // labelled the machinery ("co-listener overlap"); these speak to the person.
+  var SECTION_TITLE = {
+    from_history: null,           // built per-listener, see madeForTitle()
+    might_like:   "A little sideways from that",
+    followers:    "Your circle is on this",
+    trending:     "What FAM can't stop playing"
   };
+
+  function madeForTitle(){
+    var h = new Date().getHours();
+    var part = h < 12 ? "morning" : (h < 18 ? "afternoon" : "evening");
+    var day = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
+    return "Made for you,\n" + day + " " + part;
+  }
+
+  // Why this card, in the card. A pick that cannot say why it is there reads
+  // as arbitrary, and this is where the four signals become visible.
+  function seedWhy(sectionKey, topic){
+    if(sectionKey === "from_history") return "Because of what you have played";
+    if(sectionKey === "might_like")   return "Next to your taste, not more of it";
+    if(sectionKey === "followers")    return "<b>People you follow</b> played this";
+    return "Playing across FAM now";
+  }
 
   var myFamTopics = {};   // id -> topic, so a tap knows what to generate
 
   function renderMyFamFeed(sections){
     var html = sections.map(function(sec){
-      var body;
-      if(sec.topics.length){
-        body = '<div class="feed-rail">' + sec.topics.map(function(t){
-          myFamTopics[t.id] = t;
-          return '<div class="seed-card" onclick="startBankTopic(\'' + t.id + '\')">'
-            + '<div class="seed-thumb">' + seedThumbSVG(t.icon) + '</div>'
-            + '<div class="seed-card-body">'
-            + '<div class="seed-card-title">' + escapeHtml(t.title) + '</div>'
-            + '<div class="seed-card-sub">' + escapeHtml(t.subtitle) + '</div>'
-            + '</div></div>';
-        }).join("")
-          + '<div class="feed-more" aria-hidden="true">'
-          + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6"/></svg>'
-          + '</div></div>';
-      } else {
+      var title = SECTION_TITLE[sec.key];
+      if(sec.key === "from_history") title = madeForTitle();
+      var heading = '<div class="feed-title">' + escapeHtml(title || sec.title)
+        .replace(/\n/g, "<br>") + '</div>';
+
+      if(!sec.topics.length){
         // Honest rather than padded. A new listener has no history and no
         // co-listeners, and inventing picks to fill the space is the kind of
         // silent fake this project has been bitten by before.
-        body = '<div class="feed-empty">' + escapeHtml(sec.empty_reason) + '</div>';
+        return '<div class="feed-section">' + heading
+          + '<div class="feed-empty">' + escapeHtml(sec.empty_reason) + '</div></div>';
       }
-      return '<div class="feed-section">'
-        + '<div class="section-kicker">' + escapeHtml(sec.title) + '</div>'
-        + '<div class="feed-why">' + (SECTION_WHY[sec.key] || "") + '</div>'
-        + body + '</div>';
+
+      var rail = '<div class="feed-rail">' + sec.topics.map(function(t){
+        myFamTopics[t.id] = t;
+        var tag = (t.tags && t.tags[0]) ? t.tags[0] : "";
+        return '<div class="seed-card" onclick="startBankTopic(\'' + t.id + '\')">'
+          + '<div class="seed-thumb">' + seedThumbSVG(t.icon)
+          + (tag ? '<span class="seed-tag">' + escapeHtml(tag) + '</span>' : '')
+          + '</div>'
+          + '<div class="seed-card-body">'
+          + '<div class="seed-card-title">' + escapeHtml(t.title) + '</div>'
+          + '<div class="seed-why">' + seedWhy(sec.key, t) + '</div>'
+          + '</div></div>';
+      }).join("")
+        + '<div class="feed-more" aria-hidden="true">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6"/></svg>'
+        + '</div></div>';
+
+      return '<div class="feed-section">' + heading + rail + '</div>';
     }).join("");
     document.getElementById("myfamFeed").innerHTML = html;
+  }
+
+  // ---------------- Go Deeper ----------------
+  // Two kinds of unfinished business, in one place: episodes still part-heard,
+  // and the threads finished episodes left open. Both are things the listener
+  // already has a foothold in, which is why they sit above recommendations.
+  //
+  // Resume positions live in localStorage rather than on the server: they are
+  // per-device by nature, worthless to anyone else, and not worth a write on
+  // every tick of playback.
+  var RESUME_KEY = "fam_resume";
+
+  function readResume(){
+    try { return JSON.parse(localStorage.getItem(RESUME_KEY) || "{}"); }
+    catch(e){ return {}; }
+  }
+  function saveResume(map){
+    try { localStorage.setItem(RESUME_KEY, JSON.stringify(map)); } catch(e){}
+  }
+  function noteResume(query, minutes, seconds){
+    if(!query || !minutes) return;
+    var map = readResume();
+    var total = minutes * 60;
+    // Nearly finished is finished; a card offering the last four seconds of
+    // something is clutter, not a way back in.
+    if(seconds < 20 || seconds > total - 30){ delete map[query]; }
+    else { map[query] = { minutes: minutes, at: seconds, saved: Date.now() }; }
+    saveResume(map);
+  }
+
+  function loadGoDeeper(){
+    var el = document.getElementById("goDeeperBlock");
+    if(!el) return;
+    fetch("/api/godeeper?user=" + encodeURIComponent(famUserId()))
+      .then(function(r){ return r.ok ? r.json() : { threads: [] }; })
+      .then(function(data){ renderGoDeeper(data.threads || []); })
+      .catch(function(){ renderGoDeeper([]); });
+  }
+
+  function goDeeperCards(threads){
+    var cards = [];
+    var resume = readResume();
+    Object.keys(resume).forEach(function(query){
+      var r = resume[query];
+      cards.push({
+        kind: "resume", query: query, minutes: r.minutes,
+        title: deriveTitleFromPrompt(query),
+        left: Math.max(0, r.minutes * 60 - r.at),
+        progress: Math.min(1, r.at / (r.minutes * 60)),
+        saved: r.saved || 0
+      });
+    });
+    cards.sort(function(a, b){ return b.saved - a.saved; });
+    threads.forEach(function(t){
+      cards.push({ kind: "thread", query: t.thread, minutes: selectedLengthMinutes,
+                   title: t.title, from: t.from_title });
+    });
+    return cards.slice(0, 4);
+  }
+
+  function renderGoDeeper(threads){
+    var el = document.getElementById("goDeeperBlock");
+    goDeeperCardCache = goDeeperCards(threads);
+    if(!goDeeperCardCache.length){
+      el.innerHTML = '<div class="gd-head"><span class="gd-kicker">Go deeper</span></div>'
+        + '<div class="gd-ask" onclick="openSearchFAM()"><b>+</b> Ask FAM anything</div>';
+      return;
+    }
+    var html = '<div class="gd-head"><span class="gd-kicker">Go deeper</span>'
+      + '<span class="gd-count">' + goDeeperCardCache.length
+      + (goDeeperCardCache.length === 1 ? " thread" : " threads") + '</span></div>';
+    html += '<div class="gd-grid">' + goDeeperCardCache.map(function(c, i){
+      var meta = c.kind === "resume"
+        ? formatTime(c.left) + " left"
+        : c.minutes + " min";
+      return '<div class="gd-card' + (c.kind === "resume" ? " resume" : "")
+        + '" onclick="playGoDeeper(' + i + ')">'
+        + '<div class="gd-card-title">' + escapeHtml(c.title) + '</div>'
+        + '<div class="gd-card-meta">' + escapeHtml(meta) + '</div>'
+        + (c.kind === "resume"
+            ? '<div class="gd-bar"><span style="width:' + Math.round(c.progress * 100) + '%"></span></div>'
+            : '')
+        + '</div>';
+    }).join("") + '</div>';
+    html += '<div class="gd-ask" onclick="openSearchFAM()"><b>+</b> Ask FAM anything</div>';
+    el.innerHTML = html;
+  }
+
+  var goDeeperCardCache = [];
+
+  function playGoDeeper(i){
+    var c = goDeeperCardCache[i];
+    if(!c) return;
+    var key = "gd_" + i + "_" + Date.now();
+    TOPICS[key] = {
+      title: c.title,
+      source: c.kind === "resume" ? "Picking up where you left off" : "Following a thread",
+      caption: "Live captions will appear here as this plays\u2014",
+      prompt: c.query,
+      titleOverridden: true
+    };
+    generate(key);
   }
 
   function loadMyFamFeed(){
@@ -2646,7 +2916,7 @@
     }
     fetch("/api/myfam?user=" + encodeURIComponent(famUserId()))
       .then(function(r){ if(!r.ok) throw new Error("feed unavailable"); return r.json(); })
-      .then(function(data){ renderMyFamFeed(data.sections); })
+      .then(function(data){ renderMyFamFeed(data.sections); loadGoDeeper(); })
       .catch(function(){
         // The feed failing must look like a failure, not like an empty app.
         el.innerHTML = '<div class="feed-empty">Could not load your feed. '
@@ -2679,14 +2949,15 @@
   // server-side when the audio is served; these are the ones only the client
   // knows about, and a failure here is silent by design - it costs one weak
   // ranking signal, never an episode.
-  function recordFamEvent(kind, topicId, text){
+  function recordFamEvent(kind, topicId, text, thread){
     try {
       fetch("/api/event", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           user: famUserId(), kind: kind,
-          topic_id: topicId || "", text: (text || "").slice(0, 300)
+          topic_id: topicId || "", text: (text || "").slice(0, 300),
+          thread: (thread || "").slice(0, 200)
         })
       }).catch(function(){});
     } catch(e){}

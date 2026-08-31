@@ -186,6 +186,14 @@ def test_the_four_sections_are_always_present_and_in_order(store):
     assert [s["key"] for s in feed["sections"]] == [k for k, _ in T.SECTIONS]
 
 
+def test_the_personal_section_comes_before_the_popular_one(store):
+    """Someone opening myFAM should not scroll past the crowd to reach it."""
+    keys = [k for k, _ in T.SECTIONS]
+    assert keys.index("from_history") < keys.index("trending")
+    # Fill order is the opposite on purpose: the constrained sections pick first.
+    assert T.FILL_ORDER.index("from_history") < T.FILL_ORDER.index("trending")
+
+
 # --- the API --------------------------------------------------------------
 
 
@@ -218,7 +226,8 @@ def test_a_broken_event_store_never_breaks_the_feed(client, monkeypatch):
             raise RuntimeError("disk gone")
     monkeypatch.setattr(appmod, "EVENTS", Broken())
     body = client.get("/api/myfam?user=u1").json()
-    assert body["sections"][0]["topics"], "trending should still fall back to the bank"
+    trending = [s for s in body["sections"] if s["key"] == "trending"][0]
+    assert trending["topics"], "trending should still fall back to the bank"
 
 
 def test_the_personal_sections_are_not_starved_by_the_generic_ones(store):
@@ -257,3 +266,54 @@ def test_no_section_offers_back_something_already_played(store):
     feed = T.build_feed(store, "me")
     shown = {t["id"] for s in feed["sections"] for t in s["topics"]}
     assert not (shown & {"golf-evolution", "the-trade", "sleep-science"})
+
+
+# --- Go Deeper: the threads episodes left open ----------------------------
+
+
+def test_a_finished_episode_leaves_its_thread_behind(store):
+    store.record(T.Event("u", "complete", "ai-agents", "", ("tech",),
+                         thread="why chip supply is so concentrated"))
+    threads = store.open_threads("u")
+    assert len(threads) == 1
+    assert threads[0]["thread"] == "why chip supply is so concentrated"
+    assert threads[0]["from_title"] == "Why Everyone Is Talking About AI Agents"
+
+
+def test_a_thread_they_have_already_asked_about_is_closed(store):
+    """It is only a thread while it is still open."""
+    store.record(T.Event("u", "complete", "ai-agents", "", ("tech",),
+                         thread="why chip supply is so concentrated"))
+    store.record(T.Event("u", "search", "", "why chip supply is so concentrated", ()))
+    assert store.open_threads("u") == []
+
+
+def test_only_finished_episodes_leave_threads(store):
+    """Starting an episode is not hearing the ending that opened the thread."""
+    store.record(T.Event("u", "play", "ai-agents", "", ("tech",), thread="a thread"))
+    assert store.open_threads("u") == []
+
+
+def test_the_same_thread_twice_appears_once(store):
+    for _ in range(2):
+        store.record(T.Event("u", "complete", "ai-agents", "", ("tech",), thread="one thread"))
+    assert len(store.open_threads("u")) == 1
+
+
+def test_threads_survive_a_restart(tmp_path):
+    path = str(tmp_path / "e.db")
+    T.EventStore(path).record(
+        T.Event("u", "complete", "ai-agents", "", ("tech",), thread="a lasting thread"))
+    assert T.EventStore(path).open_threads("u")[0]["thread"] == "a lasting thread"
+
+
+def test_the_go_deeper_endpoint_serves_them(client):
+    client.post("/api/event", json={"user": "u1", "kind": "complete",
+                                    "topic_id": "sleep-science",
+                                    "thread": "why sleep debt cannot be repaid"})
+    body = client.get("/api/godeeper?user=u1").json()["threads"]
+    assert [t["thread"] for t in body] == ["why sleep debt cannot be repaid"]
+
+
+def test_go_deeper_is_empty_not_broken_for_a_new_listener(client):
+    assert client.get("/api/godeeper?user=nobody").json()["threads"] == []

@@ -49,16 +49,14 @@ def load_fixtures() -> dict:
     myfam = {
         "personalised": True,
         "sections": [
-            section("trending", "Trending",
-                    ["ai-agents", "fed-next-move", "housing-market", "operator-ceos",
-                     "hollywood-comebacks", "habits-research"]),
-            section("might_like", "We think you might like",
-                    ["attention-economy", "chip-supply", "energy-grid", "food-supply",
-                     "founder-motivation", "hormuz"]),
-            section("followers", "What your followers are listening to",
-                    ["space-race", "sleep-science", "streaming-economics"]),
-            section("from_history", "Based off what you've listened to",
-                    ["nil-arms-race", "stadium-money", "training-load", "transfer-window"]),
+            section(key, title, ids)
+            for (key, title), ids in zip(topics_mod.SECTIONS, [
+                ["chip-supply", "energy-grid", "founder-motivation", "hormuz"],
+                ["attention-economy", "food-supply", "streaming-economics", "election-mechanics"],
+                ["stadium-money", "sleep-science", "space-race", "longevity-claims"],
+                ["ai-agents", "fed-next-move", "housing-market", "operator-ceos",
+                 "hollywood-comebacks", "habits-research"],
+            ])
         ],
     }
 

@@ -284,6 +284,9 @@ class EventRequest(BaseModel):
     kind: str = Field(..., max_length=16)
     topic_id: str = Field("", max_length=64)
     text: str = Field("", max_length=300)
+    #: The thread the finished episode left open, so Go Deeper can offer it
+    #: back later without a second lookup.
+    thread: str = Field("", max_length=200)
 
 
 @app.get("/api/myfam")
@@ -308,9 +311,22 @@ async def record_event(req: EventRequest, request: Request):
     elif req.text:
         tags = topics_mod.tags_for_text(req.text)
     EVENTS.record(
-        topics_mod.Event(req.user, req.kind, req.topic_id, req.text, tags)
+        topics_mod.Event(req.user, req.kind, req.topic_id, req.text, tags,
+                         thread=req.thread)
     )
     return {"ok": True}
+
+
+@app.get("/api/godeeper")
+async def go_deeper(request: Request, user: str = Query("", max_length=64)):
+    """Threads left open by episodes this listener finished.
+
+    Costs nothing: the thread was recorded when the episode ended. This is the
+    payoff for the widening ending - the specific unresolved thing an episode
+    named, waiting where they will see it.
+    """
+    _rate_limit(request)
+    return {"threads": EVENTS.open_threads(user)}
 
 
 @app.get("/api/explore")

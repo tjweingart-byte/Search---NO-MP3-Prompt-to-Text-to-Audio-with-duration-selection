@@ -1515,3 +1515,46 @@ it is the only tab without one.
 
 All five bars are generated from one list in the build edit rather than hand-
 edited in five places; they had already drifted once when playFAM was added.
+
+## 37. myFAM rebuilt: unfinished business before recommendations
+
+**Go Deeper moved to the top of the page**, and it holds two kinds of thing a
+listener already has a foothold in:
+
+*Part-heard episodes.* Resume positions live in `localStorage`, not on the
+server - they are per-device by nature, worthless to anyone else, and not
+worth a write on every tick. Written continuously rather than on pause, so
+closing the tab mid-episode still leaves a way back in. Anything under twenty
+seconds in or within thirty seconds of the end is dropped: a card offering the
+last four seconds of something is clutter, not a way back in.
+
+*Threads finished episodes left open.* This is the payoff for the widening
+ending. The thread now rides along on the completion event (a new `thread`
+column on `events`) rather than being joined back to the cache at read time -
+the cache key depends on settings that may have moved on, and a thread the
+listener was actually offered should not vanish because the model changed.
+A thread they have since searched for is dropped, because it is only a thread
+while it is still open.
+
+**Sections lead with the personal one.** Display order is now from_history,
+might_like, followers, trending - someone opening myFAM is likelier to want
+what was chosen for them than what is popular, and should not scroll past the
+crowd to reach it. Fill order stays the opposite (constrained sections choose
+their topics first), which is why the two orders are separate constants.
+
+**Headings speak rather than label.** "Made for you, Monday evening" instead
+of "Based off what you've listened to". The old mono kickers described the
+machinery; the reason each pick is there moved onto the card itself, where it
+belongs - a recommendation that cannot say why it is there reads as arbitrary.
+
+**One test was asserting by position** (`sections[0]["topics"]`) and broke the
+moment the order changed, even though the behaviour it cared about - trending
+still falling back to the bank when the event store is broken - was intact. It
+now addresses the section by key. Worth noting as a category: a test that
+encodes a presentation decision it does not care about will fail for the wrong
+reason and tempt you to weaken it.
+
+**The preview fixtures now derive their section order and titles from
+`topics.SECTIONS`** instead of hardcoding them, after the preview kept showing
+the old order following this change. A fixture that can disagree with the code
+is worse than no fixture.

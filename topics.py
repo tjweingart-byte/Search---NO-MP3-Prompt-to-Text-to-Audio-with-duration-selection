@@ -203,11 +203,16 @@ BANK_BY_ID = {t.id: t for t in TOPIC_BANK}
 #: trending can fall back to the whole bank and therefore chooses last.
 FILL_ORDER = ("from_history", "followers", "might_like", "trending")
 
+#: Display order: personal first, global last. Someone opening myFAM is more
+#: likely to want what was chosen for them than what is popular, and the page
+#: should not make them scroll past the crowd to reach it. (Fill order is
+#: separate - see FILL_ORDER - because the constrained sections must still
+#: choose their topics first.)
 SECTIONS = (
-    ("trending", "Trending"),
-    ("might_like", "We think you might like"),
-    ("followers", "What your followers are listening to"),
-    ("from_history", "Based off what you've listened to"),
+    ("from_history", "Made for you"),
+    ("might_like", "A little sideways from that"),
+    ("followers", "Your circle is on this"),
+    ("trending", "What FAM can't stop playing"),
 )
 
 #: How much each kind of interaction says about taste. Finishing an episode is
@@ -228,6 +233,11 @@ class Event:
     text: str = ""
     tags: tuple[str, ...] = ()
     at: float = field(default_factory=time.time)
+    #: The thread this episode left open, carried on the event that finished
+    #: it. Recorded here rather than joined back to the cache at read time,
+    #: because the cache key depends on settings that may have moved on and a
+    #: thread the listener was actually offered should not disappear.
+    thread: str = ""
 
 
 class EventStore:
@@ -251,6 +261,10 @@ class EventStore:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS events_user ON events(user_id, at)")
             conn.execute("CREATE INDEX IF NOT EXISTS events_topic ON events(topic_id, at)")
+            try:
+                conn.execute("ALTER TABLE events ADD COLUMN thread TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # already there
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -266,10 +280,10 @@ class EventStore:
             return
         try:
             self._conn().execute(
-                "INSERT INTO events (user_id, kind, topic_id, text, tags, at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO events (user_id, kind, topic_id, text, tags, at, thread)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (event.user_id[:64], event.kind, event.topic_id[:64], event.text[:300],
-                 ",".join(event.tags), event.at),
+                 ",".join(event.tags), event.at, event.thread[:200]),
             )
         except Exception:
             # A feed is a nicety. Losing an event must never break playback.
@@ -278,7 +292,7 @@ class EventStore:
     def for_user(self, user_id: str, limit: int = 400) -> list[Event]:
         try:
             rows = self._conn().execute(
-                "SELECT kind, topic_id, text, tags, at FROM events"
+                "SELECT kind, topic_id, text, tags, at, thread FROM events"
                 " WHERE user_id = ? ORDER BY at DESC LIMIT ?",
                 (user_id, limit),
             ).fetchall()
@@ -286,9 +300,43 @@ class EventStore:
             log.exception("could not read interactions")
             return []
         return [
-            Event(user_id, r[0], r[1], r[2], tuple(t for t in r[3].split(",") if t), r[4])
+            Event(user_id, r[0], r[1], r[2], tuple(t for t in r[3].split(",") if t),
+                  r[4], r[5] or "")
             for r in rows
         ]
+
+    def open_threads(self, user_id: str, limit: int = 8) -> list[dict]:
+        """Threads from episodes this listener finished, newest first.
+
+        The point of the widening ending was to leave one specific thing
+        unresolved. This is where those land: an episode they have already
+        heard, and the question it opened, one tap from being answered.
+
+        A thread they have since asked about is dropped - it is no longer
+        open - which is why this reads the log rather than a stored list.
+        """
+        events = self.for_user(user_id, limit=200)
+        asked = " ".join(e.text.lower() for e in events if e.kind == "search")
+        seen: set[str] = set()
+        out: list[dict] = []
+        for event in events:
+            thread = (event.thread or "").strip()
+            if not thread or event.kind != "complete":
+                continue
+            key = thread.lower()
+            if key in seen or key in asked:
+                continue
+            seen.add(key)
+            out.append({
+                "thread": thread,
+                "title": thread[:1].upper() + thread[1:],
+                "from_title": (BANK_BY_ID[event.topic_id].title
+                               if event.topic_id in BANK_BY_ID else event.text),
+                "at": event.at,
+            })
+            if len(out) >= limit:
+                break
+        return out
 
     def plays_since(self, since: float) -> list[tuple[str, str]]:
         """(user_id, topic_id) for every bank topic played in the window."""
