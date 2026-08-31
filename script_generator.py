@@ -108,6 +108,22 @@ The narrative is how the information arrives, never a wrapper around it. Done \
 right the listener never notices they were being told a story; they just find \
 they did not want to stop listening.
 
+Before any of the craft below, the job:
+**Answer them.** Someone asked because they wanted to know something. They must \
+finish the episode knowing it - well enough to say it back to a friend in their \
+own words. Everything else here is about how that answer arrives, and none of it \
+is worth anything if it does not. A listener who reaches the end still waiting \
+for the answer has been wasted, however well the piece was told.
+
+So: satisfied first, curious second. The curiosity is what makes them want more; \
+the satisfaction is what makes them trust that more is worth having. In that \
+order, never the other way round, and never one at the cost of the other.
+
+Which means the thing you leave open at the end is **never the answer held \
+back**. Withholding is not momentum, it is a bait and switch, and a listener \
+feels it immediately. Close the question they came with completely, then let \
+what you have just told them open a *different* one.
+
 The opening:
 - Start somewhere specific and real. A moment, a person, a number, a thing that \
 happened. Something concrete enough to picture.
@@ -143,10 +159,15 @@ open - the consequence that is still unfolding, the thing this turns out to be \
 part of, what it means for something the listener already cares about. Never \
 summarise, never recap, never wrap up. They should finish inside the subject, \
 not outside it holding a summary of it.
-- **Leave exactly one thread.** Widening is not a mood, it is a specific thing \
-you deliberately did not resolve. Somewhere in the piece, name that thing \
-concretely - a decision not yet taken, a figure that does not add up, a person \
-whose next move decides it, a rule about to be tested - and then let the episode \
+- **Leave exactly one thread, and never the main one.** The question they asked \
+is closed before you open anything. The thread is second-order: something the \
+answer itself raises, that they could not have known to ask when they started. \
+If a listener could hear your last line and think "so you never actually told \
+me", you have withheld rather than widened.
+- **Widening is not a mood, it is a specific thing** you deliberately did not \
+resolve. Somewhere in the piece, name that thing concretely - a decision not \
+yet taken, a figure that does not add up, a person whose next move decides it, \
+a rule about to be tested - and then let the episode \
 end pointed at it, still open. It has to be nameable in a handful of words and \
 big enough to be worth a whole episode of its own.
 - **The thread must already be in the room.** A listener cannot want to know \
@@ -172,7 +193,8 @@ survey is how something reads as generated rather than told.
 listener their coat. If you have to signpost, you have lost them already.
 
 The line you must not cross:
-Every sentence has to earn its place by carrying information. Atmosphere on its \
+The listener leaves knowing what they came to find out. Every sentence has to \
+earn its place by carrying information. Atmosphere on its \
 own is cut. If a listener could ever think "get to the point", you have already \
 failed - the point should be arriving continuously, inside the story, from the \
 first line to the last. Story is the shape of the delivery, never a delay \
@@ -350,17 +372,23 @@ It is currently {now_line()}. Prefer the newest information you can establish.
 You have about {plan.minutes} minute{"s" if plan.minutes != 1 else ""} - roughly
 {budget} words. That is room for {plan.sections[0]}.
 
+Answer them. They asked because they wanted to know something, and by the end
+they must know it well enough to say it back in their own words. That is the
+job; the rest is how it arrives.
+
 Pick a way in. Find the specific thing - the moment, the person, the number,
 the detail - that makes this worth hearing, and start there. Then keep them
 moving: each thing you tell them should make the next thing matter more. By the
 end they should understand it, and should have felt taken somewhere rather than
 briefed.
 
-Leave one thread open. Pick something real that this story touches and does not
-settle - a decision still to be taken, a number that does not add up, someone
-whose next move decides it. Set it up in passing while you are telling the story,
-then end pointed at it, still open. Never a summary of what you just said, never
-a question asked of the listener.
+Then leave one thread open - and not the one they asked about. Close their
+question first, completely. The thread is something the answer itself raised
+and they could not have known to ask about when they started: a decision still
+to be taken, a number that does not add up, someone whose next move decides it.
+Set it up in passing while you are telling the story, then end pointed at it,
+still open. Never a summary of what you just said, never a question asked of
+the listener.
 
 Then, on its own line after the script, write that thread as the follow-up they
 would ask for:

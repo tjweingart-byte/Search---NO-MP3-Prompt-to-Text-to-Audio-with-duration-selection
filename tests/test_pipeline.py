@@ -766,8 +766,33 @@ def test_the_prompt_asks_the_writer_to_speak_from_inside():
 def test_the_brief_asks_for_momentum_and_a_widening_end():
     prompt = build_prompt(plan_episode("a topic", 3))
     assert "make the next thing matter more" in prompt
-    assert "Leave one thread open" in prompt
+    assert "leave one thread open" in prompt
     assert "<<NEXT:" in prompt
+
+
+def test_the_brief_puts_answering_the_question_before_the_craft():
+    """Satisfied first, curious second - and the brief has to say so."""
+    prompt = build_prompt(plan_episode("a topic", 3))
+    assert "Answer them." in prompt
+    assert prompt.index("Answer them.") < prompt.index("leave one thread open")
+    assert "not the one they asked about" in prompt
+
+
+def test_the_prompt_refuses_to_let_the_thread_be_the_withheld_answer():
+    """The failure mode the ending rules could otherwise produce: a tease.
+
+    "Leave something open" and "answer the question" pull against each other,
+    and a model resolving that tension the wrong way withholds the answer and
+    calls it momentum. The prompt has to settle it explicitly.
+    """
+    from script_generator import SYSTEM_PROMPT
+
+    assert "Answer them." in SYSTEM_PROMPT
+    assert "satisfied first, curious second" in SYSTEM_PROMPT.lower()
+    assert "never the answer held" in SYSTEM_PROMPT
+    assert "never the main one" in SYSTEM_PROMPT
+    # The job has to outrank the craft, so it has to come before it.
+    assert SYSTEM_PROMPT.index("Answer them.") < SYSTEM_PROMPT.index("Leave exactly one thread")
 
 
 def test_the_prompt_asks_for_one_named_unresolved_thread():

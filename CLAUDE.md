@@ -66,7 +66,24 @@ by a keystroke pause. That is where to spend it.
 
 ## What makes a FAM episode different
 
-**It is a story, and that is the product.** Not a briefing with storytelling
+**First, it satisfies the thing that brought them.** Someone searched, or tapped
+a tile, or decided to keep listening in dailyFAM — each of those is a want, and
+the episode's first duty is to meet it. They should finish knowing what they came
+to find out, well enough to say it back in their own words. **Satisfied first,
+curious second.** Everything below is about how that answer arrives and is worth
+nothing without it.
+
+That ordering is load-bearing, not a pleasantry: the curiosity is what makes
+someone want another episode, but the satisfaction is what makes them believe
+another episode is worth having. Get them the wrong way round and the second one
+never gets tapped.
+
+The failure this rules out, which the ending rules could otherwise produce:
+**the thread must never be the answer withheld.** Withholding is not momentum,
+it is a bait and switch, and a listener spots it instantly. Close the question
+they came with, completely — then let the answer open a *different* one.
+
+**And it is a story; that is the product.** Not a briefing with storytelling
 added — the narrative is how the information arrives. A listener asking about a
 simple concept or a routine update should find themselves pulled along without
 noticing why.
@@ -88,12 +105,13 @@ mechanics carry it:
   coat.
 * **Endings widen, they do not conclude.** The last line points at what this is
   part of or what happens next. They should finish *inside* the subject.
-* **One named thread, left open.** Widening is not a mood, it is a specific
-  unresolved thing - a decision not yet taken, a figure that does not add up -
+* **One named thread, left open — never the main one.** Widening is not a mood,
+  it is a specific unresolved thing - a decision not yet taken, a figure that does not add up -
   set up earlier in the episode and still standing at the end. It has to already
   be in the room: nobody wants to know more about something introduced in the
-  final sentence. Stated as a fact still in motion, never as a question asked of
-  the listener.
+  final sentence. It is second-order: something the answer itself raised, that
+  they could not have known to ask when they started. Stated as a fact still in
+  motion, never as a question asked of the listener.
 * **Speak from inside.** No orienting, no justifying the topic. Begin as though
   continuing a conversation they were already in.
 

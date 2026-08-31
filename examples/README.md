@@ -38,10 +38,14 @@ and the second-last defender at the moment a teammate plays it forward...
   aren't all the same form, and one example teaches one form.
 - **Include a short one and a long one.** How a briefing grows from one minute to
   five is exactly where padding creeps in; showing it is better than describing it.
+- **Answer the question the example asks.** This is the one that matters most.
+  Whoever typed that query wanted to know something; by the last line they
+  should know it. An example that is beautifully told and leaves you unsatisfied
+  teaches exactly the wrong lesson.
 - **End the way you want it to end.** Endings get copied hardest, and this is
-  the single most valuable thing an example can teach. Don't conclude - widen.
-  Leave one specific thing unresolved that you set up earlier in the piece, and
-  stop pointed at it. No summary, no "and that's the story of", no question
+  the next most valuable thing an example can teach. Don't conclude - widen.
+  Leave one specific thing unresolved that you set up earlier in the piece — but
+  never the thing they asked about — and stop pointed at it. No summary, no "and that's the story of", no question
   asked of the listener.
 - **Write it as if they're already here.** No orienting, no explaining why the
   topic is worth their time. Begin mid-conversation.

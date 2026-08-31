@@ -1203,3 +1203,53 @@ thing was set up earlier in the piece or produced out of nowhere at the end.
 
 The cache key version is bumped to 2 so nothing written under the old prompt is
 served under the new one.
+
+## 31. Satisfied first, curious second
+
+**The risk that section 30 introduced.** "Leave one thread open" and "answer the
+question" pull against each other, and nothing in the prompt said which wins. A
+model resolving that tension the wrong way withholds the answer and calls it
+momentum — it ends on the interesting unresolved thing by simply never closing
+the question the listener actually asked. That reads as a tease, and a listener
+spots it in one episode. It is also the most likely way for a set of ending
+rules that elaborate to fail: they are the most specific, most recently stated
+instructions in the prompt, so they attract weight the plain job does not.
+
+**The ordering, stated as a rule.** Someone searched, tapped a tile, or decided
+to keep listening — each is a want, and meeting it is the first duty. They must
+finish knowing what they came to find out, well enough to say it back in their
+own words. *Then* the curiosity. The order is load-bearing rather than a
+pleasantry: curiosity is what makes someone want another episode, but
+satisfaction is what makes them believe another one is worth having. Reversed,
+the second episode never gets tapped, which also means the Go Deeper chip and
+the browse surfaces are built on nothing.
+
+**The fix, in three places.**
+
+- A governing paragraph now sits directly under the opening of the system
+  prompt, *above* all the craft: answer them, satisfied first and curious
+  second, and the thing left open is never the answer held back.
+- The thread rule is restated as "leave exactly one thread, **and never the main
+  one**". The thread is second-order — something the answer itself raised, that
+  the listener could not have known to ask about when they started. The test
+  given to the model is concrete: if someone could hear the last line and think
+  *"so you never actually told me"*, it withheld rather than widened.
+- The per-episode brief — the thing the model actually acts on, and the more
+  influential of the two — opens with "Answer them" and only then asks for the
+  thread, explicitly "not the one they asked about. Close their question first,
+  completely."
+
+Tests assert both the wording and its *position*: the job has to appear before
+the craft in the system prompt and before the thread instruction in the brief,
+because an instruction's weight depends on where it sits.
+
+**Note what this does not change.** The rule against opening with the conclusion
+still stands — answering fully is not the same as front-loading. The answer
+arrives across the piece and is complete by the end; it is neither withheld nor
+delivered as a headline in sentence one.
+
+Still unverified against real output, like everything else about the writing.
+The check when reading a script from `write.py` is now two questions in order:
+*could I say the answer back in my own words?*, and only then *can I name the
+thing I want next?* A yes to the second and a no to the first is the failure
+this section exists to catch.
