@@ -1,0 +1,23 @@
+# One-command deploy: `render blueprint launch` (or point Render at this repo
+# and it reads this file). Chosen because it deploys from a Dockerfile, gives
+# a persistent disk on the paid tier, and redeploys on every push - which is
+# the part that matters for a fast loop.
+services:
+  - type: web
+    name: fam
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # free tier sleeps; starter stays warm
+    autoDeploy: true       # every push to the branch redeploys
+    healthCheckPath: /api/health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false        # set once in the dashboard; never in the repo
+      - key: DEMO_MODE
+        value: "0"
+      - key: MODEL
+        value: claude-sonnet-5
+    disk:
+      name: fam-data
+      mountPath: /data     # matches the Dockerfile's CACHE_PATH etc.
+      sizeGB: 1

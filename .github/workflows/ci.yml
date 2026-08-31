@@ -1,0 +1,65 @@
+name: CI
+
+# Every push and PR. The point is that a broken build is caught here rather
+# than on a phone: the loop is only fast if the thing you open already works.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      # No API key and no speech engine: the suite is designed to run without
+      # either, and a test that needs them is a test that cannot run here.
+      - name: Tests
+        run: python -m pytest tests/ -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The interface is one large HTML file with inline script. A syntax
+      # error in it is invisible to pytest and fatal on a phone.
+      - name: Check the interface parses
+        run: python tools/check_js.py
+
+      - name: Build the phone preview
+        run: python preview/build_preview.py
+
+      # Drives the built preview in a real browser with no server at all:
+      # every tab, and audio actually advancing. This is the check that would
+      # have caught the reel bugs.
+      - name: Smoke test the preview
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+          python tools/smoke_preview.py
+
+      - name: Keep the preview build
+        uses: actions/upload-artifact@v4
+        with:
+          name: fam-preview
+          path: |
+            preview/fam-preview.html
+            preview/fam-artifact.html
+          retention-days: 30

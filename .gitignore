@@ -10,3 +10,11 @@ venv/
 voices/
 *.onnx
 *.onnx.json
+
+# Runtime state, not source. myfam.db holds listener interaction history and
+# was tracked by accident - it churns on every run and should never be shared.
+*.db
+*.db-wal
+*.db-shm
+preview/fam-preview.html
+preview/fam-artifact.html

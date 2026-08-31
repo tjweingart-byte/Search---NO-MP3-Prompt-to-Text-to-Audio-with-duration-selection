@@ -235,6 +235,26 @@ another rule.
 - **How much to prefetch?** Every speculative script costs money; every one not
   fetched costs a wait.
 
+## How to ship a change (standing instruction)
+
+The loop matters as much as the code. Every change ends the same way, without
+being asked:
+
+1. `./dev.sh check` — tests, the interface-parses check, the preview build and
+   its browser smoke test. All of it, every time.
+2. Rebuild the phone preview and **republish it to the same artifact URL** so
+   the link never changes. Publishing to the same file path in a conversation
+   updates that artifact in place; from a new conversation, pass the existing
+   URL as `url` (find it with `action: "list"`) rather than creating a second
+   one.
+3. Reply with a short summary of what changed and the preview URL. Not a zip,
+   not a wall of files.
+4. If something genuinely cannot be automated, say the exact command to run.
+
+`DEVELOPMENT.md` documents the whole loop. The preview is the interface running
+on fixtures - good for layout, flow and interaction on a real phone, useless
+for writing quality or time-to-first-audio, which need the server.
+
 ## Working notes
 
 - `PROBLEMS.md` is the engineering log: every problem hit, its cause, its fix,

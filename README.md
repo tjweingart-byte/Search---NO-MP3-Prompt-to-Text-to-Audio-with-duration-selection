@@ -12,6 +12,14 @@ Written by Claude (with live web search), read aloud straight off the script.
 **No MP3, no audio file, no encoder** — the samples go from the speech engine to
 your speakers over a single streaming HTTP response.
 
+## Quick start
+
+```sh
+./dev.sh          # tests, checks, phone preview, then serve with a LAN URL
+```
+
+See `DEVELOPMENT.md` for the preview build, CI and deployment.
+
 ## Just want to check the audio approach works?
 
 Run it with **no API key at all**. The server starts in demo mode: a built-in
