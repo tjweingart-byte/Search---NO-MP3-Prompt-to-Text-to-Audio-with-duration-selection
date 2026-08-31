@@ -916,3 +916,52 @@ def test_the_marker_is_never_spoken_even_when_it_arrives_in_pieces():
     for sentence in spoken:
         assert "<" not in sentence and "NEXT" not in sentence, sentence
     assert " ".join(spoken) == "She filed the appeal on Tuesday. The clerk has not listed it."
+
+
+def test_the_prompt_asks_for_the_angle_before_the_writing():
+    """What actually produced a good script: a correction, not a summary.
+
+    The strongest episodes come from finding the thing the listener has
+    slightly wrong and going under the stock answer. Those two moves are
+    upstream of every craft rule below them, so they are stated before the
+    opening rules rather than among them.
+    """
+    from script_generator import SYSTEM_PROMPT
+
+    assert "Find what they have slightly wrong" in SYSTEM_PROMPT
+    assert "Go under the obvious answer" in SYSTEM_PROMPT
+    assert SYSTEM_PROMPT.index("Go under the obvious") < SYSTEM_PROMPT.index("The opening:")
+
+
+def test_the_prompt_handles_questions_about_the_listeners_own_life():
+    """"How should I think in the morning" is not a briefing about people."""
+    from script_generator import SYSTEM_PROMPT
+
+    assert 'Say "you" when the question is theirs' in SYSTEM_PROMPT
+    assert "leave them something usable" in SYSTEM_PROMPT
+
+
+def test_the_ending_rules_are_stated_once_each():
+    """The dedup pass: each ending rule appears in one place, not three."""
+    from script_generator import SYSTEM_PROMPT
+
+    # "Widen" was previously explained in three separate bullets across two
+    # sections. One section, one statement each.
+    assert SYSTEM_PROMPT.count("Do not end. Widen") == 1
+    assert SYSTEM_PROMPT.count("Never build an exit") == 1
+    assert SYSTEM_PROMPT.count("Leave exactly one thread") == 1
+
+
+def test_the_prompt_stays_lean():
+    """A guard rail, not a target - it fails loudly if the prompt creeps back.
+
+    Every token here is paid on every episode. The 2,025-token version was
+    reached by four rounds of addition with no pass for duplication; this
+    catches the next four.
+    """
+    from script_generator import SYSTEM_PROMPT
+
+    assert len(SYSTEM_PROMPT) < 7600, (
+        f"system prompt is {len(SYSTEM_PROMPT)} chars (~{len(SYSTEM_PROMPT)//4} "
+        "tokens); dedup before adding more, and prefer an example over a rule"
+    )
