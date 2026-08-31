@@ -195,7 +195,18 @@
   .feed-empty{ padding:14px 13px; border:1px dashed var(--border-strong); border-radius:12px;
     font-size:10.5px; line-height:1.45; color:var(--text-muted); background:transparent; }
   .feed-skeleton{ height:118px; border-radius:13px; background:var(--surface);
-    border:1px solid var(--border); opacity:0.55; }
+    border:1px solid var(--border); opacity:0.55; flex:0 0 150px; }
+  /* One rail per category, scrolled left and right. Each rail owns its own
+     horizontal overflow so the page itself never scrolls sideways. */
+  .feed-rail{ display:flex; gap:11px; overflow-x:auto; overflow-y:hidden;
+    scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch;
+    padding:2px 14px 4px 0; margin-right:-14px; scrollbar-width:none; }
+  .feed-rail::-webkit-scrollbar{ display:none; }
+  .feed-rail .seed-card{ flex:0 0 150px; width:150px; scroll-snap-align:start; }
+  .feed-rail .seed-thumb{ height:96px; }
+  /* A rail gives no hint that it moves until you touch it. This does. */
+  .feed-more{ flex:0 0 44px; align-self:stretch; display:flex; align-items:center;
+    justify-content:center; color:var(--text-muted); opacity:0.5; }
 
   .grid4{ padding:14px 18px 0; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   .tile-big{ aspect-ratio:1/1; border-radius:18px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid var(--border); cursor:pointer; }
@@ -2248,7 +2259,7 @@
     var html = sections.map(function(sec){
       var body;
       if(sec.topics.length){
-        body = '<div class="seeds-grid">' + sec.topics.map(function(t){
+        body = '<div class="feed-rail">' + sec.topics.map(function(t){
           myFamTopics[t.id] = t;
           return '<div class="seed-card" onclick="startBankTopic(\'' + t.id + '\')">'
             + '<div class="seed-thumb">' + seedThumbSVG(t.icon) + '</div>'
@@ -2256,7 +2267,10 @@
             + '<div class="seed-card-title">' + escapeHtml(t.title) + '</div>'
             + '<div class="seed-card-sub">' + escapeHtml(t.subtitle) + '</div>'
             + '</div></div>';
-        }).join("") + '</div>';
+        }).join("")
+          + '<div class="feed-more" aria-hidden="true">'
+          + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6"/></svg>'
+          + '</div></div>';
       } else {
         // Honest rather than padded. A new listener has no history and no
         // co-listeners, and inventing picks to fill the space is the kind of
@@ -2276,8 +2290,8 @@
     if(!el) return;
     if(!el.innerHTML){
       el.innerHTML = '<div class="feed-section"><div class="section-kicker">Loading</div>'
-        + '<div class="seeds-grid"><div class="feed-skeleton"></div>'
-        + '<div class="feed-skeleton"></div></div></div>';
+        + '<div class="feed-rail"><div class="feed-skeleton"></div>'
+        + '<div class="feed-skeleton"></div><div class="feed-skeleton"></div></div></div>';
     }
     fetch("/api/myfam?user=" + encodeURIComponent(famUserId()))
       .then(function(r){ if(!r.ok) throw new Error("feed unavailable"); return r.json(); })

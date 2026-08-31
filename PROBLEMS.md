@@ -1329,3 +1329,11 @@ than random picks - random would defeat the shared script cache and move tiles
 under the listener between visits - but until people are actually playing
 things, "trending" means "the front of the bank" and only the ordering is
 honest.
+
+**Interface: rails, not grids.** Each category is one horizontally scrolling
+row. Four two-column grids stacked into a very long page - the fourth section
+sat three screens down and would effectively never be seen, which defeats the
+point of having four different signals. Each rail owns its own horizontal
+overflow so the page itself never scrolls sideways (asserted in a real
+browser), and a chevron closes each rail because a rail gives no hint that it
+moves until you touch it.
