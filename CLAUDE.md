@@ -40,6 +40,22 @@ scripts; it stores scripts, not audio, for exactly this reason.
 Corollary: **the cold open is a workaround for on-demand latency.** Do not
 extend it to the browse surfaces. Prefetch there instead.
 
+## The problem that matters most right now
+
+**The scripts are not good enough.** Not the voice - the writing. That is the
+product, and it had received almost no attention next to the plumbing.
+
+The prompt was the cause. It told the model that hitting a word count was "the
+most important requirement", asked for "a one-line hook (about 146 words)", and
+imposed the same five beats on every topic - so for a golf recap it had to
+invent something to fill "the main debate or open question". Padding and
+invention were being requested. Both prompts have been rewritten around what
+makes a briefing worth hearing; that rewrite is untested against real output.
+
+`python write.py "<query>" --minutes 3` prints a script in seconds without
+generating audio. That is the loop for improving this, and it is a judgement
+call rather than an engineering one.
+
 ## Open problems, in the order they hurt
 
 1. ~~**Voice quality**~~ — *addressed, needs verifying on a real machine.* Piper
@@ -76,8 +92,15 @@ extend it to the browse surfaces. Prefetch there instead.
   and is played as it arrives. This is the core of the product. Compression
   (Opus over a stream) is compatible with it and is the right answer at scale;
   writing a *file* is not.
-- **Duration is a contract.** The selected length must be honoured to ~1s. Three
-  mechanisms hold it: word budget, per-sentence pacing, and trim/top-up.
+- **Duration is a ceiling, not a quota.** *(Revised.)* The selected length still
+  caps the episode and over-runs are trimmed, but a script that runs out of
+  substance now ends early instead of being padded. Enforcing the number in both
+  directions is what produced filler: it made the model pad. `ALLOW_TOPUPS=1`
+  restores the old behaviour.
+- **No filler, ever.** The cold open is off (`ENABLE_COLD_OPEN=0`). It was
+  prompted to state no facts, which made it worthless by construction, and
+  covering a long research wait meant 15-30 seconds of it. Nothing plays until
+  the real briefing does; the interface shows an honest loading state.
 - **Failures must be visible.** Silent success (empty audio, a placeholder tone,
   demo mode mistaken for live) has caused more lost time on this project than
   any real bug. Every fallback must announce itself.

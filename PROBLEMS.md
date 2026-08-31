@@ -850,3 +850,62 @@ Three properties make that safe to run automatically on every launch:
 
 The result is the workflow that was asked for: unzip, install requirements, run.
 No voice step at all after the first time.
+
+
+---
+
+## 23. The opener was filler, and the scripts were worse
+
+Reported bluntly and correctly: the first thirty seconds were "I'm telling you
+what I'm going to tell you about", and the briefings themselves were "poor,
+sometimes inaccurate, and not interesting to listen to".
+
+### The opener
+
+It was filler *by construction*. Its prompt said: "State NO facts, figures,
+dates, names, results or opinions... Frame the question; never answer it." Given
+that instruction there was no good version of it - and §21, which made it longer
+so it could cover slower research, made the experience worse rather than better.
+It is now off by default. Nothing plays until the real briefing does.
+
+A concrete bug was also found while investigating: when an opener refill fails,
+the pipeline fired up to twelve rapid retries and then went silent - one
+sentence, then nothing, which is exactly what was reported. The burst may have
+been causing the failures itself by tripping a rate limit.
+
+### The scripts
+
+The real problem, and the one that had gone unexamined while the plumbing got
+all the attention. Three lines of the brief were doing the damage:
+
+* **"Length contract - this is the most important requirement."** The model was
+  told, in as many words, that hitting a word count mattered more than being
+  worth hearing. So it padded.
+* **"a one-line hook (about 146 words)."** Incoherent: an instruction to inflate
+  a single line into a paragraph.
+* **A fixed five-beat template** applied to every topic. For a golf recap, "the
+  main debate or open question" is a section with nothing in it, so the model
+  invented something. That is where inaccuracy came from - not a hallucinating
+  model, but a prompt demanding content that did not exist.
+
+Both prompts are rewritten. The system prompt now describes what makes a
+briefing good - open on the most concrete thing you know, prefer one exact
+detail to three general statements, cut anything the listener could have
+guessed, let the material choose the shape, never fill a gap with something
+plausible. The brief gives a length as "the listener's time, not a quota", with
+an explicit instruction to finish early rather than pad.
+
+### The tension this exposes
+
+**Duration control and content quality were fighting each other.** Enforcing a
+word count in both directions guarantees padding whenever a topic has less to
+say than the slider asks for. The length is now a ceiling: over-runs are still
+trimmed, but a short script ends rather than being topped up (`ALLOW_TOPUPS=1`
+restores the old behaviour). A three-minute briefing worth hearing beats a
+five-minute one stretched to fill the slider.
+
+### Still unverified
+
+The rewrite cannot be judged from here - it needs reading against real queries,
+and the judgement is editorial rather than technical. `write.py` prints a script
+in seconds without generating audio, which is the loop for improving it.

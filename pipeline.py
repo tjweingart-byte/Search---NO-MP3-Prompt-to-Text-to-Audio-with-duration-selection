@@ -497,7 +497,8 @@ class PodcastPipeline:
         # script: a top-up request is small, cheap and arrives while the
         # listener is still hearing the material already generated.
         while (
-            not stats.truncated
+            settings.allow_topups
+            and not stats.truncated
             and pace.remaining_seconds > TOPUP_THRESHOLD
             and stats.topups < MAX_TOPUPS
         ):

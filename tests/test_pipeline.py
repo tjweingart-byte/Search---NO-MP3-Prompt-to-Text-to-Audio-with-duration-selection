@@ -18,6 +18,20 @@ from config import settings  # noqa: E402
 from pipeline import GenerationStats, PodcastPipeline  # noqa: E402
 from script_generator import build_prompt, clean_for_speech, now_line, plan_episode  # noqa: E402
 from tts import DebugEngine  # noqa: E402
+
+
+@pytest.fixture
+def with_opener(monkeypatch):
+    """The opener is opt-in now; these tests exercise that path deliberately."""
+    import dataclasses
+
+    import pipeline as pipeline_module
+    import script_generator as sg
+
+    patched = dataclasses.replace(settings, enable_cold_open=True, allow_topups=True)
+    monkeypatch.setattr(pipeline_module, "settings", patched)
+    monkeypatch.setattr(sg, "settings", patched)
+    return patched
 from cache import (  # noqa: E402
     MemoryScriptCache,
     SqliteScriptCache,
@@ -119,11 +133,10 @@ def test_audio_lands_on_the_requested_duration(minutes):
     assert stats.words > 0 and stats.sentences > 0
 
 
-@pytest.mark.parametrize("ratio", [0.7, 1.3])
-def test_a_short_or_long_script_still_lands_on_time(ratio):
-    """The pacing controller must absorb a model that misses the budget."""
+def test_a_long_script_is_trimmed_to_the_selected_length():
+    """Over-running is still cut: the slider is a ceiling on the listener's time."""
     plan = plan_episode("a question", 5)
-    pipeline = PodcastPipeline(generator=FakeGenerator(ratio), engine=DebugEngine(), cache=None)
+    pipeline = PodcastPipeline(generator=FakeGenerator(1.3), engine=DebugEngine(), cache=None)
     stats = GenerationStats()
 
     async def run():
@@ -132,10 +145,27 @@ def test_a_short_or_long_script_still_lands_on_time(ratio):
 
     asyncio.run(run())
     assert abs(stats.audio_seconds - plan.target_seconds) <= 3.0
-    if ratio < 1:
-        assert stats.topups >= 1, "a short script should have been topped up"
-    else:
-        assert stats.truncated, "a long script should have been trimmed"
+    assert stats.truncated, "a long script should have been trimmed"
+
+
+def test_a_short_script_ends_early_rather_than_being_padded(with_opener):
+    """Deliberate change: the length is a ceiling, not a quota.
+
+    Padding a script that has run out of substance produces exactly the filler
+    the opener was removed for. With top-ups enabled the old behaviour is still
+    available, and still lands on the clock.
+    """
+    plan = plan_episode("a question", 5)
+    pipeline = PodcastPipeline(generator=FakeGenerator(0.7), engine=DebugEngine(), cache=None)
+    stats = GenerationStats()
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    assert stats.topups >= 1, "with top-ups on, a short script should be extended"
+    assert abs(stats.audio_seconds - plan.target_seconds) <= 3.0
 
 
 def test_wav_stream_starts_with_exactly_one_header():
@@ -371,7 +401,7 @@ def _episode(delay, minutes=2):
     return stats, opener_spoken
 
 
-def test_opener_grows_to_cover_slow_research():
+def test_opener_grows_to_cover_slow_research(with_opener):
     """The listener must never run out of audio while the script is written."""
     _, quick = _episode(0.0)
     _, slow = _episode(3.0)
@@ -379,19 +409,19 @@ def test_opener_grows_to_cover_slow_research():
     assert len(slow) > 1, "one sentence cannot cover a multi-second wait"
 
 
-def test_opener_is_not_wasted_when_research_is_fast():
+def test_opener_is_not_wasted_when_research_is_fast(with_opener):
     _, quick = _episode(0.0)
     assert len(quick) <= 2, "fast research should cut over almost immediately"
     assert len(quick) >= 1, "something should still open the episode"
 
 
 @pytest.mark.parametrize("delay", [0.0, 1.0, 3.0])
-def test_duration_holds_whatever_the_research_latency(delay):
+def test_duration_holds_whatever_the_research_latency(delay, with_opener):
     stats, _ = _episode(delay)
     assert abs(stats.audio_seconds - 120) <= 3.0
 
 
-def test_no_opener_is_spoken_when_the_script_fails():
+def test_no_opener_is_spoken_when_the_script_fails(with_opener):
     """Never introduce an episode that is not coming."""
 
     class Failing(SlowResearchGenerator):
@@ -448,7 +478,7 @@ class ShortOpenerGenerator(SlowResearchGenerator):
         yield "Only one framing sentence."
 
 
-def test_the_opener_is_extended_rather_than_running_into_silence():
+def test_the_opener_is_extended_rather_than_running_into_silence(with_opener):
     """The reported bug: opener ends, script is not ready, listener hears nothing."""
     plan = plan_episode("a topic", 3)
     stats = GenerationStats()
@@ -510,7 +540,7 @@ def _run_with_slow_body(delay, minutes=3):
 
 
 @pytest.mark.parametrize("delay", [0.5, 2.0])
-def test_the_stream_never_starves_while_the_script_is_written(delay):
+def test_the_stream_never_starves_while_the_script_is_written(delay, with_opener):
     """Audio produced must stay ahead of the wall clock the whole way."""
     stats, _ = _run_with_slow_body(delay)
     assert not stats.starved, (
@@ -519,13 +549,13 @@ def test_the_stream_never_starves_while_the_script_is_written(delay):
     assert stats.min_headroom > 0
 
 
-def test_the_opener_is_topped_up_when_one_batch_is_not_enough():
+def test_the_opener_is_topped_up_when_one_batch_is_not_enough(with_opener):
     """A single short opener cannot cover a slow script, so more is fetched."""
     stats, generator = _run_with_slow_body(2.0)
     assert generator.opener_calls > 1, "the opener should have been refilled"
 
 
-def test_a_fast_script_wastes_no_preamble():
+def test_a_fast_script_wastes_no_preamble(with_opener):
     """The opener is paced to the listener, so a quick script uses almost none."""
     stats, generator = _run_with_slow_body(0.0)
     assert generator.opener_calls == 1, "no top-up should be needed"
@@ -533,6 +563,76 @@ def test_a_fast_script_wastes_no_preamble():
     assert len(openers) <= 2, f"spoke {len(openers)} opener sentences for a fast script"
 
 
-def test_duration_still_lands_despite_a_long_opener():
+def test_duration_still_lands_despite_a_long_opener(with_opener):
     stats, _ = _run_with_slow_body(2.0)
     assert abs(stats.audio_seconds - 180) <= 4.0
+
+
+# --------------------------------------------------------------------------
+# The default: no filler
+#
+# The opener was prompted to state no facts, which made it filler by
+# construction; covering a long research wait meant 15-30 seconds of it. And
+# padding a short script back to length reintroduces the same problem from the
+# other end. Both are now off by default.
+# --------------------------------------------------------------------------
+
+
+def test_no_opener_is_spoken_by_default():
+    """Nothing plays until the real briefing does."""
+    assert settings.enable_cold_open is False
+
+    plan = plan_episode("a topic", 2)
+    stats = GenerationStats()
+    generator = ShortOpenerSlowBody(0.2)
+    pipeline = PodcastPipeline(generator=generator, engine=DebugEngine(), cache=None)
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    assert generator.opener_calls == 0, "the opener must not be called at all"
+    assert not any(s.startswith("One short framing") for s in stats.script)
+    assert stats.cold_open is False
+
+
+def test_a_short_script_is_not_padded_back_to_length():
+    """A briefing that runs out of substance should end, not be stretched."""
+    assert settings.allow_topups is False
+
+    class BriefGenerator:
+        async def stream_sentences(self, plan):
+            for i in range(6):
+                yield f"A genuinely substantive sentence number {i}."
+
+        async def top_up(self, plan, spoken_so_far, words_needed):
+            raise AssertionError("top-up must not run when padding is disabled")
+            yield ""  # pragma: no cover
+
+    plan = plan_episode("a topic", 5)
+    stats = GenerationStats()
+    pipeline = PodcastPipeline(generator=BriefGenerator(), engine=DebugEngine(), cache=None)
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    assert stats.topups == 0
+    assert stats.audio_seconds < 300, "the episode should end early rather than pad"
+
+
+def test_the_brief_does_not_demand_a_word_count_above_all_else():
+    """The old prompt said the length contract was the most important thing."""
+    prompt = build_prompt(plan_episode("anything", 5))
+    assert "most important requirement" not in prompt
+    assert "not a quota" in prompt
+    assert "finish early" in prompt
+
+
+def test_the_brief_no_longer_imposes_a_section_template():
+    """Fixed beats forced the model to invent content for sections it had none for."""
+    prompt = build_prompt(plan_episode("recap of a golf tournament", 5))
+    for beat in ("one-line hook", "the essential background", "what to watch next"):
+        assert beat not in prompt, f"the {beat!r} template beat is still being imposed"

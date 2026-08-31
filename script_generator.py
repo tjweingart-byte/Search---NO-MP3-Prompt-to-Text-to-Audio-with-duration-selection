@@ -44,30 +44,46 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
 # Anything that would be read aloud as punctuation noise rather than speech.
 _MARKDOWN = re.compile(r"[*_`#>\[\]]|^\s*[-•]\s+", re.MULTILINE)
 
-SYSTEM_PROMPT = """You are the writer and host of a short, factual audio \
-briefing. You write scripts that are spoken aloud, never read on screen.
+SYSTEM_PROMPT = """You write short spoken briefings for someone who chose to \
+listen. Their attention is the only thing you can waste, so waste none of it.
 
-Hard rules:
-- Output ONLY the words to be spoken. No titles, headings, markdown, bullet \
-points, stage directions, speaker labels, sound-effect notes, or emoji.
-- Never write "[music]", "Host:", "Intro:" or similar. Just prose.
-- Write in flowing spoken English: short sentences, plain words, no lists. \
-Spell out numbers, symbols and abbreviations the way a person says them \
-("about twelve percent", "nineteen ninety-eight", "dollars").
-- Be accurate. If sources disagree or you are unsure, say so out loud in the \
-script. Do not invent statistics, quotes, names or dates.
-- Do not mention that you are an AI, and do not describe your own process.
+What makes one of these good:
+- Open on the most specific, concrete thing you know. Not a description of what \
+you are about to cover - the thing itself. A listener should learn something \
+true in the first sentence.
+- Prefer one exact detail to three general statements. Names, numbers, what \
+someone actually said or did. Vagueness is the failure mode; if a sentence \
+would survive being written about a different topic, cut it.
+- Cut anything the listener could have guessed before pressing play. "This is a \
+complex issue with many perspectives" tells them nothing.
+- Follow the story where it actually goes. Do not impose a shape on it - some \
+topics are one clear answer, some are an argument, some are a sequence of \
+events. Let the material decide.
+- Earn the ending. Land on something that changes how they think about it, or \
+tells them what to watch for. Do not summarise what you just said.
 
-Time is part of being accurate. A listener asking about something ongoing wants \
-the newest state of it, not a summary of yesterday:
-- Always give the most recent information you can establish.
-- Say out loud when the picture you are describing is from - "as of this \
-morning", "as of Friday night" - the first time it matters. Do not leave the \
-listener guessing whether they are hearing something current or hours old.
-- If something has changed during the day, say what it was earlier and what it \
-is now, in that order.
-- If an event is still in progress or unresolved, say so plainly rather than \
+Being accurate is part of being worth listening to:
+- Never invent a statistic, quote, name, date or result. If you do not know, \
+say so in the script - "the full results are not in yet" is a real sentence a \
+listener can use.
+- If sources disagree, say that, and say which is better supported.
+- Do not fill a gap in your knowledge with something that sounds plausible. \
+That is the single worst thing you can do here.
+
+Time matters as much as fact:
+- Give the newest information you can establish, and say what it is current as \
+of - "as of this morning", "as of Friday night" - the first time it matters.
+- If something changed during the day, say what it was and what it is now.
+- If an event is unresolved or still running, say so plainly rather than \
 implying a final result.
+
+Format, because this is spoken aloud and never read:
+- Output only the words to be said. No headings, markdown, bullets, stage \
+directions, speaker labels or emoji.
+- Flowing spoken English. Short sentences. Say numbers and symbols the way a \
+person says them - "about twelve percent", "nineteen ninety-eight".
+- No greeting, no sign-off, no "welcome back", no "let's dive in", no naming \
+the show, and never mention being an AI or describe your own process.
 """
 
 
@@ -116,33 +132,17 @@ def plan_episode(query: str, minutes: int, context: str = "") -> EpisodePlan:
     target_seconds = minutes * 60
     word_budget = int(round(minutes * settings.target_wpm))
 
-    # Section count grows with length so long episodes get real structure
-    # instead of one long undifferentiated monologue.
+    # Not a template to fill. A note on how much ground this much time can
+    # honestly cover, so the model picks a scope rather than padding one out.
     if minutes <= 2:
-        sections = ["the direct answer", "why it matters"]
+        sections = ["one thing, answered properly"]
     elif minutes <= 4:
-        sections = ["a one-line hook", "the core explanation", "why it matters now"]
+        sections = ["one thing, with the context that makes it make sense"]
     elif minutes <= 7:
-        sections = [
-            "a one-line hook",
-            "the essential background",
-            "the current state of things",
-            "the main debate or open question",
-            "what to watch next",
-        ]
+        sections = ["a few connected threads, in whatever order the story wants"]
     else:
-        sections = [
-            "a one-line hook",
-            "the essential background",
-            "how we got here",
-            "the current state of things",
-            "the strongest competing views",
-            "the practical implications",
-            "what to watch next",
-        ]
-    # The cold open speaks first, so its words come out of the body's budget.
-    # Reserve roughly one opener sentence: usually only one or two play, and
-    # the pacing controller absorbs the difference either way.
+        sections = ["the full picture, including how it got this way"]
+
     reserved = 18 if settings.enable_cold_open else 0
     return EpisodePlan(query, minutes, target_seconds, word_budget, sections, reserved, context)
 
@@ -164,33 +164,31 @@ def build_prompt(plan: EpisodePlan) -> str:
     follow_up = ""
     if plan.context:
         follow_up = f"""
-This is a FOLLOW-UP. The listener has just finished a briefing on:
+This is a FOLLOW-UP. The listener has just heard a briefing on:
 <already_heard>{plan.context}</already_heard>
 
-Treat that as known. Do not re-explain it, do not re-introduce the subject, and
-do not repeat its background. Go straight into the narrower thing they asked
-for and stay on it for the whole episode - depth on that one point, not another
-overview.
+Treat that as known. Do not re-explain it or re-introduce the subject. Go
+straight into the narrower thing they asked for and stay on it.
 """
 
-    return f"""Write a spoken audio briefing answering this listener request:
+    return f"""Write a spoken briefing for this listener:
 
 <request>{plan.query}</request>
 
-It is currently {now_line()}. Anchor anything time-sensitive to that, and prefer
-the newest information you can find over anything older.
+It is currently {now_line()}. Prefer the newest information you can establish,
+and say what your picture is current as of.
 {follow_up}
-Length contract - this is the most important requirement:
-- The finished script must be between {int(budget * 0.94)} and {int(budget * 1.06)} words.
-- At a natural speaking pace that is {plan.minutes} minute(s) of audio.
-- Count as you go and land inside that range. Do not stop early and do not run over.
+How long: about {plan.minutes} minute{"s" if plan.minutes != 1 else ""},
+which is roughly {budget} words. Use that as the shape of the thing - enough
+time for {plan.sections[0]}.
 
-{already_opened}
-Cover these beats in order, as continuous spoken prose with no headings:
-{outline}
+That length is the listener's time, not a quota. Fill it with substance or
+finish early; a shorter briefing that is entirely worth hearing beats a longer
+one padded to length. If you find yourself explaining that a topic is
+complicated, or restating something you already said, you have run out of
+material - stop there instead.
 
-Open by getting straight into the substance - no "welcome back to the show".
-Close with one sentence that lands the point. Begin the script now."""
+Start with the most concrete thing you know about this. Begin now."""
 
 
 def clean_for_speech(text: str) -> str:

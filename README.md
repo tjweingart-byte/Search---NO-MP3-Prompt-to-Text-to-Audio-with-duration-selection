@@ -82,6 +82,7 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `voice_store.py` | Resolves the one shared voice folder every entry point uses |
 | `setup_voices.py` | Installs the neural voices into the shared folder |
 | `verify_voice.py` | Proves the voices work on this machine, and how fast |
+| `write.py` | Print a briefing as text in seconds, to judge the writing |
 | `compare_models.py` | Generate one query on several models and compare cost, speed and text |
 | `anthropic_client.py` | Builds the Anthropic client; pins the HTTP version |
 | `diagnose_api.py` | Reports why the API is unreachable when it is |

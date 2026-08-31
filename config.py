@@ -45,6 +45,12 @@ class Settings:
     # low | medium | high | xhigh | max. Script writing is not a hard reasoning
     # task and effort directly costs time-to-first-audio, so keep it low.
     effort: str = field(default_factory=lambda: os.environ.get("EFFORT", "low"))
+    # Padding a short script back to length reintroduces the filler the opener
+    # was removed for. Off by default: a briefing that ends when it runs out of
+    # substance is better than one stretched to fill the slider.
+    allow_topups: bool = field(
+        default_factory=lambda: os.environ.get("ALLOW_TOPUPS", "0") not in ("0", "false", "False")
+    )
     # Ground the episode in live sources with Claude's server-side web search.
     enable_web_search: bool = field(
         default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "1") not in ("0", "false", "False")
@@ -56,8 +62,12 @@ class Settings:
     # --- Cold open --------------------------------------------------------
     # A small, fast model writes one framing sentence with no tools while the
     # main model is still researching, so speech starts almost immediately.
+    # OFF. The opener was prompted to state no facts, which made it filler by
+    # construction, and covering a long research wait meant 15-30 seconds of it.
+    # Nobody wants that. The interface now shows an honest loading state instead.
+    # ENABLE_COLD_OPEN=1 brings it back.
     enable_cold_open: bool = field(
-        default_factory=lambda: os.environ.get("ENABLE_COLD_OPEN", "1") not in ("0", "false", "False")
+        default_factory=lambda: os.environ.get("ENABLE_COLD_OPEN", "0") not in ("0", "false", "False")
     )
     cold_open_model: str = field(
         default_factory=lambda: os.environ.get("COLD_OPEN_MODEL", "claude-haiku-4-5")
