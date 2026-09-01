@@ -210,9 +210,18 @@ class PodcastPipeline:
         engine: Optional[TTSEngine] = None,
         cache: ScriptCache | None | str = AUTO,
         voice: Optional[str] = None,
+        cache_writes: bool = True,
     ):
         """`cache` takes a store, or AUTO to build the configured one, or None
         to disable caching.
+
+        `cache_writes=False` reads the cache but never adds to it. That is not
+        a tuning knob - it is what demo mode needs. Without credentials the
+        writer is a canned sample script that describes how the audio pipeline
+        works, and caching it stores that text under whatever the listener
+        actually asked, where Explore and every other listener will later be
+        served it as a real episode. Reads must stay on, because replaying is
+        the one thing that needs no credentials at all.
 
         The explicit AUTO sentinel exists because `cache=None` previously meant
         "build the default", so passing None to switch caching *off* silently
@@ -222,6 +231,7 @@ class PodcastPipeline:
         self.generator = generator or ScriptGenerator()
         self.engine = engine or build_engine()
         self.cache = build_cache() if cache is AUTO else cache
+        self.cache_writes = cache_writes
         #: Passed to the engine on every sentence. The script is unaffected by
         #: it, which is why the script cache deliberately ignores voice.
         self.voice = voice
@@ -596,7 +606,7 @@ class PodcastPipeline:
 
         stats.thread = notes.thread
 
-        if self.cache and shareable and stats.script:
+        if self.cache and self.cache_writes and shareable and stats.script:
             ttl = ttl_for(plan.query)
             self.cache.put(key, stats.script, ttl, plan.query, stats.thread, plan.minutes)
             log.info("cached %d sentences for %r (ttl %ds)", len(stats.script), plan.query, ttl)

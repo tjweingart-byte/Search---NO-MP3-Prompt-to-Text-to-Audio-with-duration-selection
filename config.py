@@ -6,9 +6,52 @@ tuned without touching code (12-factor style).
 from __future__ import annotations
 
 import os
+import pathlib
 from dataclasses import dataclass, field
 
 import voice_store
+
+
+def _load_dotenv() -> None:
+    """Read .env into the environment, if it is not already there.
+
+    The shell scripts source .env before starting the server, so for a long
+    time nothing in Python needed to. Then `python app.py` - which app.py
+    itself offers, in its __main__ block - started the server without it, the
+    key was invisible, and the app fell back to the canned demo script while
+    .env sat there with a perfectly good key in it. Loading it here means the
+    key is found however the app is started.
+
+    A real environment variable always wins: this only fills in what is unset,
+    so `MODEL=... python app.py` still overrides the file.
+    """
+    # Tests must not change result because of what is in a developer's .env -
+    # a key there would flip the app out of demo mode mid-suite. conftest.py
+    # sets this before anything imports config.
+    if os.environ.get("FAM_IGNORE_DOTENV"):
+        return
+    path = pathlib.Path(__file__).resolve().parent / ".env"
+    try:
+        lines = path.read_text().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        # Tolerate `export FOO=bar` and quoted values, which is what people
+        # actually write in a .env.
+        if name.startswith("export "):
+            name = name[len("export "):].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if name and name not in os.environ:
+            os.environ[name] = value
+
+
+_load_dotenv()
 
 
 def _env_int(name: str, default: int) -> int:
@@ -151,6 +194,10 @@ class Settings:
     port: int = _env_int("PORT", 8000)
     # Simple abuse guard: seconds between generations from one client.
     rate_limit_seconds: float = _env_float("RATE_LIMIT_SECONDS", 3.0)
+    # The cheap endpoints - JSON reads and cache lookups - need a ceiling, not
+    # a pace. Opening a tab fires several at once, so anything that throttles
+    # a burst throttles correct use. 0 switches it off.
+    read_limit_per_window: int = _env_int("READ_LIMIT_PER_WINDOW", 60)
 
     @property
     def bytes_per_second(self) -> int:

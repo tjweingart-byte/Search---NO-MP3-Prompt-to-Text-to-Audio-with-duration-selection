@@ -660,9 +660,9 @@
   /* -------- generating overlay -------- */
   .demo-badge{
     display:none; align-items:center; gap:5px;
-    font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.08em;
+    font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.08em;
     text-transform:uppercase; color:var(--ink); background:var(--copper);
-    border-radius:6px; padding:3px 7px; font-weight:700;
+    border-radius:6px; padding:4px 9px; font-weight:700;
   }
   body.demo-mode .demo-badge{ display:inline-flex; }
 
@@ -897,7 +897,7 @@
       <!-- ============ PLAYER ============ -->
       <section class="screen" id="screen-player">
         <div class="player-top">
-          <span class="kicker">Now playing <span class="demo-badge" title="No API key: a built-in sample script is standing in for Claude">sample script</span></span>
+          <span class="kicker">Now playing <span class="demo-badge" title="No API key: a built-in sample script is standing in for Claude">not your episode</span></span>
           <span class="x" onclick="goBack()">✕</span>
         </div>
         <button class="go-deeper-pill" onclick="openGoDeeper('player')">Go Deeper</button>
@@ -932,7 +932,7 @@
 
       <!-- ============ PLAY ALL (segmented continuous player) ============ -->
       <section class="screen" id="screen-playall">
-        <div class="player-top"><span class="kicker" id="pa-kicker">Playing all</span><span class="demo-badge">sample script</span><span class="x" onclick="goBack()">✕</span></div>
+        <div class="player-top"><span class="kicker" id="pa-kicker">Playing all</span><span class="demo-badge" title="No API key: a built-in sample script is standing in for Claude">not your episode</span><span class="x" onclick="goBack()">✕</span></div>
         <button class="go-deeper-pill" onclick="openGoDeeper('playall')">Go Deeper</button>
         <div class="segbar" id="paSegbar"></div>
         <div class="player-body">

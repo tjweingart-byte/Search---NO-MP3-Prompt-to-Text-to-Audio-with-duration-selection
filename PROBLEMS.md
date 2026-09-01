@@ -2100,3 +2100,68 @@ circle" stays empty until the listener plays something - then it fills from
 co-listener overlap. The write path was exercised with a stub writer; the model
 calls themselves are still unverified here, same as everything else that needs a
 key.
+
+## 51. Three faults from one real session: a canned script, and a 429 storm
+
+First run on a real machine, and the two things that broke were both invisible
+from this container. A DailyFAM tile played a script *about how episode
+generation works* instead of an episode about habits, and ordinary navigation
+came back "Slow down a moment, then try again."
+
+**1. `python app.py` never read .env.** `run.sh` and `demo.sh` source it before
+starting uvicorn, so for a long time nothing in Python needed to - and then
+`app.py`'s own `__main__` block, which offers exactly that entry point, started
+the server without it. The key sat in .env, `settings.anthropic_api_key` was
+empty, `DEMO_MODE` came on, and the app served the built-in sample script. That
+script opens "This is a demonstration briefing" and goes on to describe the
+streaming pipeline - which is precisely what the listener heard, under a tile
+about habit research. `config.py` now loads .env itself (no new dependency;
+handles `export`, quotes and comments), so the key is found however the server
+is started, and a real environment variable still wins over the file.
+
+**2. Demo mode wrote the canned script into the shared cache.** `_make_pipeline`
+deliberately kept the real cache in demo mode - the comment even explains why,
+and the reasoning was right for *reads*: Explore only ever replays, so it is the
+one surface that needs no credentials. But writes went through the same store,
+so the sample script was cached under the listener's actual query, for the full
+24h TTL, where Explore and every other listener would later be served it as a
+real episode - including after a key was finally added. The log line
+`cached 34 sentences for 'what habit research actually shows about lasting
+change'` is that happening.
+
+This is §50's rule - **listeners may be invented, episodes may not** - which
+`seed_demo.py` was written to obey while the app itself broke it on every play.
+`PodcastPipeline` now takes `cache_writes`; demo mode reads and never writes.
+
+**3. One 3-second pace was on all eighteen endpoints.** `_rate_limit` exists to
+bound model spend: each generation holds a Claude stream and a TTS subprocess
+open. It was applied to every endpoint including `/api/topics`, `/api/mixes`,
+`/api/myfam`, `/api/explore`, `/api/profile` and `/api/voices` - and the
+interface fires several of those the moment a tab opens, so the second one 429'd.
+A limiter that fires on correct use is not protecting anything; it is the
+failure. Generation keeps the pace; cheap reads get a burst-tolerant ceiling
+(60 per 10s per client, `READ_LIMIT_PER_WINDOW`). Replay-only requests move to
+the read limiter too: `cached_only` provably cannot spend a model call, so
+pacing it only stopped someone swiping Explore at a normal speed.
+
+**A fourth thing fell out of fixing the first.** Once `config.py` read .env, the
+test suite started reading it too, and a developer with a key in .env would run
+a different suite from CI - demo mode off, a different model, a different cache
+key. `tests/conftest.py` sets `FAM_IGNORE_DOTENV=1`, so the suite stays
+hermetic. It was caught immediately because a stray test .env flipped
+`test_the_default_model_is_a_fast_one` red.
+
+**And the badge was too quiet.** Demo mode was announced - a `sample script`
+chip on the player at 8.5px - and the listener still spent a session wondering
+why the audio did not match the tile. It is now 11px and says **not your
+episode**, which is the fact that matters. The label described what the audio
+was; the warning has to say what it is not.
+
+Ten tests pin all of it (`tests/test_demo_and_limits.py`), and the fixes were
+verified against a running server: the six calls a tab opens all return 200,
+ten rapid Explore swipes return 409 rather than 429, and an episode played in
+demo mode leaves `scripts.db` with zero rows and Explore empty.
+
+**Anyone who ran the broken build must delete `scripts.db` once.** Canned
+scripts cached under real queries do not expire for 24h and will keep playing
+until they do.

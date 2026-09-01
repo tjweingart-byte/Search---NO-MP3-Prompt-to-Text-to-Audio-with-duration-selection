@@ -256,7 +256,10 @@ another rule.
   the real briefing does; the interface shows an honest loading state.
 - **Failures must be visible.** Silent success (empty audio, a placeholder tone,
   demo mode mistaken for live) has caused more lost time on this project than
-  any real bug. Every fallback must announce itself.
+  any real bug. Every fallback must announce itself. *(PROBLEMS.md §51: demo
+  mode did announce itself, in an 8.5px chip, and still cost a whole session -
+  and it was writing its canned script into the shared cache, so the failure
+  outlived the run. Announcing is not enough if the thing keeps a record.)*
 
 ## Decisions that will shape the next phase
 
@@ -308,7 +311,7 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-50 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-51 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
 A fresh container has none of the dependencies installed. Setup is two lines,

@@ -14,7 +14,7 @@ import os
 import logging
 import time
 from contextlib import asynccontextmanager
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Optional, Union
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -87,6 +87,9 @@ WAV_HEADER_BYTES = 44
 PREROLL_SECONDS = 1.5
 
 _last_request: dict[str, float] = defaultdict(float)
+#: Recent cheap-read timestamps per client, for the burst-tolerant limiter.
+_read_hits: dict[str, deque] = defaultdict(deque)
+READ_WINDOW_SECONDS = 10.0
 
 
 def friendly_error(exc: Exception) -> str:
@@ -131,8 +134,13 @@ def _make_pipeline(voice: Optional[str] = None) -> PodcastPipeline:
         # credentials - and Explore is the one surface that needs no
         # credentials at all, since it only ever replays. Keeping the real
         # cache also means demo mode exercises the real hit/miss path.
+        # Reads yes, writes never. The canned script does not answer the
+        # question it was asked, so caching it puts a briefing about the audio
+        # pipeline behind someone's search - for the whole TTL, and for every
+        # other listener, including after a key is finally added.
         return PodcastPipeline(
-            generator=DemoGenerator(), engine=engine, cache=SCRIPT_CACHE, voice=voice
+            generator=DemoGenerator(), engine=engine, cache=SCRIPT_CACHE,
+            voice=voice, cache_writes=False,
         )
     return PodcastPipeline(engine=engine, cache=SCRIPT_CACHE, voice=voice)
 
@@ -151,6 +159,12 @@ def _rate_limit(request: Request) -> None:
 
     Each request holds a Claude stream and a TTS subprocess open for the whole
     episode, so an unthrottled endpoint is trivially expensive to abuse.
+
+    This belongs on the endpoints that generate, and nowhere else. It was on
+    all eighteen, including the cheap cache and JSON reads - and opening a tab
+    fires several of those at once, so ordinary navigation answered itself with
+    "Slow down a moment, then try again." A limiter that fires on correct use
+    is not protecting anything; it is the failure.
     """
     if settings.rate_limit_seconds <= 0:
         return
@@ -159,6 +173,26 @@ def _rate_limit(request: Request) -> None:
     if now - _last_request[client] < settings.rate_limit_seconds:
         raise HTTPException(status_code=429, detail="Slow down a moment, then try again.")
     _last_request[client] = now
+
+
+def _read_limit(request: Request) -> None:
+    """A ceiling for the cheap endpoints: JSON reads and cache lookups.
+
+    These cost a SQLite query and no model call, and the interface fires a
+    handful of them every time a tab opens, so the limit has to allow bursts.
+    It exists to bound a script hammering the server, not to pace a listener.
+    """
+    if settings.read_limit_per_window <= 0:
+        return
+    client = request.client.host if request.client else "anonymous"
+    now = time.monotonic()
+    hits = _read_hits[client]
+    cutoff = now - READ_WINDOW_SECONDS
+    while hits and hits[0] < cutoff:
+        hits.popleft()
+    if len(hits) >= settings.read_limit_per_window:
+        raise HTTPException(status_code=429, detail="Slow down a moment, then try again.")
+    hits.append(now)
 
 
 def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None = None,
@@ -296,21 +330,21 @@ async def attach(req: AttachRequest, request: Request) -> dict:
 @app.delete("/api/attach")
 async def detach(request: Request, user: str = Query("", max_length=64),
                  id: str = Query(..., max_length=64)) -> dict:
-    _rate_limit(request)
+    _read_limit(request)
     return {"ok": ATTACHMENTS.delete(user, id)}
 
 
 @app.get("/api/topics")
 async def bank(request: Request):
     """The whole shared bank, for the mix topic picker."""
-    _rate_limit(request)
+    _read_limit(request)
     return {"topics": [t.as_dict() for t in topics_mod.TOPIC_BANK]}
 
 
 @app.get("/api/mixes")
 async def list_mixes(request: Request, user: str = Query("", max_length=64)):
     """This listener's playFAM mixes, each with its topics resolved."""
-    _rate_limit(request)
+    _read_limit(request)
     return {
         "mixes": [m.as_dict() for m in MIXES.list_for_user(user)],
         "starters": [
@@ -322,7 +356,7 @@ async def list_mixes(request: Request, user: str = Query("", max_length=64)):
 
 @app.post("/api/mixes")
 async def create_mix(req: MixRequest, request: Request):
-    _rate_limit(request)
+    _read_limit(request)
     try:
         mix = MIXES.create(req.user, req.name or "", req.topic_ids or [])
     except mixes_mod.MixError as exc:
@@ -333,7 +367,7 @@ async def create_mix(req: MixRequest, request: Request):
 
 @app.patch("/api/mixes/{mix_id}")
 async def update_mix(mix_id: str, req: MixRequest, request: Request):
-    _rate_limit(request)
+    _read_limit(request)
     try:
         mix = MIXES.update(req.user, mix_id, req.name, req.topic_ids, req.public)
     except mixes_mod.MixError as exc:
@@ -343,7 +377,7 @@ async def update_mix(mix_id: str, req: MixRequest, request: Request):
 
 @app.delete("/api/mixes/{mix_id}")
 async def delete_mix(mix_id: str, request: Request, user: str = Query("", max_length=64)):
-    _rate_limit(request)
+    _read_limit(request)
     if not MIXES.delete(user, mix_id):
         raise HTTPException(status_code=404, detail="That mix no longer exists.")
     return {"ok": True}
@@ -367,14 +401,14 @@ async def myfam(request: Request, user: str = Query("", max_length=64)):
     A listener with no history still gets Trending and a starter set, with
     the personal sections honestly empty rather than filled with fakes.
     """
-    _rate_limit(request)
+    _read_limit(request)
     return topics_mod.build_feed(EVENTS, user)
 
 
 @app.post("/api/event")
 async def record_event(req: EventRequest, request: Request):
     """Log one interaction. Playback never depends on this succeeding."""
-    _rate_limit(request)
+    _read_limit(request)
     tags = ()
     if req.topic_id and req.topic_id in topics_mod.BANK_BY_ID:
         tags = topics_mod.BANK_BY_ID[req.topic_id].tags
@@ -404,7 +438,7 @@ class EchoRequest(BaseModel):
 @app.post("/api/me")
 async def set_me(req: PersonRequest, request: Request):
     """Name and handle for this device. Not an account - see /api/profile."""
-    _rate_limit(request)
+    _read_limit(request)
     try:
         return SOCIAL.set_person(req.user, req.name, req.handle)
     except social_mod.SocialError as exc:
@@ -418,7 +452,7 @@ async def post_echo(req: EchoRequest, request: Request):
     Costs nothing to generate: an echo is a row pointing at a query whose
     script already exists, which is exactly why the social layer is cheap.
     """
-    _rate_limit(request)
+    _read_limit(request)
     try:
         echo = SOCIAL.echo(req.user, req.query, req.title, req.minutes, req.thread)
     except social_mod.SocialError as exc:
@@ -430,14 +464,14 @@ async def post_echo(req: EchoRequest, request: Request):
 async def delete_echo(request: Request, user: str = Query("", max_length=64),
                       q: str = Query("", max_length=300),
                       minutes: int = Query(3, ge=1, le=10)):
-    _rate_limit(request)
+    _read_limit(request)
     return {"ok": SOCIAL.unecho(user, q, minutes)}
 
 
 @app.get("/api/profile")
 async def profile(request: Request, user: str = Query("", max_length=64)):
     """Counts and subjects from this listener's own event log. No model call."""
-    _rate_limit(request)
+    _read_limit(request)
     body = topics_mod.summary(EVENTS, user)
     person = SOCIAL.person(user)
     body["name"] = person["name"]
@@ -459,7 +493,7 @@ async def go_deeper(request: Request, user: str = Query("", max_length=64)):
     ends - and the suggestion is waiting here afterwards for anyone who wants
     to keep going.
     """
-    _rate_limit(request)
+    _read_limit(request)
     return {"threads": EVENTS.open_threads(user)}
 
 
@@ -473,7 +507,7 @@ async def explore(request: Request, limit: int = Query(30, ge=1, le=60),
     cache passed the personal-query filter before it was written, so it is
     already safe to show someone else.
     """
-    _rate_limit(request)
+    _read_limit(request)
     store = SCRIPT_CACHE if SCRIPT_CACHE is not None else build_cache()
     if store is None:
         return {"episodes": [], "reason": "The shared cache is switched off."}
@@ -517,7 +551,7 @@ async def next_thread(
     An empty thread is normal - the script may not be cached, or the model may
     not have named one - and the interface falls back to the blank field.
     """
-    _rate_limit(request)
+    _read_limit(request)
     plan = _validated_plan(q, minutes, context, search)
     try:
         pipeline = _make_pipeline()
@@ -546,7 +580,11 @@ async def audio(
     `fmt=pcm` sends bare samples for the Web Audio player, which schedules
     chunks itself and therefore starts sooner and seeks better.
     """
-    _rate_limit(request)
+    # The pace exists to bound model spend. A replay-only request - Explore,
+    # and any card played from it - provably cannot spend one, so pacing it
+    # only stops someone swiping a feed at a normal speed, which is exactly
+    # what the feed is for.
+    (_read_limit if cached_only else _rate_limit)(request)
     plan = _validated_plan(q, minutes, context, search, cached_only,
                            _attachments_for(user, attach))
 
