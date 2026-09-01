@@ -67,7 +67,7 @@ def main() -> int:
             page.evaluate("openMyFamTab()")
             page.wait_for_selector(".feed-rail .seed-card", timeout=10000, state="attached")
             rails = page.eval_on_selector_all(".feed-section", "e => e.length")
-            assert rails == 4, f"expected 4 sections, saw {rails}"
+            assert rails == 3, f"expected 3 sections, saw {rails}"
 
         def dailyfam():
             page.evaluate("openPlayFAM()")
@@ -167,7 +167,7 @@ def main() -> int:
             assert page.text_content("#reelTitle") != first, "swipe did not advance"
 
         print(f"smoke test: {target.name}")
-        check("myFAM renders four rails", myfam)
+        check("myFAM renders three rails", myfam)
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)

@@ -191,9 +191,13 @@ another rule.
    faster script - fewer web searches, a faster model, or prefetch on the
    browse surfaces - not a longer opener.
 4. **myFAM is built; the taste model is deliberately crude.** `topics.py` ranks
-   a *shared* bank of ~28 topics four ways (trending / adjacent / co-listener /
-   history) from an append-only event log. Tags come from keyword matching, not
-   a classifier. The cost design is the load-bearing part: **one bank for
+   a *shared* bank of ~28 topics three ways (trending / co-listener / history)
+   from an append-only event log. Tags come from keyword matching, not a
+   classifier. A fourth ranking, `rank_might_like` (adjacent to your taste),
+   is written and tested but no longer shown - its section was removed from
+   myFAM. Worth knowing what went with it: it was the only signal that offered
+   anything *outside* an established taste, so the feed is now history,
+   co-listeners and the crowd. One line in `SECTIONS` brings it back. The cost design is the load-bearing part: **one bank for
    everyone, personalisation in the ordering, not the inventory** - so two
    people tapping a tile share one script through `cache.py`.
 5. **playFAM is built as its own tab.** `mixes.py` stores named daily mixes -

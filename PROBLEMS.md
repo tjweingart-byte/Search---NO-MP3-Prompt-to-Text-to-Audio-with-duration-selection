@@ -1756,3 +1756,33 @@ confirmed to fail before the button was put back.
 
 Screenshots of all nine surfaces before and after: only the player's control
 row changed, in the band where the button went.
+
+## 43. myFAM loses a section, and Go Deeper loses half its height
+
+Two interface changes, one with a consequence worth recording.
+
+**"A little sideways from that" is gone.** It was the `might_like` section -
+the exploration signal, which suppressed a listener's strongest tag so the page
+offered something adjacent rather than more of the same. Removed from
+`SECTIONS` *and* `FILL_ORDER`: leaving it in the fill order would have kept it
+silently claiming six topics out of the shared bank for a section nobody sees,
+starving the three that remain.
+
+`rank_might_like` itself is kept, with its tests, and both the module docstring
+and CLAUDE.md now say it is not wired in. The consequence is the part to keep
+in view: **it was the only signal that offered anything outside an established
+taste.** What is left - history, co-listeners, trending - all points inward, so
+myFAM will now tend to narrow around what someone already plays. One line in
+`SECTIONS` and one in `FILL_ORDER` puts it back.
+
+**Go Deeper tiles: 96px to 48px.** The height came from the tallest title, not
+from `min-height:76px` - a three-line headline set the row and the grid made
+the other three match it. So the fix is a fixed `height`, plus a two-line clamp
+and smaller type. Two lines rather than one on purpose: one line of a headline
+at half a card's width says nothing useful.
+
+The smoke test asserted four rails and the preview fixture supplied four
+sections; both are now three. The one test that failed was asserting a section
+that no longer exists, and its docstring - "the whole reason for four sections"
+- was rewritten rather than deleted, because the signal it covers is still
+there and a silently rotting one is worse than none.

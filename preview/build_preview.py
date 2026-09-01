@@ -52,7 +52,6 @@ def load_fixtures() -> dict:
             section(key, title, ids)
             for (key, title), ids in zip(topics_mod.SECTIONS, [
                 ["chip-supply", "energy-grid", "founder-motivation", "hormuz"],
-                ["attention-economy", "food-supply", "streaming-economics", "election-mechanics"],
                 ["stadium-money", "sleep-science", "space-race", "longevity-claims"],
                 ["ai-agents", "fed-next-move", "housing-market", "operator-ceos",
                  "hollywood-comebacks", "habits-research"],

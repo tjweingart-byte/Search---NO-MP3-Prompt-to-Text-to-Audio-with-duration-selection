@@ -7,13 +7,18 @@ same tile share one script through `cache.py`, and the second tap is free and
 instant. A per-user *bank* would mean a per-user script for every tile, which
 is the same product at many times the price.
 
-Four sections, and the point is that each runs on a *different* signal - four
-shuffles of one score would be one section wearing four hats:
+Three sections, and the point is that each runs on a *different* signal -
+three shuffles of one score would be one section wearing three hats:
 
     trending          what everyone is playing now      (global, not personal)
-    might_like        adjacent to your taste             (exploration)
     followers         what co-listeners played           (social proxy - see below)
     from_history      closest to what you played         (exploitation)
+
+A fourth signal, `rank_might_like` (exploration), is written and tested but no
+longer shown: the section it fed was removed from myFAM. It is the only signal
+that offered anything *outside* an established taste, so what remains is
+history, co-listeners and the crowd. Putting it back is one entry in SECTIONS
+and one in FILL_ORDER.
 
 Everything is derived from an append-only event log, so there is no profile to
 keep in sync - a taste profile is a query, not a stored object.
@@ -201,7 +206,7 @@ BANK_BY_ID = {t.id: t for t in TOPIC_BANK}
 #: Sections are FILLED in this order and DISPLAYED in SECTIONS order. The two
 #: personal sections have the fewest eligible topics, so they choose first;
 #: trending can fall back to the whole bank and therefore chooses last.
-FILL_ORDER = ("from_history", "followers", "might_like", "trending")
+FILL_ORDER = ("from_history", "followers", "trending")
 
 #: Display order: personal first, global last. Someone opening myFAM is more
 #: likely to want what was chosen for them than what is popular, and the page
@@ -210,7 +215,6 @@ FILL_ORDER = ("from_history", "followers", "might_like", "trending")
 #: choose their topics first.)
 SECTIONS = (
     ("from_history", "Made for you"),
-    ("might_like", "A little sideways from that"),
     ("followers", "Your circle is on this"),
     ("trending", "What FAM can't stop playing"),
 )
@@ -433,6 +437,10 @@ def rank_from_history(profile: dict[str, float], exclude: set[str]) -> list[Topi
 def rank_might_like(profile: dict[str, float], exclude: set[str]) -> list[Topic]:
     """Adjacent, not identical. Exploration.
 
+    Not currently shown - the section this filled was removed from myFAM. Kept
+    whole, with its tests, because it is the only signal that widens a taste
+    rather than confirming it; see the module docstring.
+
     Their strongest tag is deliberately suppressed. Ranking purely on affinity
     gives four sections of the same thing and a listener who only ever hears
     back what they already told you - the filter bubble, arrived at by
@@ -549,8 +557,6 @@ def build_feed(store: EventStore, user_id: str, now: Optional[float] = None) -> 
             picks = rank_from_history(profile, seen)
         elif key == "followers":
             picks = rank_followers(store, user_id, mine, seen)
-        elif key == "might_like":
-            picks = rank_might_like(profile, seen)
         else:
             picks = rank_trending(store, now, seen)
         picked[key] = picks
@@ -597,7 +603,6 @@ def summary(store: EventStore, user_id: str, now: Optional[float] = None) -> dic
 def _empty_reason(key: str) -> str:
     return {
         "trending": "Nothing has been played yet today.",
-        "might_like": "Listen to a few episodes and this fills in.",
         "followers": "Nobody you overlap with has listened yet.",
         "from_history": "Your first episode starts this one off.",
     }.get(key, "")

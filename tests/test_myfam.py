@@ -124,7 +124,12 @@ def test_history_never_recommends_what_they_just_played(store):
 
 
 def test_might_like_is_not_the_same_list_as_history(store):
-    """The whole reason for four sections: four signals, not four shuffles."""
+    """The whole reason for separate sections: distinct signals, not shuffles.
+
+    might_like no longer has a section of its own, but it stays under test:
+    it is the only signal that widens a taste rather than confirming it, and
+    a silently rotting one is worse than none if it is ever put back.
+    """
     play(store, "u", "golf-evolution", kind="complete")
     play(store, "u", "the-trade", kind="complete")
     profile = T.taste(store.for_user("u"))
@@ -247,12 +252,12 @@ def test_the_personal_sections_are_not_starved_by_the_generic_ones(store):
     assert by_key["from_history"]["topics"], "history section was starved"
     assert by_key["followers"]["topics"], "co-listener section was starved"
     assert "sleep-science" in [t["id"] for t in by_key["followers"]["topics"]]
-    # And the generic sections still fill, because the bank is big enough.
-    assert by_key["trending"]["topics"] and by_key["might_like"]["topics"]
+    # And the generic section still fills, because the bank is big enough.
+    assert by_key["trending"]["topics"]
 
 
 def test_the_bank_can_fill_every_section_without_repeating(store):
-    """Four sections of six needs twenty-four topics, not twenty-two."""
+    """Every section must fill from the shared bank without reusing a topic."""
     assert len(T.TOPIC_BANK) >= len(T.SECTIONS) * T.SECTION_SIZE
 
 
