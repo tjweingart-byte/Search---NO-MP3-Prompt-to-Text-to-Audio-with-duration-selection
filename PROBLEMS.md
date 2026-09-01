@@ -2045,3 +2045,58 @@ Worth stating for the next fresh container, because neither is in the code:
 `pip install -r requirements.txt` then `pip install playwright` is the setup,
 and there is still **no API key here**, so writing quality - including the
 untested ending rules from §48 - remains unverified.
+
+## 50. A demo of the product needs a product that has been used
+
+Asked for a demo where every page can be prompted and generate episodes, so the
+writing could be judged in the app rather than through `write.py`. Starting the
+server and opening it is not that, for a reason that is structural rather than a
+bug: **three of the five tabs read state a fresh install does not have.**
+
+* **explore** reads finished scripts out of the shared cache and refuses to
+  generate - `cached_only` is enforced in the pipeline, not in the interface, so
+  the guarantee holds however the card is tapped. On a fresh database the tab is
+  empty and *cannot fill itself*. Tapping it forever changes nothing.
+* **myFAM**'s Trending rail ranks a global event log. An empty log ranks
+  nothing, so the rail falls back to the bank in bank order - which looks like a
+  feed and is not one.
+* **profile** reports only what the log holds, deliberately, so it reads as a
+  scaffold until something has been played.
+
+So the demo needed seeding, and seeding needed a rule about what may be faked.
+**Listeners may be invented; episodes may not.** `tools/seed_demo.py` writes
+real scripts from real model calls into the shared cache, then records three
+invented listeners having played them at plausible times spread across the
+trending window - all-at-once timestamps produce a feed that is technically
+populated and behaves nothing like a used app, because trending counts a window
+and every event decays. Two echoes go in as well, so an Explore card can say
+"Rachel sent you this" rather than "someone asked this"; an echo points at a
+script that already exists, so it costs nothing.
+
+It seeds **scripts and not audio**, which is the same argument CLAUDE.md makes
+for prefetch: the script is the expensive half (~$0.03, seconds, cacheable
+text), the audio is ~330x realtime. Seeding audio would be storing the cheap
+half.
+
+**The refusal is the load-bearing part.** With no API key the app serves a
+canned sample, and a cache seeded with *that* is indistinguishable from a cache
+of real episodes until someone presses play - at which point every tab plays the
+same script and the demo has been lying since it started. The seeder exits 2
+rather than write it.
+
+`demo.sh` reports before it serves: live model or canned script, a real voice or
+the debug placeholder tone, how many episodes the cache holds. The voice check
+had to be written twice - the first version counted `list_voices()`, which
+includes `debug:tone`, and cheerfully reported "1 voice" on a machine that can
+only beep. That is the silent success this project keeps paying for, reproduced
+inside the tool built to detect it. It now counts only non-debug voices and
+names the engine.
+
+Verified without an API key, which is all that is possible here: all five
+surfaces answer, `/api/audio` streams (2.6 MB for one minute, matching the
+2.65 MB/min figure), Explore returns 409 for an episode that was never generated
+and replays a seeded one, and after seeding, Trending ranks six tiles while "your
+circle" stays empty until the listener plays something - then it fills from
+co-listener overlap. The write path was exercised with a stub writer; the model
+calls themselves are still unverified here, same as everything else that needs a
+key.

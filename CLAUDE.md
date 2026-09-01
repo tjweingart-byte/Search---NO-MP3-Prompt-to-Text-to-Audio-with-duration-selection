@@ -292,6 +292,15 @@ being asked:
 on fixtures - good for layout, flow and interaction on a real phone, useless
 for writing quality or time-to-first-audio, which need the server.
 
+**To show or judge the product rather than change it, `./demo.sh`** (PROBLEMS.md
+§50). It reports what the machine will actually do before it starts - canned
+script with no API key, placeholder tone with no voice model, dead Explore tab
+with an empty cache - refuses to start quietly broken, offers to seed, and then
+says where to press on each tab. `python tools/seed_demo.py` writes the history
+the browse surfaces need: Explore replays other listeners' episodes and by
+design cannot generate one, so on a fresh database it stays empty however much
+you tap it.
+
 ## Picking this up in a new session
 
 Everything is in the repo; nothing of consequence lives in a chat log. Branch:
@@ -299,7 +308,7 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-49 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-50 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
