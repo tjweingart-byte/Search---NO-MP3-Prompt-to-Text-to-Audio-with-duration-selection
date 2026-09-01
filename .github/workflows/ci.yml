@@ -43,6 +43,11 @@ jobs:
       - name: Check the interface parses
         run: python tools/check_js.py
 
+      # Deleting a block of CSS breaks nothing that fails - the page just
+      # looks wrong. This has happened twice; it now fails here instead.
+      - name: Check the interface is styled
+        run: python tools/check_css.py
+
       - name: Build the phone preview
         run: python preview/build_preview.py
 

@@ -1635,3 +1635,41 @@ indices": it is that a large single-file interface has no compiler to catch
 this, so every structural edit needs a check that runs afterwards. The browser
 smoke test now covers the visibility switch and the echo controls for exactly
 that reason.
+
+## 40. The deleted CSS came back a second time, so a check now catches it
+
+myFAM came back "all messed up": the Go Deeper grid was plain text, cards had
+no tag or reason, and the now-playing bar was an empty slab sitting over the
+tile rail. Nothing had failed. Tests passed, the interface parsed, the smoke
+test passed - because every one of those checks asks whether the page *works*,
+and the page did work. It just looked wrong.
+
+**Cause: more collateral from §39's bad edit.** The overwritten region held the
+whole myFAM style block, and its loss surfaced only when someone looked at the
+page. Auditing the class names showed thirteen of them with no rule behind
+them at all:
+
+    gd-head gd-kicker gd-count gd-grid gd-card gd-bar gd-ask
+    feed-title seed-tag seed-why nowbar nowbar-thumb nowbar-play
+
+`.mix-vis`, `.mix-switch` and the echo controls had been lost the same way and
+found the same way - one at a time, by noticing. That is the actual problem:
+**the discovery method was "look at it", so each missing block cost a round
+trip.**
+
+**A second, quieter bug in the same block.** `.nowbar` sets `display:flex`,
+which outranks the `hidden` attribute the markup relies on. So the bar was not
+merely unstyled, it was *showing* with nothing in it whenever no episode was
+playing. A class that sets `display` silently disables `hidden` on every
+element carrying it, and nothing anywhere reports that.
+
+**Fix: `tools/check_css.py`, in `./dev.sh check` and in CI.** It fails when a
+class appears in the markup with no rule behind it, and when an element with
+`hidden` wears a class that forces it visible. Structural hooks that genuinely
+need no styling are named in `HOOKS` so the exemption has to be written down
+rather than assumed. Both regressions above were reproduced against it before
+it was wired in; it catches both.
+
+The rule this settles: **a check that only asks whether the page works cannot
+see a page that looks wrong.** In a single-file interface with no compiler,
+appearance needs its own check or it is discovered by the person using it.

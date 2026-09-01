@@ -23,6 +23,9 @@ if [ "$MODE" != "preview" ]; then
 
   step "Interface parses"
   $PY tools/check_js.py
+
+  step "Interface is styled"
+  $PY tools/check_css.py
 fi
 
 step "Phone preview"
