@@ -237,7 +237,7 @@ class Event:
     text: str = ""
     tags: tuple[str, ...] = ()
     at: float = field(default_factory=time.time)
-    #: The thread this episode left open, carried on the event that finished
+    #: The follow-up predicted for this episode, carried on the event that finished
     #: it. Recorded here rather than joined back to the cache at read time,
     #: because the cache key depends on settings that may have moved on and a
     #: thread the listener was actually offered should not disappear.
@@ -312,9 +312,10 @@ class EventStore:
     def open_threads(self, user_id: str, limit: int = 8) -> list[dict]:
         """Threads from episodes this listener finished, newest first.
 
-        The point of the widening ending was to leave one specific thing
-        unresolved. This is where those land: an episode they have already
-        heard, and the question it opened, one tap from being answered.
+        Each finished episode carries the model's guess at what its listener
+        would most likely ask next. This is where those land: an episode they
+        have already heard, and the obvious question after it, one tap from
+        being answered.
 
         A thread they have since asked about is dropped - it is no longer
         open - which is why this reads the log rather than a stored list.

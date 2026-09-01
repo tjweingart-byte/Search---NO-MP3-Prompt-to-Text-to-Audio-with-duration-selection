@@ -1961,3 +1961,48 @@ cls + '"` as using a class called `cls`. It now strips JavaScript splices out
 of attribute values before splitting. It still tracks class *names* rather than
 selector context, so `.share-contact .nm` counts as defining `.nm` anywhere -
 a known coarseness, not worth a full CSS matcher.
+
+## 48. Endings stop teasing; the follow-up becomes a prediction
+
+Asked for twice: remove the tease at the end of a searched episode. §19's rule
+was "endings widen, they do not conclude" - leave one named thread standing and
+end pointed at it. On paper that is momentum. Heard episode after episode it is
+a hook every single time, which is a tease, and no amount of wording in the
+rule stopped it being one.
+
+**The ending rules are reversed.** The episode lands on the most concrete thing
+it has and stops, mid-stride. No hook, no "but that raises another question",
+no rhetorical question, no forecasting. What has *not* changed: summarising and
+recapping are still banned - that was never what the tease was, and bringing
+back "so, to sum up" would fix nothing.
+
+Anything genuinely unresolved now belongs *inside* the piece, stated plainly as
+unresolved, with the piece then carrying on. That keeps the honesty the old
+rule was reaching for without putting it in the last sentence, where it reads
+as a hook whatever it says.
+
+**Go Deeper did not lose its suggestion - it stopped coming from the script.**
+The `<<NEXT: ...>>` line survives, still stripped before synthesis and still
+never spoken, but its meaning is inverted: it was "the thread you actually left
+open", and it is now a *prediction*. Having heard this episode, what is the
+single most natural thing this listener would go on to ask - read off the
+mechanism that has an obvious next step, the figure that invites "compared to
+what", the decision someone still has to make. The likeliest follow-up, not the
+most interesting one, and the script is explicitly barred from gesturing at it.
+
+That is the whole point of the change: the suggestion is *waiting* for anyone
+who wants it, and costs nothing to anyone who does not. A tease charges every
+listener for it whether they want to go deeper or not.
+
+**Six tests changed, and they were pinning the old doctrine deliberately.**
+They are rewritten to pin the new contract rather than deleted, including one
+that asserts the removed phrases are gone, so this cannot quietly revert.
+
+**The known cost, recorded so it is a trade and not a surprise.** CLAUDE.md
+argued the widening ending was what made the browse surfaces work - "the ending
+of one is the entry to the next" - and dailyFAM's infinite swipe and myFAM's
+tiles were leaning on it. They now have to earn the next tap themselves. The
+predicted follow-up and the prefetch plan are what that leans on instead.
+
+Not verified against real output: there is no API key here, so `python write.py
+"<query>" --minutes 3` is the check that closes this one.

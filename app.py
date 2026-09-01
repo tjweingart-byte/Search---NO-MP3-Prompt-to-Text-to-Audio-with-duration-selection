@@ -354,7 +354,7 @@ class EventRequest(BaseModel):
     kind: str = Field(..., max_length=16)
     topic_id: str = Field("", max_length=64)
     text: str = Field("", max_length=300)
-    #: The thread the finished episode left open, so Go Deeper can offer it
+    #: The follow-up predicted for the finished episode, so Go Deeper can offer it
     #: back later without a second lookup.
     thread: str = Field("", max_length=200)
 
@@ -452,11 +452,12 @@ async def profile(request: Request, user: str = Query("", max_length=64)):
 
 @app.get("/api/godeeper")
 async def go_deeper(request: Request, user: str = Query("", max_length=64)):
-    """Threads left open by episodes this listener finished.
+    """Follow-ups predicted for the episodes this listener finished.
 
-    Costs nothing: the thread was recorded when the episode ended. This is the
-    payoff for the widening ending - the specific unresolved thing an episode
-    named, waiting where they will see it.
+    Costs nothing: the model named it on the episode's trailing marker line,
+    which was never spoken. The episode itself does not tease it - it simply
+    ends - and the suggestion is waiting here afterwards for anyone who wants
+    to keep going.
     """
     _rate_limit(request)
     return {"threads": EVENTS.open_threads(user)}
@@ -506,7 +507,7 @@ async def next_thread(
     context: str = Query("", description="Topic the listener just heard"),
     search: bool = Query(False),
 ):
-    """The thread the episode left open, as the follow-up a listener would ask.
+    """The follow-up this listener is most likely to want, after this episode.
 
     Read from the script cache, so it costs no tokens and no time. The interface
     offers it as a one-tap suggestion in Go Deeper: an episode that ends pointed

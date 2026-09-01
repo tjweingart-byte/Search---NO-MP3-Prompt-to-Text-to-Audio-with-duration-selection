@@ -83,9 +83,9 @@ another episode is worth having. Get them the wrong way round and the second one
 never gets tapped.
 
 The failure this rules out, which the ending rules could otherwise produce:
-**the thread must never be the answer withheld.** Withholding is not momentum,
-it is a bait and switch, and a listener spots it instantly. Close the question
-they came with, completely — then let the answer open a *different* one.
+**the episode must never withhold.** Withholding is not momentum, it is a bait
+and switch, and a listener spots it instantly. Close the question they came
+with, completely — and then stop.
 
 **And it is a story; that is the product.** Not a briefing with storytelling
 added — the narrative is how the information arrives. A listener asking about a
@@ -101,40 +101,42 @@ failure modes seen so far:
   atmosphere. This is what makes a listener think *get to the point*.
 
 The aim is **annexation**: not inviting the listener in, but absorbing them
-before they decide to come, so that leaving takes a deliberate act. Three
+before they decide to come, so that leaving takes a deliberate act. Two
 mechanics carry it:
 
-* **No exits.** A closed loop is a place to stop. Every resolution opens the
-  next question. Summaries, recaps and "so, to sum up" hand the listener their
-  coat.
-* **Endings widen, they do not conclude.** The last line points at what this is
-  part of or what happens next. They should finish *inside* the subject.
-* **One named thread, left open — never the main one.** Widening is not a mood,
-  it is a specific unresolved thing - a decision not yet taken, a figure that does not add up -
-  set up earlier in the episode and still standing at the end. It has to already
-  be in the room: nobody wants to know more about something introduced in the
-  final sentence. It is second-order: something the answer itself raised, that
-  they could not have known to ask when they started. Stated as a fact still in
-  motion, never as a question asked of the listener.
 * **Speak from inside.** No orienting, no justifying the topic. Begin as though
   continuing a conversation they were already in.
+* **Land it and stop.** The last line is the most concrete thing in the piece,
+  and then it ends, mid-stride. No summary, no recap, no "so, to sum up" — each
+  hands the listener their coat.
+
+**Endings do not tease. (Reversed — this used to say the opposite.)** The rule
+was once "endings widen, they do not conclude": leave one named thread standing
+and end pointed at it. On paper that is momentum. Heard back to back it is a
+hook at the end of every single episode, which is a tease, and it was asked for
+to be removed twice. So: no dangling hook, no "but that raises another
+question", no rhetorical question at the end, no forecasting. Anything genuinely
+unresolved is said *inside* the piece — plainly, as unresolved, and then the
+piece carries on.
 
 The guard: every sentence must carry information. Atmosphere alone is cut. The
 point should be arriving continuously, from the first line, inside the story.
 
-This also has an architectural consequence for the browse surfaces: if an
-episode ends by widening rather than concluding, the natural next move is the
-next episode - which is exactly what dailyFAM's infinite swipe and myFAM's tiles
-are for. The ending of one is the entry to the next.
+**Go Deeper did not lose its suggestion — it stopped coming from the script.**
+The model still writes a trailing `<<NEXT: ...>>` line, stripped before
+synthesis and never spoken, but it is now a *prediction* rather than a promise:
+having heard this episode, what would this listener most likely ask next, read
+off what was actually covered. The likeliest follow-up, not the most obscure
+one. The pipeline stores it beside the script, `GET /api/next` returns it for
+free, and Go Deeper offers it as a one-tap chip — so the suggestion is waiting
+afterwards for anyone who wants it, and costs nothing to anyone who does not.
+The script is explicitly barred from gesturing at it.
 
-**The thread is carried out of the script, not just left in the listener's
-head.** The model names it on a trailing `<<NEXT: ...>>` line, stripped before
-synthesis and never spoken; the pipeline stores it beside the script in the
-cache, `GET /api/next` returns it for free, and the Go Deeper sheet offers it as
-a one-tap chip. Wanting to go deeper and actually tapping Go Deeper were
-separated by having to compose a question into an empty box; that step is now
-gone. The same thread is the obvious thing for the browse surfaces to prefetch a
-script for.
+Note what this costs, so it is a known trade rather than a surprise: the
+browse surfaces no longer get their "the ending of one is the entry to the
+next" pull for free. dailyFAM's infinite swipe and myFAM's tiles now have to
+earn the next tap on their own, which is what the predicted follow-up and the
+prefetch plan are for.
 
 Note this **replaced an earlier rule** that said to open with the answer
 immediately. That was news-writing — the inverted pyramid — and it is the

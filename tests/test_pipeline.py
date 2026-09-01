@@ -889,11 +889,23 @@ def test_length_describes_story_scope_not_a_section_template():
 # --------------------------------------------------------------------------
 
 
-def test_the_prompt_forbids_building_exits():
+def test_the_prompt_forbids_teasing_the_next_episode():
+    """Deliberate reversal: episodes close, they no longer widen.
+
+    The old rules told the writer to leave one thread standing and end pointed
+    at it. Heard back to back that reads as a tease at the end of every
+    episode, so the ending now lands and stops. The Go Deeper suggestion did
+    not go away - it moved off the script entirely and onto the silent
+    <<NEXT>> line, where it costs the listener nothing.
+    """
     from script_generator import SYSTEM_PROMPT
 
-    assert "Never build an exit" in SYSTEM_PROMPT
-    assert "Do not end. Widen" in SYSTEM_PROMPT
+    assert "Never tease" in SYSTEM_PROMPT
+    assert "Land it, then stop" in SYSTEM_PROMPT
+    assert "Never ask the listener a question at the end" in SYSTEM_PROMPT
+    for gone in ("Do not end. Widen", "Never build an exit", "Leave exactly one thread"):
+        assert gone not in SYSTEM_PROMPT, f"{gone!r} is the doctrine that was removed"
+    # Summarising was never the point of the change and stays banned by name.
     for exit_signal in ("to sum up", "in conclusion", "the bottom line is"):
         assert exit_signal in SYSTEM_PROMPT, f"{exit_signal!r} should be banned by name"
 
@@ -907,10 +919,11 @@ def test_the_prompt_asks_the_writer_to_speak_from_inside():
     assert "point of view" in SYSTEM_PROMPT
 
 
-def test_the_brief_asks_for_momentum_and_a_widening_end():
+def test_the_brief_asks_for_momentum_and_a_clean_finish():
     prompt = build_prompt(plan_episode("a topic", 3))
     assert "make the next thing matter more" in prompt
-    assert "leave one thread open" in prompt
+    assert "Finish when the answer is finished" in prompt
+    assert "Do not tease" in prompt
     assert "<<NEXT:" in prompt
 
 
@@ -918,37 +931,35 @@ def test_the_brief_puts_answering_the_question_before_the_craft():
     """Satisfied first, curious second - and the brief has to say so."""
     prompt = build_prompt(plan_episode("a topic", 3))
     assert "Answer them." in prompt
-    assert prompt.index("Answer them.") < prompt.index("leave one thread open")
-    assert "not the one they asked about" in prompt
+    assert prompt.index("Answer them.") < prompt.index("Finish when the answer is finished")
 
 
-def test_the_prompt_refuses_to_let_the_thread_be_the_withheld_answer():
-    """The failure mode the ending rules could otherwise produce: a tease.
-
-    "Leave something open" and "answer the question" pull against each other,
-    and a model resolving that tension the wrong way withholds the answer and
-    calls it momentum. The prompt has to settle it explicitly.
-    """
+def test_the_prompt_says_the_episode_closes():
+    """Nothing is held back for a later episode, and nothing is dangled."""
     from script_generator import SYSTEM_PROMPT
 
     assert "Answer them." in SYSTEM_PROMPT
     assert "satisfied first, curious second" in SYSTEM_PROMPT.lower()
-    assert "never the answer held" in SYSTEM_PROMPT
-    assert "never the main one" in SYSTEM_PROMPT
+    assert "the episode **closes**" in SYSTEM_PROMPT
+    assert "do not leave a hook dangling" in SYSTEM_PROMPT
     # The job has to outrank the craft, so it has to come before it.
-    assert SYSTEM_PROMPT.index("Answer them.") < SYSTEM_PROMPT.index("Leave exactly one thread")
+    assert SYSTEM_PROMPT.index("Answer them.") < SYSTEM_PROMPT.index("How it ends:")
 
 
-def test_the_prompt_asks_for_one_named_unresolved_thread():
-    """Widening only converts into a Go Deeper tap if it names something."""
+def test_the_next_line_is_a_prediction_the_script_never_hints_at():
+    """Go Deeper still needs a suggestion; the episode just stops supplying it.
+
+    It is now read off what the episode covered - the likeliest next question,
+    not the most obscure one - and the script is explicitly barred from
+    gesturing at it, which is what the listener was hearing as a tease.
+    """
     from script_generator import SYSTEM_PROMPT
 
-    assert "Leave exactly one thread" in SYSTEM_PROMPT
-    # A thread the listener has never heard of is a tease, not a thread.
-    assert "already be in the room" in SYSTEM_PROMPT
-    # And curiosity is not manufactured by asking for it.
-    assert "Point at it, do not ask about it" in SYSTEM_PROMPT
     assert "<<NEXT:" in SYSTEM_PROMPT
+    assert "This is a *prediction*, not a promise" in SYSTEM_PROMPT
+    assert "must not gesture at it" in SYSTEM_PROMPT
+    assert "Not the most obscure follow-up, the most likely one." in SYSTEM_PROMPT
+    assert "never spoken" in SYSTEM_PROMPT
 
 
 def test_the_thread_marker_is_extracted_and_never_spoken():
@@ -1089,11 +1100,11 @@ def test_the_ending_rules_are_stated_once_each():
     """The dedup pass: each ending rule appears in one place, not three."""
     from script_generator import SYSTEM_PROMPT
 
-    # "Widen" was previously explained in three separate bullets across two
-    # sections. One section, one statement each.
-    assert SYSTEM_PROMPT.count("Do not end. Widen") == 1
-    assert SYSTEM_PROMPT.count("Never build an exit") == 1
-    assert SYSTEM_PROMPT.count("Leave exactly one thread") == 1
+    # The ending rules were once spread over three bullets in two sections.
+    # One section, one statement each - now for closing rather than widening.
+    assert SYSTEM_PROMPT.count("Land it, then stop") == 1
+    assert SYSTEM_PROMPT.count("Never tease") == 1
+    assert SYSTEM_PROMPT.count("<<NEXT:") == 1
 
 
 def test_the_prompt_stays_lean():

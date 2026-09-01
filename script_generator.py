@@ -91,9 +91,10 @@ def remember_opener(text: str) -> None:
     del _RECENT_OPENERS[:-_RECENT_LIMIT]
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
-# The one line the model may write that is not speech: the thread it left open,
-# phrased as the follow-up a listener would ask for. Stripped before synthesis
-# and handed to the interface, which offers it as a one-tap "go deeper".
+# The one line the model may write that is not speech: its prediction of what
+# this listener would most likely ask next, read off what the episode covered.
+# Stripped before synthesis and handed to the interface, which offers it as a
+# one-tap "go deeper". The script itself never hints at it.
 _NEXT_MARKER = re.compile(r"<<\s*NEXT\s*:\s*([^<>]{1,160}?)\s*>>", re.I)
 # Anything that would be read aloud as punctuation noise rather than speech.
 _MARKDOWN = re.compile(r"[*_`#>\[\]]|^\s*[-•]\s+", re.MULTILINE)
@@ -109,10 +110,12 @@ anything if it does not. So: satisfied first, curious second. The curiosity \
 makes them want another episode; the satisfaction makes them believe another \
 is worth having.
 
-Which means what you leave open at the end is **never the answer held back**. \
-Withholding is not momentum, it is a bait and switch, and a listener feels it \
-immediately. Close the question they came with completely, then let the answer \
-open a different one.
+Which means the episode **closes**. Answer the question completely and stop. \
+Do not hold anything back for later, do not point at what you are not going to \
+cover, and do not leave a hook dangling to make them want more - a listener \
+feels that immediately and it reads as a bait and switch. If the next episode \
+is worth having, it is because this one was good, not because this one teased \
+it.
 
 Before you write, find the angle:
 - **Find what they have slightly wrong.** The most interesting version of \
@@ -161,27 +164,23 @@ explaining that is proof it is not.
 is weak, what is actually surprising. Neutral survey is how something reads as \
 generated rather than told.
 
-How it ends, which decides whether they stay:
-- **Never build an exit. Do not end. Widen.** A closed loop is a place to \
-stop. Resolve the question you opened, then let the answer raise the next one, \
-so the natural move is forward rather than away. Never summarise, never recap. \
-They should finish inside the subject, not outside it holding a summary of it.
-- **Leave exactly one thread, and never the main one.** It is second-order: \
-something the answer itself raised, that they could not have known to ask when \
-they started. If your last line could leave them thinking "so you never \
-actually told me", you withheld rather than widened. Name it concretely - a \
-decision not yet taken, a figure that does not add up, someone whose next move \
-decides it - nameable in a handful of words, and worth a whole episode of its \
-own.
-- **It has to already be in the room.** Set it up in passing while you are \
-telling the story and leave it standing. First mentioned in the final \
-sentence, it reads as a tease.
-- **Point at it, do not ask about it.** No rhetorical questions ("but will it \
-hold?"), no promises about what comes next, no "we'll have to wait and see". \
-State it as a fact still in motion and stop there.
-- **No exit signals, ever:** "so, to sum up", "in conclusion", "all in all", \
-"the bottom line is", "and that's the story of". Each hands the listener their \
-coat.
+How it ends:
+- **Land it, then stop.** The last line is the strongest, most concrete thing \
+you have - the detail that makes the answer stick. Then stop, mid-stride. An \
+episode that has said what it came to say does not need a closing move.
+- **Never tease.** No hook for a future episode, no "but that raises another \
+question", no "there is more to this than", no pointing at something you are \
+deliberately not covering. If a thing is worth mentioning it is worth \
+answering; if it is not worth answering, leave it out entirely.
+- **No rhetorical questions and no forecasting.** Not "but will it hold?", not \
+"we will have to wait and see", not "watch this space". Never ask the listener \
+a question at the end.
+- **Never summarise or recap.** They just heard it. "So, to sum up", "in \
+conclusion", "all in all", "the bottom line is", "and that's the story of" - \
+each one hands the listener their coat.
+- Unresolved things belong *in* the piece, where you say plainly that they are \
+unresolved and why, and then carry on. They do not belong at the end as a \
+parting hook.
 
 The line you must not cross:
 Every sentence carries information. Atmosphere on its own is cut. If a \
@@ -216,12 +215,19 @@ ninety-eight".
 
 One line after the script, which is never spoken:
 
-<<NEXT: the thing they would want to hear about next>>
+<<NEXT: what they would most likely wonder about next>>
+
+This is a *prediction*, not a promise, and the script must not gesture at it in \
+any way. Having just heard this episode, what is the single most natural thing \
+this listener would go on to ask? Read it off what you actually covered: the \
+mechanism you explained that has an obvious next step, the figure that invites \
+"compared to what", the decision you described that someone has to make. Not \
+the most obscure follow-up, the most likely one.
 
 Write it as a request, not a title - "whether the appeal actually gets heard", \
-"why the 1998 ruling still binds". Six to twelve words, and it must be the \
-thread you actually left open, not a related topic you thought of afterwards. \
-The app strips it before anything is spoken; write nothing after it.
+"why the 1998 ruling still binds". Six to twelve words. The app strips this \
+line before anything is spoken and offers it as a suggestion afterwards, so it \
+costs the listener nothing if you guess wrong; write nothing after it.
 """
 
 
@@ -239,13 +245,15 @@ class ScriptNotes:
     has already caused one bug in this file; an argument cannot go stale.
     """
 
-    #: The thread the episode deliberately left open, phrased as the follow-up
+    #: The follow-up this listener is most likely to want next, predicted by
+    #: the model from what the episode covered. Never spoken, never hinted at
+    #: in the script - it exists to fill the Go Deeper suggestion.
     #: a listener would ask for. Empty when the model did not name one.
     thread: str = ""
 
 
 def extract_thread(text: str) -> str:
-    """Pull the go-deeper thread out of the model's trailing marker line."""
+    """Pull the predicted follow-up out of the model's trailing marker line."""
     match = _NEXT_MARKER.search(text)
     if not match:
         return ""
@@ -405,20 +413,17 @@ moving: each thing you tell them should make the next thing matter more. By the
 end they should understand it, and should have felt taken somewhere rather than
 briefed.
 
-Then leave one thread open - and not the one they asked about. Close their
-question first, completely. The thread is something the answer itself raised
-and they could not have known to ask about when they started: a decision still
-to be taken, a number that does not add up, someone whose next move decides it.
-Set it up in passing while you are telling the story, then end pointed at it,
-still open. Never a summary of what you just said, never a question asked of
-the listener.
+Finish when the answer is finished. Land on the most concrete thing you have
+and stop. Do not tease what you are not covering, do not end on a question, and
+do not summarise what they just heard.
 
-Then, on its own line after the script, write that thread as the follow-up they
-would ask for:
+Then, on its own line after the script, predict the single most likely thing
+they would go on to ask, having heard this:
 
 <<NEXT: six to twelve words>>
 
-That line is stripped before anything is spoken. Nothing goes after it.
+Read it off what you actually said. That line is stripped before anything is
+spoken and the script must not hint at it. Nothing goes after it.
 
 The time is the listener's, not a quota. If the story resolves early, stop
 there; a short piece that lands beats a long one padded out. If you catch
