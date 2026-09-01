@@ -35,6 +35,11 @@ def _load_dotenv() -> None:
         lines = path.read_text().splitlines()
     except (OSError, UnicodeDecodeError):
         return
+    # Last occurrence wins, which is what `source .env` does. A loader that took
+    # the first would disagree with the shell scripts about the same file - and
+    # a .env that has been appended to twice (an old key, then the corrected
+    # one) would authenticate with the wrong one, silently.
+    found: dict[str, str] = {}
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -47,7 +52,10 @@ def _load_dotenv() -> None:
             name = name[len("export "):].strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
-        if name and name not in os.environ:
+        if name:
+            found[name] = value
+    for name, value in found.items():
+        if name not in os.environ:
             os.environ[name] = value
 
 
@@ -205,3 +213,18 @@ class Settings:
 
 
 settings = Settings()
+
+
+def describe_key(key: str = "") -> str:
+    """A safe fingerprint of the key in force, for error messages.
+
+    "invalid x-api-key" looks the same whichever wrong key produced it, and the
+    first question is always whether the one being sent is the one you think.
+    Never prints enough to be a secret: a prefix, a length and the last four.
+    """
+    key = key or settings.anthropic_api_key
+    if not key:
+        return "no key configured"
+    shape = "looks like an API key" if key.startswith("sk-ant-") else (
+        "DOES NOT start with sk-ant- - is this an API key?")
+    return f"{key[:8]}...{key[-4:]} ({len(key)} chars, {shape})"

@@ -22,10 +22,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from anthropic_client import describe_http_version, http2_enabled
+from anthropic_client import build_async_client, describe_http_version, http2_enabled
 from cache import MemoryScriptCache, SqliteScriptCache, build_cache
 from demo_script import DemoGenerator
-from config import settings
+from config import describe_key, settings
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import attachments as attachments_mod
@@ -57,10 +57,48 @@ if VOICE_STORE["adopted"]:
     )
 log.info("voices: %s", voice_store.describe())
 
+#: Filled in at startup by _verify_credentials. "unchecked" until then.
+CREDENTIALS = {"state": "unchecked", "detail": "", "key": ""}
+
+
+async def _verify_credentials() -> None:
+    """Ask Claude whether the key works, before anyone presses play.
+
+    Every credential failure this project has had was discovered by a listener,
+    mid-episode, as a 502 - because the app validated its *configuration* (is a
+    key set?) and never the credential (does it work?). A key that is missing,
+    expired, revoked, truncated on paste, or simply the wrong string all look
+    identical until the first request, and by then someone is waiting for audio.
+
+    `models.retrieve` is the cheapest possible question: it bills nothing, and
+    it answers both "is this key accepted" and "can this account use this
+    model" - which are the two ways this has actually failed.
+    """
+    CREDENTIALS["key"] = describe_key()
+    if DEMO_MODE:
+        CREDENTIALS.update(state="absent", detail="No API key: the canned sample script is standing in.")
+        log.warning("NO API KEY - every episode will be the built-in sample script, "
+                    "which does not answer what was asked.")
+        return
+    try:
+        client = build_async_client()
+        await client.models.retrieve(settings.model)
+    except Exception as exc:  # noqa: BLE001 - the report matters, not the type
+        CREDENTIALS.update(state="rejected", detail=friendly_error(exc))
+        log.error("CREDENTIALS REJECTED - nothing will generate. %s", CREDENTIALS["detail"])
+        log.error("  key in force: %s", CREDENTIALS["key"])
+        log.error("  fix it and restart; the interface says the same thing on every tab.")
+        return
+    CREDENTIALS.update(state="ok", detail=f"{settings.model} is reachable with this key.")
+    log.info("credentials OK - %s reachable (%s)", settings.model, CREDENTIALS["key"])
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Pay the voice model's load cost now rather than on the first listener.
     await warm_up()
+    # Before a listener finds out the hard way.
+    await _verify_credentials()
     # Expired scripts are already filtered out on read, so nothing ever deleted
     # them and the file grew for the life of the deployment. One DELETE at
     # startup is enough: entries expire on a timescale of days, not minutes.
@@ -226,6 +264,8 @@ async def health() -> dict:
         "web_search_default": settings.enable_web_search,
         "http": {"version": describe_http_version(), "http2_negotiated": http2_enabled()},
         "api_key_configured": bool(settings.anthropic_api_key),
+        # Configured is not the same as working, and only one of them matters.
+        "credentials": CREDENTIALS,
         "sample_rate": build_engine().sample_rate,
         "min_minutes": settings.min_minutes,
         "max_minutes": settings.max_minutes,

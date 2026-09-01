@@ -1341,6 +1341,19 @@
       Array.prototype.forEach.call(document.querySelectorAll(".generating .gen-text"), function(node){
         node.textContent = "Playing the built-in sample script…";
       });
+    } else if(h.credentials && h.credentials.state === "rejected"){
+      // "Live" was a lie whenever the key did not work: the server had a key
+      // configured, so it said live, and then every episode 502'd. The server
+      // now asks Claude at startup whether the key is accepted, so this is
+      // known before anyone presses play rather than during the wait.
+      document.body.classList.add("demo-mode");
+      el.style.color = "var(--coral)";
+      el.textContent = "KEY REJECTED — " + h.credentials.detail
+                     + "  Key in force: " + h.credentials.key
+                     + ". Nothing will generate until this is fixed and the server restarted.";
+      Array.prototype.forEach.call(document.querySelectorAll(".generating .gen-text"), function(node){
+        node.textContent = "The server's API key was rejected…";
+      });
     } else {
       el.style.color = "var(--sage)";
       el.textContent = "Live — briefings written by " + h.model + ", voice: " + h.tts.selected + ".";

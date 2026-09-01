@@ -260,6 +260,13 @@ another rule.
   mode did announce itself, in an 8.5px chip, and still cost a whole session -
   and it was writing its canned script into the shared cache, so the failure
   outlived the run. Announcing is not enough if the thing keeps a record.)*
+- **Verify, do not inspect.** *(PROBLEMS.md §52.)* Four consecutive failures on
+  a real machine all had the same shape: a check answered a cheaper question
+  than the one being asked and then reported OK. "A key is set" is not "the key
+  works"; "a cache is configured" is not "this generator may write to it". The
+  server now asks Claude at startup whether the credential is actually accepted
+  and says so on every tab. Anything that reports readiness must perform the
+  real action, not confirm that it was configured.
 
 ## Decisions that will shape the next phase
 
@@ -311,7 +318,7 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-51 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-52 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
 A fresh container has none of the dependencies installed. Setup is two lines,

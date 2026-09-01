@@ -86,9 +86,14 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -t 0 ] && [ "$ANYWAY" -eq 0 ]; then
   printf '  Paste one to save it to .env, or press enter to skip: '
   read -r key
   if [ -n "$key" ]; then
-    printf 'ANTHROPIC_API_KEY=%s\n' "$key" >> .env
+    # Replace, never append. Appending leaves two ANTHROPIC_API_KEY lines, and
+    # then "which key is actually being sent" depends on who reads the file -
+    # which is not a question anyone should have to ask about their own .env.
+    [ -f .env ] && grep -v '^[[:space:]]*\(export[[:space:]]*\)\?ANTHROPIC_API_KEY=' .env > .env.tmp 2>/dev/null || : > .env.tmp
+    printf 'ANTHROPIC_API_KEY=%s\n' "$key" >> .env.tmp
+    mv .env.tmp .env
     export ANTHROPIC_API_KEY="$key"
-    printf '  Saved to .env (gitignored).\n'
+    printf '  Saved to .env (gitignored), replacing any earlier key.\n'
   fi
 fi
 

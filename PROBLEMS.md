@@ -2165,3 +2165,60 @@ demo mode leaves `scripts.db` with zero rows and Explore empty.
 **Anyone who ran the broken build must delete `scripts.db` once.** Canned
 scripts cached under real queries do not expire for 24h and will keep playing
 until they do.
+
+## 52. Why it kept happening: everything checked the configuration, nothing checked the thing
+
+Fourth failure in a row on the same machine, and the first one worth a section
+about the pattern rather than the bug. §51 fixed the key not being *found*.
+This time it was found, the app said **Live — briefings written by
+claude-sonnet-5**, and then every episode 502'd on
+`authentication_error: invalid x-api-key`.
+
+Four failures, four different mechanisms, one shape:
+
+| what was checked | what mattered |
+|---|---|
+| is a key set? | does the key work? |
+| is a cache configured? | should *this* generator be allowed to write to it? |
+| is a limiter configured? | does it fire on correct use? |
+| does `.env` exist? | which of its two `ANTHROPIC_API_KEY` lines wins? |
+
+Every one of these validated a proxy and reported success. That is the same
+failure CLAUDE.md already names - **failures must be visible** - arriving from
+a direction the rule did not cover: not a fallback that stayed quiet, but a
+*check* that answered a cheaper question than the one being asked and then said
+OK.
+
+**The self-inflicted one first.** §51's `_load_dotenv` took the **first**
+occurrence of a duplicated name. `source .env`, which `run.sh` and `demo.sh`
+use, takes the **last**. So the same file authenticated differently depending
+on who read it - and `demo.sh` *appended* the pasted key rather than replacing
+it, so a second paste (a corrected key, say) left the stale one winning under
+Python and the new one winning under the shell. The loader now takes the last,
+matching the shell, and `demo.sh` rewrites the line instead of accumulating.
+
+**The class fix: verify, do not inspect.** `app.py` now asks Claude at startup
+whether the key is accepted - `models.retrieve(settings.model)`, which bills
+nothing and answers both "is this key accepted" and "can this account use this
+model", the two ways this has actually failed. The result is logged loudly,
+carried on `/api/health` as `credentials`, and shown by the interface on every
+tab as **KEY REJECTED** with a safe fingerprint of the key in force
+(`sk-ant-t...0000 (32 chars, looks like an API key)`), because a 401 looks
+identical whichever wrong key produced it and the first question is always
+whether the one being sent is the one you think.
+
+`mode` stays `live` in that state on purpose: it reports the configuration.
+`credentials.state` reports reality. Conflating them is what let the interface
+say "Live" over a server that could not generate anything.
+
+**The reason these cluster where they do.** There is no API key in the build
+container and no real speech engine, so the credential path and the audio path
+are precisely the two that cannot be exercised before shipping. Every check
+written here runs green without them - which is why four consecutive failures
+all landed in the untested half. The startup verification does not remove that
+gap; it moves the discovery from a listener mid-episode to the server's first
+ten seconds, which is the most that can be done from here.
+
+Seven tests (`tests/test_credentials.py`) pin it, including that a check which
+cannot run reports rather than raises - Explore needs no credentials at all and
+must keep working when the key is dead.
