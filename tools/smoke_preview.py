@@ -142,6 +142,40 @@ def main() -> int:
             page.reload()
             page.wait_for_timeout(1200)
 
+        def attachments():
+            """A file becomes a chip, and the chip becomes an id on the request.
+
+            Also pins the two rules the feature exists under: an attachment on
+            its own is a summarise request rather than an error, and it is
+            cleared once used so it cannot ride along on the next question.
+            """
+            page.evaluate("setTab('home')")
+            page.wait_for_timeout(300)
+            assert page.query_selector(".attach-btn"), "no way to attach anything"
+            page.set_input_files("#attachFile", {
+                "name": "q3-report.txt", "mimeType": "text/plain",
+                "buffer": b"Revenue fell 12 percent.",
+            })
+            page.wait_for_timeout(800)
+            chips = page.eval_on_selector_all(".attach-chip", "e => e.length")
+            assert chips == 1, f"expected one chip, saw {chips}"
+            name = page.text_content(".attach-chip .nm")
+            assert "q3-report" in name, f"the chip does not name the file: {name!r}"
+            assert page.evaluate("() => attachedIds()"), "the chip carries no id"
+
+            # Nothing typed: the attachment itself is the request.
+            page.evaluate("runSearch()")
+            page.wait_for_timeout(600)
+            asked = page.evaluate("() => TOPICS['_custom'] && TOPICS['_custom'].prompt")
+            assert asked and "attached" in asked.lower(), \
+                f"an attachment alone did not become a request: {asked!r}"
+            carried = page.evaluate("() => TOPICS['_custom'].attach")
+            assert carried, "the episode was generated without the attachment"
+            assert page.eval_on_selector_all(".attach-chip", "e => e.length") == 0, \
+                "the attachment stayed on screen and would ride along on the next search"
+            page.reload()
+            page.wait_for_timeout(1200)
+
         def dailyfam():
             page.evaluate("openPlayFAM()")
             page.wait_for_selector(".mix-card", timeout=10000, state="attached")
@@ -243,6 +277,7 @@ def main() -> int:
         check("myFAM renders three rails", myfam)
         check("Go Deeper titles are not cut off", go_deeper_titles_fit)
         check("Go Deeper fills for a new listener", go_deeper_fills_for_a_new_listener)
+        check("A file can be attached to a search", attachments)
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)

@@ -157,7 +157,11 @@ window.FamAudio = (function () {
               (listener && listener.topicId ? "&topic_id=" + encodeURIComponent(listener.topicId) : "") +
               // Explore replays only. The server refuses to generate on a miss,
               // so a stale card costs a 409 rather than a model call.
-              (listener && listener.cachedOnly ? "&cached_only=true" : "");
+              (listener && listener.cachedOnly ? "&cached_only=true" : "") +
+              // Documents, photos and links the listener attached. Sent as ids
+              // because the text was extracted when they were added - the
+              // generation path never parses a file or fetches a page.
+              (listener && listener.attach ? "&attach=" + encodeURIComponent(listener.attach) : "");
 
     ctx.resume().then(function () {
       return fetch(url, { signal: controller.signal });

@@ -274,6 +274,19 @@ class EpisodePlan:
     #: the guarantee lives in the pipeline rather than in the interface's good
     #: intentions.
     cached_only: bool = False
+    #: Documents, photos and links the listener attached. An episode built on
+    #: these is theirs alone: `pipeline` refuses to cache it, so it never
+    #: reaches Explore or another listener.
+    attachments: tuple = ()
+
+    @property
+    def images(self) -> list:
+        return [a for a in self.attachments if getattr(a, "kind", "") == "image"]
+
+    @property
+    def readable(self) -> list:
+        """Attachments that arrive as text in the prompt rather than as pixels."""
+        return [a for a in self.attachments if getattr(a, "kind", "") != "image"]
 
     @property
     def body_budget(self) -> int:
@@ -302,7 +315,7 @@ def now_line() -> str:
 
 def plan_episode(
     query: str, minutes: int, context: str = "", search: bool | None = None,
-    cached_only: bool = False,
+    cached_only: bool = False, attachments: tuple = (),
 ) -> EpisodePlan:
     """Map a duration in minutes onto a concrete writing brief."""
     minutes = max(settings.min_minutes, min(settings.max_minutes, int(minutes)))
@@ -325,7 +338,7 @@ def plan_episode(
     use_search = settings.enable_web_search if search is None else bool(search)
     return EpisodePlan(
         query, minutes, target_seconds, word_budget, sections, reserved, context,
-        use_search, cached_only,
+        use_search, cached_only, tuple(attachments or ()),
     )
 
 
@@ -341,6 +354,27 @@ def build_prompt(plan: EpisodePlan) -> str:
         if plan.reserved_words
         else ""
     )
+    attached = ""
+    if plan.readable or plan.images:
+        blocks = "\n\n".join(a.as_prompt_block() for a in plan.readable)
+        photos = len(plan.images)
+        photo_line = ""
+        if photos:
+            photo_line = (
+                f"\nThe listener also attached {photos} image"
+                f"{'s' if photos != 1 else ''}, which you can see. Read "
+                "what is actually in them.\n"
+            )
+        attached = f"""
+The listener attached this themselves. It is the material they want the episode
+built on, so it outranks anything you recall on the subject - where the two
+disagree, theirs is the subject and you should say plainly that it differs from
+what is generally reported. Do not pad with background they did not ask for,
+and do not claim anything about a document beyond what is in it.
+
+{blocks}
+{photo_line}"""
+
     follow_up = ""
     if plan.context:
         follow_up = f"""
@@ -356,7 +390,7 @@ straight into the narrower thing they asked for and stay on it.
 <request>{plan.query}</request>
 
 It is currently {now_line()}. Prefer the newest information you can establish.
-{follow_up}
+{attached}{follow_up}
 You have about {plan.minutes} minute{"s" if plan.minutes != 1 else ""} - roughly
 {budget} words. That is room for {plan.sections[0]}.
 
@@ -424,12 +458,24 @@ class ScriptGenerator:
         self.client = build_async_client(key)
 
     def _request_kwargs(self, plan: EpisodePlan) -> dict:
+        # Photos travel as image blocks, not as text, and go *before* the
+        # prompt: the instructions refer to them, so they have to be in view by
+        # the time they are mentioned.
+        content: list = [
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": image.media_type,
+                           "data": image.data_b64},
+            }
+            for image in plan.images
+        ]
+        content.append({"type": "text", "text": build_prompt(plan)})
         kwargs: dict = {
             "model": settings.model,
             "max_tokens": settings.max_output_tokens,
             "system": system_prompt(),
             "output_config": {"effort": settings.effort},
-            "messages": [{"role": "user", "content": build_prompt(plan)}],
+            "messages": [{"role": "user", "content": content}],
         }
         if plan.search:
             kwargs["tools"] = [

@@ -28,6 +28,7 @@ from demo_script import DemoGenerator
 from config import settings
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
+import attachments as attachments_mod
 import topics as topics_mod
 import mixes as mixes_mod
 import social as social_mod
@@ -66,6 +67,9 @@ async def lifespan(_: FastAPI):
     purged = getattr(SCRIPT_CACHE, "purge_expired", lambda: 0)()
     if purged:
         log.info("cache: dropped %d expired script(s)", purged)
+    stale = ATTACHMENTS.purge_expired()
+    if stale:
+        log.info("attachments: dropped %d expired", stale)
     yield
 
 
@@ -107,6 +111,9 @@ def friendly_error(exc: Exception) -> str:
 # One cache shared by every request this worker serves - and, with the SQLite
 # backend, by every other worker on the machine too.
 SCRIPT_CACHE = build_cache()
+ATTACHMENTS = attachments_mod.AttachmentStore(
+    os.environ.get("ATTACHMENTS_PATH", "attachments.db")
+)
 
 # With no credentials the app runs on a built-in sample script instead of
 # refusing to start. Everything downstream of the model - streaming, pacing,
@@ -155,7 +162,7 @@ def _rate_limit(request: Request) -> None:
 
 
 def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None = None,
-                    cached_only: bool = False):
+                    cached_only: bool = False, attachments: tuple = ()):
     q = (q or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="Ask a question first.")
@@ -166,7 +173,8 @@ def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None
             status_code=400,
             detail=f"Length must be {settings.min_minutes}-{settings.max_minutes} minutes.",
         )
-    return plan_episode(q, minutes, (context or "").strip()[:300], search, cached_only)
+    return plan_episode(q, minutes, (context or "").strip()[:300], search, cached_only,
+                        attachments)
 
 
 class ScriptRequest(BaseModel):
@@ -238,6 +246,58 @@ class MixRequest(BaseModel):
     topic_ids: Optional[list[Union[str, dict]]] = None
     #: Public mixes appear on the listener's profile.
     public: Optional[bool] = None
+
+
+def _attachments_for(user: str, ids: str) -> tuple:
+    """Resolve `attach=` into stored attachments, or say which one is gone.
+
+    Silently dropping an expired attachment would produce an episode about a
+    document the listener believes was read and was not - the exact failure
+    this project treats as worse than an error.
+    """
+    wanted = [i for i in (ids or "").split(",") if i.strip()]
+    if not wanted:
+        return ()
+    found = ATTACHMENTS.resolve(user, wanted)
+    if len(found) != len(wanted):
+        raise HTTPException(
+            status_code=410,
+            detail="An attachment has expired. Add it again and re-run the search.",
+        )
+    return tuple(found)
+
+
+class AttachRequest(BaseModel):
+    user: str = Field("", max_length=64)
+    kind: str = Field(..., pattern="^(document|image|link)$")
+    name: str = Field("", max_length=300)
+    data: str = Field("", description="Base64 file contents; documents and photos")
+    url: str = Field("", max_length=2000)
+
+
+@app.post("/api/attach")
+async def attach(req: AttachRequest, request: Request) -> dict:
+    """Extract a document, photo or link once, when it is added.
+
+    Deliberately not on the generation path: reading a PDF or fetching a page
+    is a round-trip, and the one thing this product will not spend is seconds
+    in front of the first word. Doing it here puts the cost while someone is
+    still typing.
+    """
+    _rate_limit(request)
+    try:
+        item = attachments_mod.build(req.kind, req.name, req.data, req.url)
+    except attachments_mod.AttachmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ATTACHMENTS.put(req.user, item)
+    return item.as_dict()
+
+
+@app.delete("/api/attach")
+async def detach(request: Request, user: str = Query("", max_length=64),
+                 id: str = Query(..., max_length=64)) -> dict:
+    _rate_limit(request)
+    return {"ok": ATTACHMENTS.delete(user, id)}
 
 
 @app.get("/api/topics")
@@ -477,6 +537,7 @@ async def audio(
     user: str = Query("", max_length=64, description="Anonymous listener id, for myFAM"),
     cached_only: bool = Query(False, description="Replay only; never generate. Used by Explore"),
     topic_id: str = Query("", max_length=64, description="Bank topic id, when played from myFAM"),
+    attach: str = Query("", max_length=400, description="Attachment ids from /api/attach"),
 ):
     """Stream the episode.
 
@@ -485,7 +546,8 @@ async def audio(
     chunks itself and therefore starts sooner and seeks better.
     """
     _rate_limit(request)
-    plan = _validated_plan(q, minutes, context, search, cached_only)
+    plan = _validated_plan(q, minutes, context, search, cached_only,
+                           _attachments_for(user, attach))
 
     try:
         pipeline = _make_pipeline(voice or None)

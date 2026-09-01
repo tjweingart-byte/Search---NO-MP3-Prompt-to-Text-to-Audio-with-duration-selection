@@ -1917,3 +1917,47 @@ prose. Making the opener run *longer* makes it worse, not better, because
 everything it adds is by construction filler. The cure named in CLAUDE.md
 still stands: remove the wait rather than fill it better - fewer web searches,
 a faster script model, or prefetch on the browse surfaces.
+
+## 47. Attachments: documents, photos and links as context
+
+A search can now carry material the listener supplies. `attachments.py`
+extracts it, `AttachmentStore` holds it for six hours, and the script prompt
+gets it ahead of the question.
+
+**Extraction happens on attach, never on generation.** Reading a PDF or
+fetching a page is a round-trip, and seconds in front of the first word is the
+one thing this product will not spend - it is the mistake CLAUDE.md records
+about live web search. Doing it when the file is added puts the cost while
+someone is still typing, and the generation path only ever resolves an id.
+
+**Every failure is a sentence the listener can act on.** An unreadable PDF, a
+scanned one with no text layer, a dead link, a .exe, an empty file - each names
+what happened and what would work instead, and the chip stays on screen marked
+failed rather than disappearing. Silently dropping it would produce a confident
+episode about a document nobody read. `/api/audio` returns 410 rather than
+generating if an id has expired, for the same reason.
+
+One detail worth keeping: the pypdf import is guarded with `except
+BaseException`, not `except Exception`. A missing package raises ImportError,
+but pypdf's optional native crypto dependency can raise pyo3's
+`PanicException`, which does not inherit from Exception - the narrower catch
+let a broken install take down the request instead of explaining itself. This
+container has exactly that broken install, which is how it was found.
+
+**.docx needs no dependency.** It is a zip of XML, so the words come out with
+`zipfile` and a regex. Only PDF needs a package, and it is optional.
+
+**Nothing attached is ever cached.** `_cache_key` returns "" when a plan has
+attachments, so there is no read, no write, and nothing that could be served to
+another listener or surface in Explore. That was the answer to the design
+question; the alternative was a content hash, which puts listener-supplied
+material in a shared store.
+
+An attachment with nothing typed is a summarise request, not an error. It is
+cleared after the search, so it cannot ride along on the next, unrelated one.
+
+**A checker bug found on the way.** `check_css.py` read `class="attach-chip' +
+cls + '"` as using a class called `cls`. It now strips JavaScript splices out
+of attribute values before splitting. It still tracks class *names* rather than
+selector context, so `.share-contact .nm` counts as defining `.nm` anywhere -
+a known coarseness, not worth a full CSS matcher.

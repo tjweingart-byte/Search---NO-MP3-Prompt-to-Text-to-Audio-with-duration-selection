@@ -10,3 +10,7 @@ pytest>=8.0
 # For fastapi.testclient only. The Anthropic SDK uses httpx2, which it pulls in
 # itself - do not add httpx expecting the SDK to use it.
 httpx>=0.27
+
+# Optional: PDF attachments. Everything else (docx, text, links, photos)
+# needs no extra package; without this a PDF fails with a message saying so.
+pypdf>=4.0

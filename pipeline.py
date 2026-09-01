@@ -495,6 +495,11 @@ class PodcastPipeline:
         """Where this episode lives in the shared cache. "" when caching is off."""
         if not self.cache:
             return ""
+        # An episode built on someone's own document, photo or link is theirs.
+        # No key means no read, no write, and therefore nothing that could be
+        # served to another listener or surface in Explore.
+        if plan.attachments:
+            return ""
         canonical = None
         if settings.cache_semantic_key:
             canonical = await canonical_key(plan.query, self.generator.client)

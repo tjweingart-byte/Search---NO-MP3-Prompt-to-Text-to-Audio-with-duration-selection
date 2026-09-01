@@ -18,3 +18,4 @@ voices/
 *.db-shm
 preview/fam-preview.html
 preview/fam-artifact.html
+attachments.db

@@ -105,6 +105,11 @@ def load_fixtures() -> dict:
         "/api/myfam": myfam,
         "/api/mixes": mixes,
         "/api/topics": {"topics": bank},
+        # The preview never reads a real file: it stands in for the extraction
+        # so the flow and the chips can be exercised on a phone.
+        "/api/attach": {"id": "preview-attachment", "kind": "document",
+                        "name": "Attached file", "chars": 4200, "url": "",
+                        "preview": "A stand-in for extracted text."},
         "/api/explore": explore,
         "/api/next": {"thread": "why the shipping lanes run through Omani water"},
         # Two open threads; the shim seeds two part-heard episodes alongside
@@ -204,6 +209,20 @@ SHIM = """
 
     if (path === "/api/audio") {
       return silence(Math.max(1, Number(qs.get("minutes") || 1)) * 60);
+    }
+    if (path === "/api/attach") {
+      if (method === "DELETE") return json({ ok: true });
+      // Echo the name back so the chip reads like the real thing. No file is
+      // ever parsed here - the preview has no server.
+      var sent = JSON.parse((init && init.body) || "{}");
+      var stub = FIXTURES["/api/attach"];
+      return json({
+        id: "preview-" + Math.random().toString(36).slice(2, 8),
+        kind: sent.kind || "document",
+        name: sent.name || sent.url || stub.name,
+        chars: sent.kind === "image" ? 0 : stub.chars,
+        url: sent.url || "", preview: stub.preview
+      });
     }
     if (path === "/api/mixes" && method === "GET") return json(mixes);
     if (path === "/api/mixes" && method === "POST") {

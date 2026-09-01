@@ -25,12 +25,18 @@ HOOKS = {
 }
 
 
+#: A JavaScript expression spliced into a class attribute, e.g.
+#: `class="attach-chip' + cls + '"`. The variable name is not a class, and
+#: reading it as one asks for a rule that should not exist.
+SPLICE = re.compile(r"""(['"])\s*\+.*?\+\s*\1|(['"])\s*\+[^'"]*""", re.S)
+
+
 def used_classes(html: str) -> set[str]:
     out: set[str] = set()
     for attr in re.findall(r'class="([^"$]*)"', html):
-        out.update(attr.split())
+        out.update(SPLICE.sub(" ", attr).split())
     for attr in re.findall(r"class='([^'$]*)'", html):
-        out.update(attr.split())
+        out.update(SPLICE.sub(" ", attr).split())
     return {c for c in out if re.fullmatch(r"[A-Za-z][\w-]*", c)}
 
 

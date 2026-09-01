@@ -82,6 +82,23 @@
   .go-btn{ width:36px; height:36px; border-radius:50%; background:var(--copper); color:var(--ink); border:none; display:flex; align-items:center; justify-content:center; flex:none; cursor:pointer; }
   .go-btn:active{ transform:scale(0.94); }
   .fam-controls{ display:flex; align-items:center; justify-content:space-between; margin:9px 2px 0; }
+  /* Attachments. The chip carries the file's name because "1 attachment" is
+     not enough to notice you attached the wrong thing. */
+  .attach-btn{ width:36px; height:36px; border-radius:50%; background:var(--surface);
+    color:var(--text-muted); border:1px solid var(--border-strong); display:flex;
+    align-items:center; justify-content:center; flex:none; cursor:pointer; }
+  .attach-btn:active{ transform:scale(0.94); }
+  .attach-row{ display:flex; flex-wrap:wrap; gap:6px; margin:9px 2px 0; }
+  .attach-row:empty{ display:none; }
+  .attach-chip{ display:flex; align-items:center; gap:7px; max-width:100%;
+    padding:6px 9px; border-radius:9px; background:var(--surface);
+    border:1px solid var(--border-strong); font-size:11px; color:var(--text); }
+  .attach-chip .nm{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px; }
+  .attach-chip .sz{ font-family:'JetBrains Mono', monospace; font-size:8px;
+    color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; }
+  .attach-chip .rm{ color:var(--text-muted); cursor:pointer; font-size:13px; line-height:1; }
+  .attach-chip.working{ opacity:0.6; }
+  .attach-chip.failed{ border-color:var(--coral); color:var(--coral); }
   .length-chip{ display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono', monospace; font-size:10px; color:var(--text-muted); }
   .length-chip .val{ display:inline-flex; align-items:center; gap:4px; background:var(--surface-2); border-radius:7px; padding:3px 7px 3px 9px; color:var(--text); font-weight:600; cursor:pointer; }
 
@@ -752,10 +769,15 @@
           <div class="fam-input-box">
             <textarea id="searchInput" placeholder="FAMiliarize me about…" onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); runSearch(); }"></textarea>
           </div>
+          <div class="attach-row" id="attachRow"></div>
           <div class="fam-controls">
             <div class="length-chip">Length <span class="val" id="lengthVal" onclick="openLengthMenu()">3 min<svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg></span></div>
-            <button class="go-btn" onclick="runSearch()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+            <div style="display:flex; align-items:center; gap:9px;">
+              <button class="attach-btn" id="attachBtn" onclick="openAttachMenu()" aria-label="Add a document, photo or link"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 11.5l-8.8 8.8a5 5 0 01-7.1-7.1l9-9a3.4 3.4 0 014.8 4.8l-9 9a1.8 1.8 0 01-2.5-2.5l8.3-8.3"/></svg></button>
+              <button class="go-btn" onclick="runSearch()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+            </div>
           </div>
+          <input type="file" id="attachFile" hidden accept=".pdf,.docx,.txt,.md,.csv,.json,image/*" onchange="attachChosenFile(this)">
           </div>
         </div>
 
@@ -1332,16 +1354,154 @@
     if(el){ el.style.color = "var(--coral)"; el.textContent = "Audio server unreachable — start it with ./run.sh"; }
   });
 
+  // ---------------- Attachments ----------------
+  // Context the listener supplies: a document, a photo, a link. Extraction
+  // happens here, when the thing is added, and never on the generation path -
+  // reading a PDF or fetching a page is a round-trip, and the one thing this
+  // product will not spend is seconds in front of the first word.
+  //
+  // An episode built on these is never cached (see pipeline._cache_key), so it
+  // cannot be served to anyone else or surface in Explore.
+  var ATTACHED = [];
+
+  function renderAttachments(){
+    var row = document.getElementById("attachRow");
+    if(!row) return;
+    row.innerHTML = ATTACHED.map(function(a, i){
+      var note = a.error ? a.error
+               : a.pending ? "reading…"
+               : a.kind === "image" ? "photo"
+               : a.kind === "link" ? "link"
+               : (a.chars ? Math.round(a.chars / 1000) + "k chars" : "document");
+      var cls = a.error ? " failed" : (a.pending ? " working" : "");
+      return '<div class="attach-chip' + cls + '">'
+        + '<span class="nm">' + escapeHtml(a.name || "attachment") + '</span>'
+        + '<span class="sz">' + escapeHtml(note) + '</span>'
+        + '<span class="rm" onclick="removeAttachment(' + i + ')">\u00d7</span>'
+        + '</div>';
+    }).join("");
+  }
+
+  function removeAttachment(i){
+    var gone = ATTACHED.splice(i, 1)[0];
+    renderAttachments();
+    if(gone && gone.id){
+      fetch("/api/attach?user=" + encodeURIComponent(famUserId())
+            + "&id=" + encodeURIComponent(gone.id), { method: "DELETE" })
+        .catch(function(){ /* the server expires it anyway */ });
+    }
+  }
+
+  function openAttachMenu(){
+    showActionSheet([
+      { label: "Photo or document", action: function(){
+          document.getElementById("attachFile").click(); } },
+      { label: "Link", action: openAttachLink },
+    ]);
+  }
+
+  function openAttachLink(){
+    showModal({
+      title: "Add a link",
+      placeholder: "https://…",
+      confirmLabel: "Add",
+      onConfirm: function(value){
+        if(value && value.trim()) sendAttachment({ kind: "link", url: value.trim() },
+                                                 value.trim());
+      }
+    });
+  }
+
+  function attachChosenFile(input){
+    var file = input.files && input.files[0];
+    input.value = "";              // so the same file can be picked again
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      var comma = String(reader.result).indexOf(",");
+      sendAttachment({
+        kind: /^image\//.test(file.type) ? "image" : "document",
+        name: file.name,
+        data: String(reader.result).slice(comma + 1)
+      }, file.name);
+    };
+    reader.onerror = function(){ toast("That file could not be read"); };
+    reader.readAsDataURL(file);
+  }
+
+  function sendAttachment(body, label){
+    // Shown as a chip immediately, so the wait is visible and attributable to
+    // the thing being read rather than to the app having stalled.
+    var slot = { name: label, pending: true, kind: body.kind };
+    ATTACHED.push(slot);
+    renderAttachments();
+    body.user = famUserId();
+    fetch("/api/attach", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function(r){
+      return r.json().then(function(d){
+        if(!r.ok) throw new Error(d.detail || d.error || "That could not be attached");
+        return d;
+      });
+    }).then(function(d){
+      slot.pending = false;
+      slot.id = d.id; slot.kind = d.kind; slot.name = d.name || label; slot.chars = d.chars;
+      renderAttachments();
+    }).catch(function(err){
+      // Left on screen as a failed chip rather than removed. A file that
+      // silently fails to attach produces an episode about a document nobody
+      // read, which is the failure this project treats as worse than an error.
+      slot.pending = false;
+      slot.error = err.message || "could not be read";
+      renderAttachments();
+      toast(slot.error);
+    });
+  }
+
+  function attachedIds(){
+    return ATTACHED.filter(function(a){ return a.id && !a.error; })
+                   .map(function(a){ return a.id; }).join(",");
+  }
+
+  function clearAttachments(){
+    ATTACHED = [];
+    renderAttachments();
+  }
+
   function runSearch(){
-    var val = document.getElementById("searchInput").value.trim();
+    var typed = document.getElementById("searchInput").value.trim();
+    var val = typed;
+    var attach = attachedIds();
+    if(ATTACHED.some(function(a){ return a.pending; })){
+      toast("Still reading that attachment");
+      return;
+    }
+    if(!val && attach){
+      // An attachment on its own is a request to summarise it. Making someone
+      // type "summarise this" first would be a step with no purpose.
+      val = "Summarise what I have attached, and tell me what matters in it.";
+    }
     if(val){
-      TOPICS["_custom"] = { title: val, source: "Your search", caption: "Generating your live transcript as this plays—" };
+      TOPICS["_custom"] = {
+        title: (!typed && attach && ATTACHED[0]) ? ATTACHED[0].name : val,
+        // The title may be the file's name, which is a label and not a
+        // question. `prompt` is what actually gets asked.
+        prompt: val,
+        source: attach ? "From what you attached" : "Your search",
+        caption: "Generating your live transcript as this plays—",
+        attach: attach,
+        titleOverridden: !!attach
+      };
       // What someone searches is the clearest statement of interest they make,
       // and it is the input myFAM was asked to rank on.
       recordFamEvent("search", "", val);
       pendingFromSearch = true;
       generate("_custom", "home");
       document.getElementById("searchInput").value = "";
+      // The attachment belonged to that question. Leaving it on screen would
+      // silently attach it to the next, unrelated one.
+      clearAttachments();
     } else {
       generate("spacex", "home");
     }
@@ -1681,7 +1841,8 @@
         onGenerationFailed(err && err.message);
       }
     }, context, selectedVoice, {
-      user: famUserId(), topicId: episodeTopicId, cachedOnly: !!opts.cachedOnly
+      user: famUserId(), topicId: episodeTopicId, cachedOnly: !!opts.cachedOnly,
+      attach: opts.attach || ""
     });
 
     // Abandoning an episode early is evidence in the other direction, and
@@ -1724,7 +1885,8 @@
     // typed; the title is only a display label derived from it.
     var query = t.prompt || t.title;
     var context = t.parentTopic || "";
-    var playOpts = { cachedOnly: !!t.cachedOnly, minutes: t.exploreMinutes || 0 };
+    var playOpts = { cachedOnly: !!t.cachedOnly, minutes: t.exploreMinutes || 0,
+                     attach: t.attach || "" };
     if(isFromSearch){
       speakText(query, t.caption, null, context, t.bankTopicId, playOpts);
     } else {
