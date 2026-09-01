@@ -1826,3 +1826,35 @@ Tiles are 68px - down from 96, up from the 48 that did not fit.
 same thing two rows above it. The empty state used to be that button alone
 under a "Go deeper" heading, so with the button gone the whole block now
 renders nothing rather than a heading over empty space.
+
+## 45. Go Deeper always has four tiles, and stops saying "thread"
+
+Asked what "4 threads" meant. It is a word from inside the codebase - the
+unresolved thing an episode names on its `<<NEXT: ...>>` line - and it should
+never have been on screen. Worse, the number counted *every* card, and half of
+them are part-heard episodes rather than threads: the tile reading "2:41 LEFT"
+was being counted as a thread.
+
+The count is gone. The row now reads **"Pick up where you left off"** - but
+only when at least one tile really is something they left off. On a first run
+every tile is a starting point and the same line would be a small lie, so it
+says "Somewhere to start" instead.
+
+**And the section no longer comes up empty.** A listener with no threads and
+nothing half-heard got *nothing at all* where the way in should be - a state
+nobody developing this ever sees, because everyone testing has history. Go
+Deeper now tops up from the shared topic bank.
+
+The distinction that keeps this on the right side of §4's rule about not
+inventing: **these are not placeholders.** They are real bank topics carrying a
+real query, they generate a real episode when tapped, and they pass their
+`bankTopicId` through so the tap is logged like any other - otherwise the tiles
+a new listener taps most would teach the taste model nothing. Anything the
+rails below already show is skipped, because the same title twice on one screen
+reads as a bug.
+
+Both cases are now in the smoke test, and both fail without the fix: the
+first-run one reported "a new listener saw 0 Go Deeper tiles, not 4".
+
+Still open, and pre-existing: a *resume* card can duplicate a rail pick, since
+only starters are de-duplicated against the rails.

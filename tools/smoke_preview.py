@@ -102,6 +102,46 @@ def main() -> int:
             )
             assert not clipped, f"Go Deeper tile cuts these titles off: {clipped}"
 
+        def go_deeper_fills_for_a_new_listener():
+            """Four tiles even with no history - the case nobody develops in.
+
+            Everyone testing this has threads and half-heard episodes, so the
+            empty section only ever appeared for someone opening the app for
+            the first time. The tiles must be real bank topics (a query to
+            generate from), not placeholder text, and must not repeat what the
+            rails below are already showing.
+            """
+            page.evaluate(
+                """() => {
+                    try { localStorage.clear(); } catch (e) {}
+                    var real = window.fetch;
+                    window.fetch = function(u, o){
+                        if(String(u).indexOf("/api/godeeper") === 0){
+                            return Promise.resolve({ ok: true,
+                                json: function(){ return Promise.resolve({ threads: [] }); } });
+                        }
+                        return real(u, o);
+                    };
+                }"""
+            )
+            page.evaluate("openMyFamTab(); loadMyFamFeed()")
+            page.wait_for_timeout(1800)
+            cards = page.evaluate("() => goDeeperCardCache")
+            assert len(cards) == 4, f"a new listener saw {len(cards)} Go Deeper tiles, not 4"
+            assert all(c["kind"] == "starter" for c in cards), \
+                f"expected all starters, got {[c['kind'] for c in cards]}"
+            assert all(c.get("query") and c.get("topicId") for c in cards), \
+                "a starter tile with no query or topic id cannot generate or be logged"
+            titles = page.eval_on_selector_all(".gd-card-title", "e => e.map(x => x.textContent)")
+            rails = page.eval_on_selector_all(".seed-card-title", "e => e.map(x => x.textContent)")
+            repeated = sorted(set(titles) & set(rails))
+            assert not repeated, f"Go Deeper repeats what the rails show: {repeated}"
+            label = page.text_content(".gd-count")
+            assert "left off" not in label.lower(), \
+                f"told a first-run listener they left something off: {label!r}"
+            page.reload()
+            page.wait_for_timeout(1200)
+
         def dailyfam():
             page.evaluate("openPlayFAM()")
             page.wait_for_selector(".mix-card", timeout=10000, state="attached")
@@ -202,6 +242,7 @@ def main() -> int:
         print(f"smoke test: {target.name}")
         check("myFAM renders three rails", myfam)
         check("Go Deeper titles are not cut off", go_deeper_titles_fit)
+        check("Go Deeper fills for a new listener", go_deeper_fills_for_a_new_listener)
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)

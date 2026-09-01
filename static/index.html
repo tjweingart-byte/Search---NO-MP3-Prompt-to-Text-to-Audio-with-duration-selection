@@ -2864,13 +2864,22 @@
   function loadGoDeeper(){
     var el = document.getElementById("goDeeperBlock");
     if(!el) return;
-    fetch("/api/godeeper?user=" + encodeURIComponent(famUserId()))
-      .then(function(r){ return r.ok ? r.json() : { threads: [] }; })
-      .then(function(data){ renderGoDeeper(data.threads || []); })
-      .catch(function(){ renderGoDeeper([]); });
+    // The bank is fetched alongside the threads so the section can always show
+    // four tiles. A listener on their first run has no threads and nothing
+    // half-heard; without this they met an empty space where the way in is.
+    Promise.all([
+      fetch("/api/godeeper?user=" + encodeURIComponent(famUserId()))
+        .then(function(r){ return r.ok ? r.json() : { threads: [] }; })
+        .catch(function(){ return { threads: [] }; }),
+      fetch("/api/topics")
+        .then(function(r){ return r.ok ? r.json() : { topics: [] }; })
+        .catch(function(){ return { topics: [] }; })
+    ]).then(function(both){
+      renderGoDeeper(both[0].threads || [], both[1].topics || []);
+    });
   }
 
-  function goDeeperCards(threads){
+  function goDeeperCards(threads, bank){
     var cards = [];
     var resume = readResume();
     Object.keys(resume).forEach(function(query){
@@ -2896,21 +2905,43 @@
       if(cards.length) out.push(cards.shift());
       if(out.length < 4 && threadCards.length) out.push(threadCards.shift());
     }
+
+    // Top up from the shared bank. These are real topics that generate a real
+    // episode when tapped - not placeholder text dressed up as content. The
+    // rails below are already showing their own picks, so anything down there
+    // is skipped: the same title twice on one screen reads as a bug.
+    var shown = {};
+    out.forEach(function(c){ shown[(c.title || "").toLowerCase()] = true; });
+    (bank || []).forEach(function(t){
+      if(out.length >= 4) return;
+      if(myFamTopics[t.id]) return;
+      if(shown[(t.title || "").toLowerCase()]) return;
+      shown[(t.title || "").toLowerCase()] = true;
+      out.push({ kind: "starter", query: t.query, minutes: selectedLengthMinutes,
+                 title: t.title, topicId: t.id });
+    });
     return out;
   }
 
-  function renderGoDeeper(threads){
+  function renderGoDeeper(threads, bank){
     var el = document.getElementById("goDeeperBlock");
-    goDeeperCardCache = goDeeperCards(threads);
+    goDeeperCardCache = goDeeperCards(threads, bank);
     if(!goDeeperCardCache.length){
-      // No threads, no section. The prompt to ask something was the only
-      // content here, and the search field is directly above.
+      // Only reachable if the bank could not be fetched either. Nothing to
+      // show and nothing to say about it; the search field is directly above.
       el.innerHTML = "";
       return;
     }
+    // The old line counted every card and called them all "threads", which was
+    // wrong twice over: half of them are part-heard episodes, and "thread" is
+    // a word from inside the codebase. This says what the row is for instead.
+    // It only claims they left something off when at least one tile really is
+    // theirs - on a first run every tile is a starting point, not a return.
+    var resumed = goDeeperCardCache.some(function(c){ return c.kind !== "starter"; });
     var html = '<div class="gd-head"><span class="gd-kicker">Go deeper</span>'
-      + '<span class="gd-count">' + goDeeperCardCache.length
-      + (goDeeperCardCache.length === 1 ? " thread" : " threads") + '</span></div>';
+      + '<span class="gd-count">'
+      + (resumed ? "Pick up where you left off" : "Somewhere to start")
+      + '</span></div>';
     html += '<div class="gd-grid">' + goDeeperCardCache.map(function(c, i){
       var meta = c.kind === "resume"
         ? formatTime(c.left) + " left"
@@ -2933,11 +2964,18 @@
     var c = goDeeperCardCache[i];
     if(!c) return;
     var key = "gd_" + i + "_" + Date.now();
+    var source = c.kind === "resume" ? "Picking up where you left off"
+               : c.kind === "starter" ? "myFAM"
+               : "Following a thread";
     TOPICS[key] = {
       title: c.title,
-      source: c.kind === "resume" ? "Picking up where you left off" : "Following a thread",
+      source: source,
       caption: "Live captions will appear here as this plays\u2014",
       prompt: c.query,
+      // A starter is a bank topic, so it carries its id and is counted as one
+      // in the event log - otherwise tapping here would teach the taste model
+      // nothing, and these tiles are most of what a new listener taps.
+      bankTopicId: c.topicId || "",
       titleOverridden: true
     };
     generate(key);
