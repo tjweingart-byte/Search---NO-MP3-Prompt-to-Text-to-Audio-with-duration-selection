@@ -37,10 +37,59 @@ if [ -f .env ]; then
   set +a
 fi
 
+# One command from a machine that has nothing but Python. A demo that needs a
+# README before it runs is a demo nobody sees.
 if ! $PY -c "import fastapi, uvicorn" 2>/dev/null; then
-  printf '\n\033[1mDependencies missing\033[0m\n'
-  printf '  Run:  %s -m pip install -r requirements.txt\n' "$PY"
-  exit 1
+  printf '\n\033[1mFirst run: nothing is installed yet.\033[0m\n'
+  printf '  This will create .venv here and install into it (~1 min, nothing global).\n'
+  if [ -t 0 ]; then
+    printf '  Install now? [Y/n] '
+    read -r reply
+  else
+    reply=n
+  fi
+  case "$reply" in
+    [nN]*) printf '  Then run:  %s -m pip install -r requirements.txt\n' "$PY"; exit 1 ;;
+  esac
+  $PY -m venv .venv
+  PY=".venv/bin/python"
+  $PY -m pip install --quiet --upgrade pip
+  $PY -m pip install --quiet -r requirements.txt
+  printf '  Installed.\n'
+elif [ -x .venv/bin/python ] && ! $PY -c "import fastapi" 2>/dev/null; then
+  PY=".venv/bin/python"
+fi
+
+# The voice model is a separate download and the app is honest about not having
+# it: with none installed, playback is a placeholder tone rather than speech.
+if ! $PY -c "
+import sys, tts
+sys.exit(0 if [v for v in tts.list_voices() if v.engine != 'debug'] else 1)
+" 2>/dev/null; then
+  printf '\n\033[1mNo voice model installed.\033[0m Without one, playback is a tone.\n'
+  if [ -t 0 ]; then
+    printf '  Download one now (~60 MB, once, shared by every copy of the app)? [Y/n] '
+    read -r reply
+  else
+    reply=n
+  fi
+  case "$reply" in
+    [nN]*) printf '  Then run:  %s setup_voices.py\n' "$PY" ;;
+    *) $PY setup_voices.py || printf '  Voice install failed - see the message above.\n' ;;
+  esac
+fi
+
+# Without a key every episode is the same canned sample, which is the one thing
+# a demo of the writing cannot be. Ask for it here rather than fail later.
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -t 0 ] && [ "$ANYWAY" -eq 0 ]; then
+  printf '\n\033[1mNo API key, so nothing can be written.\033[0m\n'
+  printf '  Paste one to save it to .env, or press enter to skip: '
+  read -r key
+  if [ -n "$key" ]; then
+    printf 'ANTHROPIC_API_KEY=%s\n' "$key" >> .env
+    export ANTHROPIC_API_KEY="$key"
+    printf '  Saved to .env (gitignored).\n'
+  fi
 fi
 
 set +e
