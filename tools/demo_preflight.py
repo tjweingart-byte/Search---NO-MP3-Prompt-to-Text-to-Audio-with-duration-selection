@@ -27,7 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cache import build_cache
-from config import settings
+from config import describe_key, key_source, settings
 
 BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
 
@@ -76,6 +76,9 @@ def main() -> int:
     if live:
         say(f"  writing    {BOLD}live{RESET}  ·  {settings.model}  ·  "
             f"search {'on' if settings.enable_web_search else 'off by default'}")
+        # Which file the key came from, because "a key is set" has been the
+        # wrong answer to "is the right key set" more than once here.
+        say(f"{DIM}             key {describe_key()} from {key_source()}{RESET}")
     else:
         say(f"  writing    {BOLD}CANNED{RESET} - no ANTHROPIC_API_KEY.")
         say(f"{DIM}             Every episode will be the same built-in sample script.")

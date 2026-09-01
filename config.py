@@ -12,6 +12,36 @@ from dataclasses import dataclass, field
 import voice_store
 
 
+def shared_env_path() -> pathlib.Path:
+    """The per-machine settings file, alongside the shared voice store.
+
+    `~/.fam/env` is deliberately outside any project folder. A key kept in a
+    project `.env` is lost every time the app is unpacked somewhere new, and
+    the workaround for that is pasting the key again - into a terminal, into a
+    chat, into whatever is to hand. One file per machine, set once.
+    """
+    override = os.environ.get("FAM_ENV_FILE")
+    if override:
+        return pathlib.Path(override).expanduser()
+    return pathlib.Path.home() / ".fam" / "env" if pathlib.Path.home() else pathlib.Path(".fam-env")
+
+
+def key_source() -> str:
+    """Where the key in force came from. A key that works is not much comfort
+    when you cannot tell which file the app actually read."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return "nowhere - no key is set"
+    project = pathlib.Path(__file__).resolve().parent / ".env"
+    for path, label in ((project, "the project .env"), (shared_env_path(), str(shared_env_path()))):
+        try:
+            if any(line.strip().lstrip("export ").startswith("ANTHROPIC_API_KEY=")
+                   for line in path.read_text().splitlines()):
+                return label
+        except (OSError, UnicodeDecodeError):
+            continue
+    return "the environment"
+
+
 def _load_dotenv() -> None:
     """Read .env into the environment, if it is not already there.
 
@@ -30,10 +60,18 @@ def _load_dotenv() -> None:
     # sets this before anything imports config.
     if os.environ.get("FAM_IGNORE_DOTENV"):
         return
-    path = pathlib.Path(__file__).resolve().parent / ".env"
-    try:
-        lines = path.read_text().splitlines()
-    except (OSError, UnicodeDecodeError):
+    lines: list[str] = []
+    # ~/.fam/env first, project .env second, so the project can override the
+    # machine-wide setting. The shared file exists for the same reason
+    # ~/.fam/voices does: every new copy of the app is a fresh folder with no
+    # .env in it, and re-pasting a key into each one is how keys get pasted
+    # into the wrong places.
+    for path in (shared_env_path(), pathlib.Path(__file__).resolve().parent / ".env"):
+        try:
+            lines += path.read_text().splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+    if not lines:
         return
     # Last occurrence wins, which is what `source .env` does. A loader that took
     # the first would disagree with the shell scripts about the same file - and

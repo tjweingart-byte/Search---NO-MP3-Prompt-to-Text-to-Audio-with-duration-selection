@@ -267,6 +267,12 @@ another rule.
   server now asks Claude at startup whether the credential is actually accepted
   and says so on every tab. Anything that reports readiness must perform the
   real action, not confirm that it was configured.
+- **Per-machine state lives in `~/.fam/`, never in the project.** Voice models
+  (`~/.fam/voices`) and the API key (`~/.fam/env`, written by
+  `python setup_key.py`) are set once and found by every later copy of the app.
+  A key in a project `.env` is lost on every new copy, and the workaround for
+  that is pasting it again somewhere it should not go. The key is never written
+  into source: a commit keeps it in history after the line is deleted.
 
 ## Decisions that will shape the next phase
 
@@ -318,7 +324,7 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-52 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-53 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
 A fresh container has none of the dependencies installed. Setup is two lines,

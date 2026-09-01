@@ -470,7 +470,9 @@ def build_engine(preference: str | None = None) -> TTSEngine:
         return cls()
 
     # Preference order: best voice first, then anything already on the machine.
-    for cls in (PiperEngine, EspeakEngine, SayEngine):
+    # Must match list_voices()' order - they disagreed, so on a Mac with espeak
+    # installed the picker offered "Samantha" and the audio came out robotic.
+    for cls in (PiperEngine, SayEngine, EspeakEngine):
         if cls.available():
             return cls()
     return DebugEngine()

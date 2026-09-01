@@ -15,6 +15,26 @@ interaction. It cannot tell you whether an episode is any good.
 
 Needs: Python 3.10+, an Anthropic API key, and about two minutes.
 
+### Set up once per machine, not once per copy
+
+```sh
+python setup_key.py       # paste the key once; checked, then stored
+python setup_voices.py    # the neural voice, ~60 MB
+```
+
+Both write to `~/.fam/` — **outside the project folder**. That is the point:
+every new copy of the app finds them already there, so you never paste the key
+again and never re-download the voice. `python setup_key.py --show` says which
+file the key came from and whether Claude still accepts it.
+
+The key is never written into the source. Source gets committed, and a key in a
+commit has to be rotated — it stays in the history after the line is deleted.
+
+`setup_key.py` refuses to store a key Claude rejects, so "bad key" is answered
+while you are setting it up rather than mid-episode.
+
+### Then, every time
+
 ```sh
 ./demo.sh
 ```

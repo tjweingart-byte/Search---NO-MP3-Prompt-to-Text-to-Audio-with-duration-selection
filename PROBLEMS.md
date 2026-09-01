@@ -2222,3 +2222,50 @@ ten seconds, which is the most that can be done from here.
 Seven tests (`tests/test_credentials.py`) pin it, including that a check which
 cannot run reports rather than raises - Explore needs no credentials at all and
 must keep working when the key is dead.
+
+## 53. The key kept being re-pasted because every new copy was a fresh folder
+
+"Would it be embedded into the code so I don't have to paste it every time?"
+
+The question is the finding. Nobody re-enters a credential four times because
+they enjoy it - they do it because the app keeps losing it, and the obvious
+place to put it next is wherever is easiest, which in this case was nearly a
+chat window. **The re-pasting was a symptom of a storage decision, and the
+storage decision was already solved elsewhere in this repo.**
+
+`~/.fam/voices` exists precisely because voice models inside the project folder
+get re-downloaded on every new copy. The key had exactly the same problem and
+none of the same treatment: it lived in a project `.env`, and every bundle
+shipped for testing was a new directory with no `.env` in it.
+
+So the key now lives in `~/.fam/env`, written by `python setup_key.py`:
+
+* **Outside the project**, next to the voice store, for the same reason.
+* **Verified before it is stored** - `models.retrieve`, which bills nothing.
+  A key that does not work is worse stored than not stored: the app starts,
+  reports live, and fails on the first episode. Nothing is written on a reject.
+* **chmod 600**, entered through `getpass` so it never reaches the terminal
+  scrollback, and therefore never a screenshot.
+* **Replaced, never appended** - §52's duplicate-key trap, closed at the writer.
+* `--show` reports which file the key came from and whether Claude still takes
+  it; `--remove` forgets it.
+
+**Not embedded in source, and that is not a limitation.** Source is committed;
+a key in a commit stays in the history after the line is deleted, so "embedded"
+means "rotate this key later". A test asserts no key-shaped literal appears in
+any module.
+
+Project `.env` still wins over the machine-wide file, so a project can pin its
+own key or model.
+
+**A latent inconsistency fell out of the voice half.** `build_engine` preferred
+`espeak` over `say` while `list_voices` (and therefore the picker and the
+default voice) preferred `say` over `espeak`. On a Mac with espeak installed the
+picker would offer Samantha and the audio would come out robotic. The orders now
+match.
+
+Still not verifiable here: `huggingface.co` is denied by this environment's
+network policy (403 on CONNECT), so `setup_voices.py` cannot be exercised end to
+end from the build container and no real Piper audio has been produced here.
+That is the same gap CLAUDE.md records against voice quality; the download path
+is unchanged and only the store location was ever in question.
