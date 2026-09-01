@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -188,23 +189,15 @@ class PiperEngine(TTSEngine):
     #: model path -> loaded voice. Shared by every request in the process.
     _loaded: dict = {}
 
-    def __init__(self, model_path: "pathlib.Path | None" = None) -> None:
+    def __init__(self, model_path: pathlib.Path | None = None) -> None:
         self._model_path = model_path or default_piper_model()
         self._rate: int | None = None
 
     # -- discovery ---------------------------------------------------------
 
     @staticmethod
-    def voice_dir() -> "pathlib.Path":
-        import pathlib
-
-        return pathlib.Path(settings.voices_dir)
-
-    @staticmethod
     def installed_models() -> list:
         """Every .onnx voice in the shared voice store."""
-        import pathlib
-
         import voice_store
 
         return voice_store.installed(pathlib.Path(settings.voices_dir))
@@ -236,7 +229,7 @@ class PiperEngine(TTSEngine):
 
     # -- synthesis ---------------------------------------------------------
 
-    def _resolve(self, voice: str | None) -> "pathlib.Path | None":
+    def _resolve(self, voice: str | None) -> pathlib.Path | None:
         wanted = self._voice_arg(voice, "piper")
         if wanted:
             for path in self.installed_models():
@@ -303,7 +296,6 @@ def _prettify_piper_name(stem: str) -> str:
 def _piper_model_rate(path) -> int:
     """Read a voice's sample rate from its sidecar JSON, without loading it."""
     import json
-    import pathlib
 
     for candidate in (pathlib.Path(str(path) + ".json"), pathlib.Path(path).with_suffix(".json")):
         try:
@@ -316,8 +308,6 @@ def _piper_model_rate(path) -> int:
 
 def default_piper_model():
     """The configured voice, or the first installed one."""
-    import pathlib
-
     if settings.piper_model:
         path = pathlib.Path(settings.piper_model)
         if path.exists():

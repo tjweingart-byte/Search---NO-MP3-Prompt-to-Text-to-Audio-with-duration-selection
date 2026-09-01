@@ -163,11 +163,6 @@ def clean_items(raw: Sequence) -> list[MixItem]:
     return items
 
 
-def clean_topics(topic_ids: Sequence[str]) -> list[str]:
-    """Bank-only helper kept for callers that deal purely in bank ids."""
-    return [i.id for i in clean_items(topic_ids)]
-
-
 class MixStore:
     def __init__(self, path: str = "mixes.db") -> None:
         self.path = path

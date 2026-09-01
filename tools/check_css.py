@@ -34,14 +34,23 @@ def used_classes(html: str) -> set[str]:
     return {c for c in out if re.fullmatch(r"[A-Za-z][\w-]*", c)}
 
 
-def defined_classes(html: str) -> set[str]:
+def stylesheet(html: str) -> str:
+    """Every <style> block, with comments stripped.
+
+    Comments matter: a class named only in a `/* ... */` note reads as defined
+    and would let a genuinely missing rule through this check unnoticed.
+    """
     css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S))
-    return set(re.findall(r"\.([A-Za-z][\w-]*)", css))
+    return re.sub(r"/\*.*?\*/", " ", css, flags=re.S)
+
+
+def defined_classes(html: str) -> set[str]:
+    return set(re.findall(r"\.([A-Za-z][\w-]*)", stylesheet(html)))
 
 
 def hidden_needs_guard(html: str) -> list[str]:
     """A rule setting `display` beats the `hidden` attribute silently."""
-    css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S))
+    css = stylesheet(html)
     shown, guarded = set(), set()
     for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
         display = re.search(r"display\s*:\s*([\w-]+)", body)

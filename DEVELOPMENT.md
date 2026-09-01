@@ -85,12 +85,40 @@ preview, wrong once anyone is actually listening.
 1. `pytest tests/` — no API key, no speech engine needed
 2. `tools/check_js.py` — the interface is one large HTML file with inline
    script, and a stray brace there is invisible to pytest and fatal on a phone
-3. `preview/build_preview.py` — the preview must always build
-4. `tools/smoke_preview.py` — drives the built preview in a browser: every
+3. `tools/check_css.py` — the same file's styles. Fails when a class is used
+   with no rule behind it, or when an element with `hidden` wears a class that
+   forces it visible. Deleting a block of CSS breaks nothing that fails; it
+   just makes the page wrong, which is how a lost stylesheet reached a phone
+   twice
+4. `preview/build_preview.py` — the preview must always build
+5. `tools/smoke_preview.py` — drives the built preview in a browser: every
    tab renders, and Explore actually plays and advances
 
 The built preview is attached to each run for 30 days.
 
-Step 4 is the one that earns its place: all three Explore bugs — the infinite
+Step 5 is the one that earns its place: all three Explore bugs — the infinite
 auto-advance, the demo-mode cache, the play button that resumed instead of
 pausing — were invisible to the Python tests and obvious in a browser.
+
+
+## Proving a change did not move anything (`tools/shots.py`)
+
+Everything above asks whether the app *works*. None of it can see a page that
+looks wrong. `tools/shots.py` is the missing half: it photographs all nine
+surfaces so a refactor can be shown to change nothing.
+
+    python tools/shots.py before
+    # make the change, then rebuild:
+    python preview/build_preview.py
+    python tools/shots.py after
+    python tools/shots.py --compare before after
+
+This is what made it safe to delete 8.5 KB of unreferenced CSS: eight surfaces
+came back byte-identical.
+
+Two surfaces move on their own — Explore rotates its reel, and the player's
+scrubber advances — so a difference there is not by itself a regression.
+Settle it by capturing the *same* build twice: if the unchanged build produces
+the same difference, it is the clock, not the change.
+
+It is deliberately not in CI, for that reason.

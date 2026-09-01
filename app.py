@@ -60,6 +60,12 @@ log.info("voices: %s", voice_store.describe())
 async def lifespan(_: FastAPI):
     # Pay the voice model's load cost now rather than on the first listener.
     await warm_up()
+    # Expired scripts are already filtered out on read, so nothing ever deleted
+    # them and the file grew for the life of the deployment. One DELETE at
+    # startup is enough: entries expire on a timescale of days, not minutes.
+    purged = getattr(SCRIPT_CACHE, "purge_expired", lambda: 0)()
+    if purged:
+        log.info("cache: dropped %d expired script(s)", purged)
     yield
 
 
@@ -366,14 +372,6 @@ async def delete_echo(request: Request, user: str = Query("", max_length=64),
                       minutes: int = Query(3, ge=1, le=10)):
     _rate_limit(request)
     return {"ok": SOCIAL.unecho(user, q, minutes)}
-
-
-@app.get("/api/echoes")
-async def list_echoes(request: Request, user: str = Query("", max_length=64)):
-    _rate_limit(request)
-    person = SOCIAL.person(user)
-    return {"echoes": [e.as_dict(person["name"], person["handle"])
-                       for e in SOCIAL.echoes_by(user)]}
 
 
 @app.get("/api/profile")

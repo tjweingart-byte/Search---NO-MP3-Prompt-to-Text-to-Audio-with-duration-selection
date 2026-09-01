@@ -20,8 +20,6 @@ import re
 from dataclasses import dataclass
 from typing import AsyncIterator
 
-import anthropic
-
 from anthropic_client import build_async_client
 from config import settings
 
@@ -333,11 +331,9 @@ def plan_episode(
 
 def build_prompt(plan: EpisodePlan) -> str:
     budget = plan.body_budget
-    per_section = max(35, budget // len(plan.sections))
-    outline = "\n".join(
-        f"{i + 1}. {name} (about {per_section} words)"
-        for i, name in enumerate(plan.sections)
-    )
+    # Empty unless a cold open is running. When one is, the listener has
+    # already heard an opening line, so the script must not write its own -
+    # without this the two stack up and the episode opens twice.
     already_opened = (
         "\nThe episode has ALREADY opened with one short framing sentence that "
         "the listener has heard. Do not write a greeting, a hook, or a restatement "
@@ -368,6 +364,7 @@ Answer them. They asked because they wanted to know something, and by the end
 they must know it well enough to say it back in their own words. That is the
 job; the rest is how it arrives.
 
+{already_opened}
 Pick a way in. Find the specific thing - the moment, the person, the number,
 the detail - that makes this worth hearing, and start there. Then keep them
 moving: each thing you tell them should make the next thing matter more. By the
@@ -600,12 +597,6 @@ class ScriptGenerator:
             tail_sentence = clean_for_speech(buffer)
             if tail_sentence:
                 yield tail_sentence
-
-    async def full_script(self, plan: EpisodePlan, notes: ScriptNotes | None = None) -> str:
-        """Non-streaming convenience path, used by /api/script and by tests."""
-        parts = [s async for s in self.stream_sentences(plan, notes)]
-        return " ".join(parts)
-
 
 async def _demo() -> None:  # pragma: no cover - manual check
     plan = plan_episode("what is a heat pump", 2)

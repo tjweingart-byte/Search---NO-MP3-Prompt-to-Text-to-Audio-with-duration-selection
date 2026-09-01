@@ -1673,3 +1673,66 @@ it was wired in; it catches both.
 The rule this settles: **a check that only asks whether the page works cannot
 see a page that looks wrong.** In a single-file interface with no compiler,
 appearance needs its own check or it is discovered by the person using it.
+
+## 41. A maintenance pass: what was dead, what was actually broken
+
+A deliberate sweep after §40, on the theory that the deleted stylesheet was
+unlikely to be the only thing rotting. It was not. Recorded here because the
+*findings* matter less than which check would have caught each one.
+
+**First, the question that prompted it: did the bad edit take anything else?**
+No. Comparing every CSS class, function name and element id between the commit
+before it and now, the only losses are the five `pf-*` classes of the old
+profile scaffold, which were replaced on purpose. No function and no id was
+lost, and nothing is duplicated any more. That is now settled, not assumed.
+
+**Two real bugs, both of them dormant rather than visible:**
+
+* **The script cache never deleted anything.** `purge_expired` existed and
+  nothing called it. Expired entries were filtered out on read, so the cache
+  behaved correctly and `scripts.db` grew for the life of the deployment. The
+  app now purges at startup - entries expire in days, so once per boot is
+  enough. Two tests pin it: the method deletes only what is expired, and
+  `lifespan` actually calls it. The second one fails if the wiring is removed.
+* **A cold open would have opened the episode twice.** `build_prompt` computed
+  an `already_opened` instruction and then never interpolated it - a leftover
+  from the prompt rewrite. With `ENABLE_COLD_OPEN=1` the reserved words still
+  shrank the budget, but the model was never told an opener had already been
+  spoken, so it would write its own. Wired back in. Invisible today because
+  the cold open is off, which is exactly why it survived.
+
+**One fragility, in the spirit of "failures must be visible":** `showScreen`
+removed `active` from every screen and *then* looked up the target, so an
+unknown id left a blank white app and a thrown error. It now looks first and
+says so.
+
+**Dead code removed:** seven interface functions and, once they went, five more
+functions and seven module-level tables that only they used - the whole
+Branches/albums subsystem, including a `navigate("connect")` pointing at a
+screen that no longer exists. Plus `/api/echoes` (no caller, no test, and
+`/api/profile` already returned the same list), three unused Python helpers,
+`full_script` (whose docstring claimed `/api/script` used it - it did not), and
+76 CSS rules. About 13 KB.
+
+**How the CSS deletion was made safe, which is the transferable part.** Given
+§39 and §40, deleting 76 rules by static analysis alone was not good enough -
+a false positive there is invisible until someone looks at a phone. So
+`tools/shots.py` photographs all nine surfaces; the change was made between two
+captures. Eight came back byte-identical. Explore and the player differed - and
+capturing the *unchanged* build twice produced the identical difference, which
+is what proved it was the rotating reel and the moving scrubber rather than the
+edit. Verification by screenshot is now a tool, not a one-off.
+
+**The new check had the same hole it was built to close.** `check_css.py` read
+class names out of CSS *comments* as though they were rules, so a class
+mentioned only in a note would have counted as defined and let a genuinely
+missing rule through. Nothing had fallen through it, but it is fixed and the
+masking case is verified to fail now.
+
+**What was deliberately left alone.** `/api/next` returns an empty thread when
+no speech engine is installed, even though it only reads the cache. It looks
+like a bug and is not worth fixing: in that state `/api/audio` cannot play
+anything at all, so missing Go Deeper chips are the smallest of the problems,
+and the engine failure is already loud. `piper` and `h2` still look like unused
+imports to a linter; both are availability probes. Churn in code that is
+working is how the last three regressions got in.

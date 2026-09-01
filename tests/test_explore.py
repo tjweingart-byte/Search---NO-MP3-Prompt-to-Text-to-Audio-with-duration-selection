@@ -18,8 +18,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as appmod  # noqa: E402
-import pipeline as pipeline_mod  # noqa: E402
-from cache import MemoryScriptCache, SqliteScriptCache, cache_key  # noqa: E402
+from cache import MemoryScriptCache, SqliteScriptCache  # noqa: E402
 from pipeline import GenerationStats, NotCached, PodcastPipeline  # noqa: E402
 from script_generator import plan_episode  # noqa: E402
 from tts import DebugEngine  # noqa: E402

@@ -24,7 +24,6 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -140,16 +139,6 @@ class SocialStore:
             (user_id, name, handle, existing["joined"] or time.time()),
         )
         return self.person(user_id)
-
-    def by_handle(self, handle: str) -> Optional[dict]:
-        try:
-            row = self._conn().execute(
-                "SELECT user_id FROM people WHERE handle = ?", (handle.lstrip("@").lower(),)
-            ).fetchone()
-        except Exception:
-            log.exception("could not look up handle")
-            return None
-        return self.person(row[0]) if row else None
 
     # --- echoes -----------------------------------------------------------
 

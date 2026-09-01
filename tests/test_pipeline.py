@@ -337,6 +337,50 @@ def test_expired_entries_are_not_served(tmp_path):
     assert cache.get("k2") == ["One sentence."]
 
 
+def test_expired_entries_are_actually_deleted(tmp_path):
+    """Filtering expired rows on read is not enough - the file still grows.
+
+    purge_expired existed but nothing called it, so scripts.db kept every
+    expired row for the life of the deployment. The app now calls it at
+    startup; this pins both halves: the row goes, the live one stays.
+    """
+    import sqlite3
+
+    path = str(tmp_path / "purge.db")
+    cache = SqliteScriptCache(path)
+    cache.put("live", ["Still good."], ttl=3600, query="fresh")
+    cache.put("stale", ["Long gone."], ttl=-1, query="old")
+
+    def rows() -> int:
+        with sqlite3.connect(path) as conn:
+            return conn.execute("SELECT COUNT(*) FROM scripts").fetchone()[0]
+
+    assert rows() == 2, "an expired row is still on disk until something deletes it"
+    assert cache.purge_expired() == 1
+    assert rows() == 1
+    assert cache.get("live") == ["Still good."]
+
+
+def test_startup_purges_the_script_cache(tmp_path, monkeypatch):
+    """The wiring, not just the method: lifespan must actually call it."""
+    import app as appmod
+
+    cache = SqliteScriptCache(str(tmp_path / "startup.db"))
+    cache.put("stale", ["Long gone."], ttl=-1, query="old")
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", cache)
+    monkeypatch.setattr(appmod, "warm_up", lambda: asyncio.sleep(0))
+
+    async def run() -> None:
+        async with appmod.lifespan(appmod.app):
+            pass
+
+    asyncio.run(run())
+    assert cache.get("stale") is None
+    import sqlite3
+    with sqlite3.connect(str(tmp_path / "startup.db")) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM scripts").fetchone()[0] == 0
+
+
 def test_sqlite_cache_is_visible_to_another_process_instance(tmp_path):
     """Different uvicorn workers must see each other's entries."""
     path = str(tmp_path / "shared.db")
