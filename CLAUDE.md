@@ -155,6 +155,11 @@ invent something to fill "the main debate or open question". Padding and
 invention were being requested. Both prompts have been rewritten around what
 makes a briefing worth hearing; that rewrite is untested against real output.
 
+The endings were then rewritten again (PROBLEMS.md §48) to stop teasing the
+next episode. **Also untested against real output** - it was written without an
+API key, so nobody has yet heard an episode that ends under the new rules. This
+is the first thing to check.
+
 `python write.py "<query>" --minutes 3` prints a script in seconds without
 generating audio. That is the loop for improving this, and it is a judgement
 call rather than an engineering one.
@@ -184,14 +189,20 @@ another rule.
    Note: voice is deliberately **not** part of the script cache key, because a
    voice changes the audio and not the words. Switching voice therefore reuses
    the cached script — measured at ~90 ms and zero API cost.
-3. ~~**The cold-open → script gap**~~ — *fixed* (PROBLEMS.md §21). The opener is
-   paced to the listener: it speaks only while less than 8s ahead of the wall
-   clock, tops up on seconds-of-speech-held, and fetches before the buffer
-   drains. Silence is now structurally impossible up to a 60s ceiling.
+3. ~~**The cold-open → script gap**~~ — *fixed twice; measured this time*
+   (PROBLEMS.md §21, then §46). §21 claimed silence was "structurally
+   impossible up to a 60s ceiling". **That was wrong** - a rebound variable was
+   orphaning opener sentences mid-flight, so on a 30s script 52 were written
+   and 11 spoken with 11.5s of dead air. Fills are now kept in a list and
+   drained oldest-first. `python tools/gap_probe.py` measures it with no API
+   key and reports 0.00s at every latency from 2s to 30s; run it before
+   believing any future claim about this.
    **What remains is not a bug but a consequence:** a 30s researched call means
-   30s of preamble, because the listener must hear *something*. The cure is a
-   faster script - fewer web searches, a faster model, or prefetch on the
-   browse surfaces - not a longer opener.
+   30s of preamble, because the listener must hear *something*, and the opener
+   may state no facts - so the seam between it and the script is structural.
+   The cure is a faster script - fewer web searches, a faster model, or
+   prefetch on the browse surfaces - not a longer opener.
+   Note the cold open is still **off** by default (`ENABLE_COLD_OPEN=0`).
 4. **myFAM is built; the taste model is deliberately crude.** `topics.py` ranks
    a *shared* bank of ~28 topics three ways (trending / co-listener / history)
    from an append-only event log. Tags come from keyword matching, not a
@@ -218,7 +229,14 @@ another rule.
    the event log actually holds - started, finished, open threads, subjects -
    because a profile page is the easiest place in an app to invent numbers,
    and every invented one is a promise to keep later.
-9. **Personalisation needs state the app does not have**: user identity, an
+9. **Attachments are built** (`attachments.py`, PROBLEMS.md §47). A search can
+   carry documents, photos and links. Extraction happens when the thing is
+   attached, never on the generation path, because a round-trip in front of the
+   first word is the one cost this product refuses. Every failure is a sentence
+   the listener can act on, and an attached episode is **never cached**, so it
+   cannot reach another listener or Explore. Only PDF needs a package (pypdf,
+   optional); .docx is read with `zipfile`.
+10. **Personalisation needs state the app does not have**: user identity, an
    interaction log, and a recommender. Everything today is stateless.
 
 ## Constraints that are settled — do not undo without discussing
@@ -258,10 +276,14 @@ being asked:
 1. `./dev.sh check` — tests, the interface-parses check, the preview build and
    its browser smoke test. All of it, every time.
 2. Rebuild the phone preview and **republish it to the same artifact URL** so
-   the link never changes. Publishing to the same file path in a conversation
-   updates that artifact in place; from a new conversation, pass the existing
-   URL as `url` (find it with `action: "list"`) rather than creating a second
-   one.
+   the link never changes:
+
+       https://claude.ai/code/artifact/c8bd86aa-e61e-4262-a1c8-b9c8d8d6645e
+
+   Publishing to the same file path within one conversation updates it in
+   place; **from a new conversation, pass that URL as `url`** or you will
+   create a second artifact and the link the phone has bookmarked will go
+   stale. Read it first, then publish `preview/fam-artifact.html` to it.
 3. Reply with a short summary of what changed and the preview URL. Not a zip,
    not a wall of files.
 4. If something genuinely cannot be automated, say the exact command to run.
@@ -269,6 +291,32 @@ being asked:
 `DEVELOPMENT.md` documents the whole loop. The preview is the interface running
 on fixtures - good for layout, flow and interaction on a real phone, useless
 for writing quality or time-to-first-audio, which need the server.
+
+## Picking this up in a new session
+
+Everything is in the repo; nothing of consequence lives in a chat log. Branch:
+`claude/search-podcast-audio-generator-ed4br1` — develop and push there, and do
+not open a pull request unless asked.
+
+Read in this order: this file for where it is going and what is settled,
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-48 are the
+most recent), `DEVELOPMENT.md` for the loop.
+
+Then run `./dev.sh check` before changing anything, so you know the baseline is
+green rather than assuming it.
+
+What is true but not obvious from the code:
+
+- There is **no API key** in the build container, so writing quality and
+  time-to-first-audio cannot be verified here. Tests, the interface checks and
+  the browser smoke test all run without one. Anything about *how the writing
+  sounds* is unverified until someone runs it with a key.
+- The checks answer "does it work", not "does it look right". `tools/shots.py`
+  photographs all nine surfaces so a refactor can be proved neutral;
+  `tools/gap_probe.py` measures dead air without a key. Both exist because a
+  claim was once made without them and was wrong.
+- Deleting CSS from `static/index.html` has broken this app twice. Use
+  `tools/check_css.py` and `tools/shots.py`, not judgement.
 
 ## Working notes
 
