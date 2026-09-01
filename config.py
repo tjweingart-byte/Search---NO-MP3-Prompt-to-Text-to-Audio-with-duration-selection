@@ -162,6 +162,24 @@ class Settings:
         default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "0") not in ("0", "false", "False", "")
     )
     max_web_searches: int = _env_int("MAX_WEB_SEARCHES", 3)  # a ceiling, not a target
+    # Answer first, research underneath. When an episode is going to be
+    # researched, run a second call with no tools that starts writing
+    # immediately, speak that while the search runs, and hand over the moment
+    # the researched half has a sentence ready. The listener never waits, and
+    # what covers the wait is the answer rather than filler - which is the one
+    # thing the deleted cold open could never be. Costs a second model call on
+    # researched episodes only.
+    answer_first: bool = field(
+        default_factory=lambda: os.environ.get("ANSWER_FIRST", "1") not in ("0", "false", "False")
+    )
+    # The most of an episode the instant half may speak before it must give way.
+    #
+    # Without a ceiling this design quietly defeats itself: synthesis runs far
+    # faster than research, so the from-knowledge half can finish the entire
+    # episode in the time the search takes, and the listener gets an
+    # unresearched answer to a question that was researched *because* it needed
+    # today's facts. Reserving the rest means the research always gets said.
+    answer_first_share: float = _env_float("ANSWER_FIRST_SHARE", 0.5)
 
     cache_enabled: bool = field(
         default_factory=lambda: os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")

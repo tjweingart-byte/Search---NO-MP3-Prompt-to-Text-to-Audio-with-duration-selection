@@ -45,6 +45,16 @@ Corollary: **latency is answered by starting earlier, never by filling the
 gap.** The cold open tried to fill it and was removed. Prefetch on the browse
 surfaces; on search, keep the work small enough that there is no gap to fill.
 
+**On search, that is now literal** (PROBLEMS.md §56). A question that needs
+today's facts starts two calls at once: one with no tools that begins writing
+immediately, one with search that is still reading. The first is spoken while
+the second works and hands over the moment research has a sentence. The wait is
+covered by the answer rather than by filler - which is exactly what the cold
+open could not be, since it was told to state no facts. `ANSWER_FIRST_SHARE`
+caps the instant half at half the episode, because synthesis outruns research
+and without a ceiling the from-knowledge half finishes the whole episode and the
+research is never heard.
+
 ## The one-sentence spec
 
 **Type a question, and within about a second audio starts giving the answer.**
@@ -327,7 +337,7 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-55 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-56 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
 A fresh container has none of the dependencies installed. Setup is two lines,

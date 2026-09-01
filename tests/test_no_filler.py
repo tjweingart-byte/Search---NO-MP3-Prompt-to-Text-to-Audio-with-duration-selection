@@ -145,6 +145,6 @@ def test_the_interface_is_served_the_same_word_list_the_server_decides_with():
 
 def test_the_wait_says_what_it_is_waiting_for():
     index = (ROOT / "static" / "index.html").read_text()
-    assert "Checking recent sources" in index, "no honest state for a researched episode"
+    assert "checking sources underneath" in index, "no honest state for a researched episode"
     assert "Writing your episode" in index, "no honest state for an instant one"
     assert "startHonestWait" in index

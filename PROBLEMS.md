@@ -2406,3 +2406,61 @@ time was the opener tests sleeping through simulated research latency. Still
 unverified here, as ever: no API key, so the search comparison has never been
 run and the latency of a `never`-mode episode has not been measured on a real
 machine.
+
+## 56. Answer first, research underneath
+
+§55 removed the filler and accepted the wait it had been failing to cover. This
+removes the wait as well, without putting the filler back.
+
+**The shape is the cold open's; the content is the opposite.** On an episode
+that is going to be researched, two calls start at once: one with no tools,
+which begins writing immediately, and one with web search, which is still
+reading. The first is spoken while the second works, and the researched half
+takes over the moment it has a sentence ready.
+
+The old opener could never work because it was eighteen words and was forbidden
+from stating a fact. Here the cover *is* the answer, written by the same model
+at full length - so a listener who quits before the handover has still been told
+something true.
+
+**The two halves are divided by content, not by text.** The obvious design -
+show the researched call what the opening actually said - is impossible: both
+start at the same moment, and the researched call's prompt is fixed before the
+opening has written a word. So neither is told the other's text; each is told
+which job is whose. The opening takes what does not change week to week (what
+this is, how it works, the history). The continuation is told the episode is
+already playing, not to re-introduce anything, to spend its length on what is
+current, and - the part that makes the seam survivable - to correct the opening
+in passing if its sources disagree: *"that figure has since moved to X"*, then
+carry on. A correction stated calmly is better content than the seam it hides.
+
+**The ceiling is not a tuning knob, it is the thing that makes it work.** The
+first test written against this failed, and it was right to. Synthesis runs far
+faster than research: given a 3-minute episode and a 20-second search, the
+from-knowledge half can finish the *entire episode* before the research lands,
+and the listener gets an unresearched answer to a question that was researched
+precisely because it needed today's facts. The design defeats itself silently.
+`ANSWER_FIRST_SHARE` (0.5) caps how much of the episode the instant half may
+speak; past it the remainder is owed to the research. A test pins that faster
+research means proportionally less of the known half - that the cover tracks the
+wait rather than being a fixed preamble, which is what would make it filler
+again.
+
+Also caught by writing the tests: the ceiling was first checked against
+`stats.audio_seconds`, which is only filled in at the end, so it never fired.
+`pace.elapsed` is the live measure. A ceiling that reads a value written after
+the loop it guards is not a ceiling.
+
+**Costs.** One extra model call on researched episodes only - unresearched ones
+still make exactly one, and a test pins that. `ANSWER_FIRST=0` returns to §55's
+behaviour: one call, and an honest wait.
+
+**The interface stopped saying it was waiting**, because it is not any more.
+"Checking recent sources — this one needs today's facts" became "Answering now —
+checking sources underneath". Leaving the old copy would have been a fresh lie
+in the exact place the last one was removed from.
+
+Unverified, as ever, without a key: how audible the handover actually is. The
+tests prove no known-half sentence is spoken after the researched half starts
+and that the halves never interleave; whether the join *sounds* like a join is
+a listening judgement.

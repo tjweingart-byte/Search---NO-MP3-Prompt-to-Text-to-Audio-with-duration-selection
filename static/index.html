@@ -1558,8 +1558,12 @@
     var node = overlay ? overlay.querySelector(".gen-text") : null;
     if(!node) return;
     var researching = willResearch(query);
+    // A researched episode no longer waits for its sources: it answers from
+    // what the model knows and the research takes over underneath. Saying
+    // "checking sources" as though the listener were held up would be a new
+    // lie in the place the old one was removed from.
     var lead = researching
-      ? "Checking recent sources — this one needs today's facts"
+      ? "Answering now — checking sources underneath"
       : "Writing your episode";
     var started = Date.now();
     node.textContent = lead + "…";
@@ -1570,7 +1574,7 @@
       // thing telling the listener the app has not died.
       node.textContent = seconds < 3 ? lead + "…" : lead + "… " + seconds + "s";
       if(researching && seconds === 12){
-        node.textContent = "Still reading. Researched episodes take longer to start.";
+        node.textContent = "Still working. This one needs today's facts.";
       }
     }, 500);
   }

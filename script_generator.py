@@ -285,6 +285,12 @@ class EpisodePlan:
     #: these is theirs alone: `pipeline` refuses to cache it, so it never
     #: reaches Explore or another listener.
     attachments: tuple = ()
+    #: "" for a whole episode. "opening" is the half written from what the
+    #: model already knows, which starts immediately; "continuation" is the
+    #: researched half, which takes over once its sources are in. Answer first,
+    #: research underneath: the listener never waits, and what covers the wait
+    #: is the answer rather than filler.
+    role: str = ""
 
     @property
     def images(self) -> list:
@@ -359,6 +365,37 @@ def plan_episode(
     )
 
 
+#: What each half of an answer-first episode is told about the other. The two
+#: are divided by *content*, not by text: the opening cannot know what the
+#: research will find, and the research cannot know the opening's exact words,
+#: but both can be told which job is whose.
+ROLE_BRIEFS = {
+    "opening": (
+        "\nYou are opening an episode that will continue after you. Answer from "
+        "what you already know, starting immediately - no waiting, no hedging "
+        "about not having looked anything up. Cover what this is, why it works "
+        "the way it does, and the history that explains it: the parts of the "
+        "answer that do not change week to week.\n"
+        "Do not speculate about what may have happened recently, and do not "
+        "promise that anything is coming. Write as much as the length allows; "
+        "you may be cut off mid-episode, which is expected and fine.\n"
+    ),
+    "continuation": (
+        "\nThe episode is already playing. The opening covered what this is, how "
+        "it works and the background - all from general knowledge, which may be "
+        "months out of date. You are taking over mid-episode.\n"
+        "Do not re-introduce the topic, define terms already defined, or write a "
+        "new opening line. Go straight to what your sources actually say, and "
+        "spend your length on what is current: what has happened lately, what "
+        "the numbers are now, what changed.\n"
+        "If what you found contradicts the general picture the opening would "
+        "have given, say so plainly and in passing - 'that figure has since "
+        "moved to X' - and carry on. A correction stated calmly is more useful "
+        "than a seam the listener can hear.\n"
+    ),
+}
+
+
 def build_prompt(plan: EpisodePlan) -> str:
     budget = plan.body_budget
     attached = ""
@@ -397,7 +434,7 @@ straight into the narrower thing they asked for and stay on it.
 <request>{plan.query}</request>
 
 It is currently {now_line()}. Prefer the newest information you can establish.
-{attached}{follow_up}
+{attached}{follow_up}{ROLE_BRIEFS.get(plan.role, "")}
 You have about {plan.minutes} minute{"s" if plan.minutes != 1 else ""} - roughly
 {budget} words. That is room for {plan.sections[0]}.
 

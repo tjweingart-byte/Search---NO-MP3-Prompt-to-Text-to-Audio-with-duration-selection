@@ -17,6 +17,7 @@ enough on its own:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
@@ -133,6 +134,8 @@ class GenerationStats:
     truncated: bool = False
     topups: int = 0
     #: "hit" | "miss" | "off" - whether this episode reused a shared script.
+    answered_first: bool = False
+    handover_seconds: float = 0.0
     cache: str = "off"
     #: When generation began, for audio-produced vs wall-clock comparisons.
     started_at: float = field(default_factory=time.perf_counter)
@@ -166,6 +169,8 @@ class GenerationStats:
             "voice": self.voice,
             "truncated": self.truncated,
             "topups": self.topups,
+            "answered_first": self.answered_first,
+            "handover_seconds": round(self.handover_seconds, 2),
             "cache": self.cache,
             "synth_seconds": round(self.synth_seconds, 2),
             "min_headroom": round(self.min_headroom, 1) if self.min_headroom < 999 else None,
@@ -317,6 +322,77 @@ class PodcastPipeline:
         yield pcm
         yield gap
 
+    async def _answer_first(
+        self,
+        plan: EpisodePlan,
+        pace: PaceController,
+        stats: GenerationStats,
+        notes: ScriptNotes,
+    ) -> AsyncIterator[bytes]:
+        """Answer immediately from knowledge; let research take over underneath.
+
+        The listener asked something that needs today's facts, and researching
+        it costs 10-25 seconds before a word can be written. Both halves start
+        at once: one with no tools, which begins writing straight away, and one
+        with web search, which is still reading. The first is spoken while the
+        second works, and the moment the researched half has a sentence ready
+        the episode moves to it.
+
+        This is the shape the cold open had and the content it lacked. The
+        opener was told to state no facts, so the seconds it covered were
+        worthless and there were only five of them. Here the cover *is* the
+        answer - the durable half of it - written by the same model at full
+        length, so a listener who never reaches the handover has still been
+        told something true.
+
+        The two halves are divided by **content, not by text**. The opening
+        cannot know what the research will find and the research cannot know
+        the opening's words, so neither is asked to: the opening takes what
+        does not change week to week, the continuation takes what is current
+        and is told to correct the opening in passing if its sources disagree.
+        """
+        instant_plan = dataclasses.replace(plan, search=False, role="opening")
+        research_plan = dataclasses.replace(plan, search=True, role="continuation")
+
+        instant = self._start(self.generator.stream_sentences(instant_plan, ScriptNotes()))
+        research = self._start(self.generator.stream_sentences(research_plan, notes))
+        stats.answered_first = True
+        handover = time.perf_counter()
+
+        try:
+            # Speak the instant half one sentence at a time, checking after each
+            # whether research has arrived. Checking between sentences rather
+            # than mid-sentence is what makes the handover inaudible.
+            # The instant half may cover at most this much of the episode. Past
+            # it, the researched half is owed the remainder - see
+            # answer_first_share in config.py for why this ceiling exists.
+            cover_ceiling = plan.target_seconds * settings.answer_first_share
+            while not research.ready() and pace.elapsed < cover_ceiling:
+                item = await instant.next()
+                if item is None or isinstance(item, Exception):
+                    # The instant half ended or failed before research landed.
+                    # Nothing to cover with; wait for the researched half, which
+                    # is the episode either way.
+                    if isinstance(item, Exception):
+                        log.warning("instant half failed; waiting for research",
+                                    exc_info=item)
+                    break
+                async for chunk in self._speak_one(item, pace, stats):
+                    yield chunk
+                if stats.truncated:
+                    return
+        finally:
+            await instant.close()
+
+        stats.handover_seconds = time.perf_counter() - handover
+        if not research.ready():
+            log.info("answered from knowledge for %.0fs; now waiting on research",
+                     pace.elapsed)
+        log.info("research took over after %.1fs of answering from knowledge",
+                 stats.handover_seconds)
+        async for chunk in self._speak(research, pace, stats):
+            yield chunk
+
     async def _cache_key(self, plan: EpisodePlan) -> str:
         """Where this episode lives in the shared cache. "" when caching is off."""
         if not self.cache:
@@ -386,12 +462,17 @@ class PodcastPipeline:
         stats.cache = "miss" if self.cache else "off"
 
         # --- Generate ------------------------------------------------------
-        # Nothing is spoken until the real script arrives. The opener that
-        # used to cover this wait is gone: see PROBLEMS.md 55.
+        # Nothing is spoken until the real script arrives. The opener that used
+        # to cover this wait is gone: see PROBLEMS.md 55.
         notes = ScriptNotes()
-        body = self._start(self.generator.stream_sentences(plan, notes))
-        async for chunk in self._speak(body, pace, stats):
-            yield chunk
+
+        if plan.search and settings.answer_first:
+            async for chunk in self._answer_first(plan, pace, stats, notes):
+                yield chunk
+        else:
+            body = self._start(self.generator.stream_sentences(plan, notes))
+            async for chunk in self._speak(body, pace, stats):
+                yield chunk
 
         # The model under-wrote. Rather than pad minutes of silence, buy more
         # script: a top-up request is small, cheap and arrives while the
