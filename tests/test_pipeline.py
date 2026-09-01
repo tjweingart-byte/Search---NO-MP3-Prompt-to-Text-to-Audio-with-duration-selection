@@ -453,6 +453,106 @@ def test_opener_grows_to_cover_slow_research(with_opener):
     assert len(slow) > 1, "one sentence cannot cover a multi-second wait"
 
 
+def test_no_opener_sentence_is_written_and_then_thrown_away(with_opener):
+    """Every sentence a fill delivers must reach the listener.
+
+    Starting a refill used to rebind the single `opener` name, orphaning
+    whatever the previous call had not yet queued. Those sentences were
+    written, paid for and dropped - and because they were dropped, the buffer
+    ran dry and the listener heard the gap while a replacement was fetched.
+    Measured on a 30s script: 52 sentences written, 4 spoken.
+    """
+
+    class CountingOpener(SlowResearchGenerator):
+        """Delivers slowly enough that a refill fires mid-delivery."""
+
+        written: list = []
+
+        async def cold_open(self, plan, spoken_so_far=""):
+            for i, sentence in enumerate(OPENER_SENTENCES):
+                if i:
+                    await asyncio.sleep(0.05)
+                self.written.append(sentence)
+                yield sentence
+
+    CountingOpener.written = []
+    plan = plan_episode("a topic", 2)
+    stats = GenerationStats()
+    pipeline = PodcastPipeline(
+        generator=CountingOpener(2.0), engine=DebugEngine(), cache=None
+    )
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    spoken = [s for s in stats.script if s.startswith("Opener")]
+    written = len(CountingOpener.written)
+    # Some waste is legitimate: when the script arrives mid-fill, the rest of
+    # that call and whatever is still buffered go unspoken. That is bounded by
+    # roughly one fill plus one buffer - not by most of what was bought.
+    allowance = 2 * len(OPENER_SENTENCES)
+    assert written, "the opener never ran"
+    assert len(spoken) >= written - allowance, (
+        f"{written} opener sentences written, only {len(spoken)} spoken - "
+        "fills in flight are being orphaned, or refetched before they finish"
+    )
+
+
+def test_a_refill_continues_what_the_listener_already_heard(with_opener):
+    """Fills used to be independent calls with an identical prompt.
+
+    A slow script then produced several openings in a row, each starting the
+    episode again, which is what made the run-up read as disjointed.
+    """
+    seen: list = []
+
+    class ContextOpener(SlowResearchGenerator):
+        async def cold_open(self, plan, spoken_so_far=""):
+            seen.append(spoken_so_far)
+            for sentence in OPENER_SENTENCES:
+                yield sentence
+
+    plan = plan_episode("a topic", 2)
+    stats = GenerationStats()
+    pipeline = PodcastPipeline(
+        generator=ContextOpener(3.0), engine=DebugEngine(), cache=None
+    )
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    assert len(seen) > 1, "a 3s wait should have needed at least one refill"
+    assert seen[0] == "", "the first call has nothing to continue from"
+    assert any(later.strip() for later in seen[1:]), (
+        "a refill was asked to open the episode again with no idea what the "
+        "listener had already been told"
+    )
+
+
+def test_an_opener_that_predates_the_context_argument_still_runs(with_opener):
+    """DemoGenerator takes the plan alone; that must not break the episode."""
+
+    class OldStyle(SlowResearchGenerator):
+        async def cold_open(self, plan):          # no spoken_so_far
+            for sentence in OPENER_SENTENCES:
+                yield sentence
+
+    plan = plan_episode("a topic", 2)
+    stats = GenerationStats()
+    pipeline = PodcastPipeline(generator=OldStyle(2.0), engine=DebugEngine(), cache=None)
+
+    async def run():
+        async for _ in pipeline.stream_pcm(plan, stats):
+            pass
+
+    asyncio.run(run())
+    assert [s for s in stats.script if s.startswith("Opener")], "no opener was spoken"
+
+
 def test_opener_is_not_wasted_when_research_is_fast(with_opener):
     _, quick = _episode(0.0)
     assert len(quick) <= 2, "fast research should cut over almost immediately"

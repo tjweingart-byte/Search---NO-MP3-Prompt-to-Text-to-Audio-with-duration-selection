@@ -1858,3 +1858,62 @@ first-run one reported "a new listener saw 0 Go Deeper tiles, not 4".
 
 Still open, and pre-existing: a *resume* card can duplicate a rail pick, since
 only starters are de-duplicated against the rails.
+
+## 46. The gap was not pacing. Sentences were being written and thrown away
+
+Reported from listening: "after the first line is read, there is a pause before
+the story continues." §21 had declared silence "structurally impossible up to a
+60s ceiling". That was wrong, and `tools/gap_probe.py` reproduces it with no API
+key - a fake generator whose researched call takes a set time, measuring the one
+thing that matters, audio produced against wall clock consumed:
+
+    script took  5.0s -> worst silence  2.20s
+    script took 10.0s -> worst silence  2.86s
+    script took 30.0s -> worst silence 11.54s   (52 opener sentences written, 11 spoken)
+
+**The cause was a rebound variable, not a budget.** Topping up did this:
+
+    opener = self._start(cold_open(plan))
+
+`opener` was the *only* handle on the call in flight. Reassigning it orphaned
+every sentence the previous call had not yet queued - written, paid for, and
+dropped. The buffer then ran dry, and the listener heard the hole while the
+replacement was fetched. On a 30s script that was 52 sentences bought and 11
+spoken, with 11.5 seconds of dead air in the middle.
+
+Two changes:
+
+* **Every fill in flight is drained, oldest first.** `live` is a list, so a
+  refill *adds* a source of sentences rather than replacing one that is still
+  delivering.
+* **A refill waits until the calls in flight have finished.** The first attempt
+  fired whenever no pump was instantaneously `ready()`, which for a streaming
+  call is most of the time - it bought 52 sentences to speak 11. Gating on
+  "nothing still delivering" cut that to 12 for the same episode.
+
+Measured after: **0.00s of silence at every latency from 2s to 30s**, and
+opener calls on a 30s script down from thirteen to three.
+
+The regression test asserts what the docstring used to assert and could not
+back: that sentences written are sentences spoken, within one fill plus one
+buffer of legitimate cut-over waste. It fails on the shipped code - `assert 11
+>= (52 - 8)`.
+
+### The transition, which is a different problem
+
+Also reported: the content of the opener and the script sometimes disagree, and
+the seam shows. Two causes, and only one is fixable this way.
+
+Fills were independent calls with an identical prompt, so a slow script
+produced several *openings* in a row rather than one continuous run-up. Each
+fill now receives what the listener has actually heard and is told to continue
+from the last sentence rather than begin again.
+
+**What this does not fix, and cannot.** The opener and the script are written
+concurrently - that is the entire point - so the script cannot be shown the
+opener. The opener is also forbidden from stating any fact, having done no
+research. So the seam is structural: content-free framing meeting researched
+prose. Making the opener run *longer* makes it worse, not better, because
+everything it adds is by construction filler. The cure named in CLAUDE.md
+still stands: remove the wait rather than fill it better - fewer web searches,
+a faster script model, or prefetch on the browse surfaces.

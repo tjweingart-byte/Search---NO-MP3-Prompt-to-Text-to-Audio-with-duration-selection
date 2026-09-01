@@ -487,7 +487,9 @@ class ScriptGenerator:
                 reason = getattr(detail, "explanation", None) or "the request was declined"
                 yield clean_for_speech(f"I can't put together a briefing on that. {reason}")
 
-    async def cold_open(self, plan: EpisodePlan) -> AsyncIterator[str]:
+    async def cold_open(
+        self, plan: EpisodePlan, spoken_so_far: str = ""
+    ) -> AsyncIterator[str]:
         """One framing sentence, written by a small fast model, no tools.
 
         This runs *concurrently* with the main researched call. Its only job is
@@ -497,6 +499,12 @@ class ScriptGenerator:
         The prompt forbids any factual claim, because this model has done no
         research and must not guess ahead of what the main model will say. It
         frames the question; it never answers it.
+
+        `spoken_so_far` is what the listener has already heard from earlier
+        fills. Each fill used to be an independent call with an identical
+        prompt, so a slow script produced several openings in a row that
+        circled the same ground and did not follow from one another. Given what
+        came before, a fill continues it instead of starting again.
         """
         avoid = ""
         if _RECENT_OPENERS:
@@ -506,9 +514,20 @@ class ScriptGenerator:
                 "Do not reuse their wording, their rhythm, or their opening move:\n"
                 f"{recent}\n"
             )
+        already = ""
+        if spoken_so_far.strip():
+            already = (
+                "\nThe listener is already part-way into this episode. This is "
+                "what they have heard so far, word for word:\n"
+                f"<heard>{spoken_so_far.strip()[-1200:]}</heard>\n"
+                "Continue directly from that last sentence. Do not open again, "
+                "do not restate the subject, and do not circle back to a point "
+                "it has already made - carry the same line of thought forward.\n"
+            )
         prompt = (
             "A listener asked for a spoken briefing on this topic:\n"
-            f"<topic>{plan.query}</topic>\n\n"
+            f"<topic>{plan.query}</topic>\n"
+            f"{already}\n"
             f"Write up to four short sentences, {settings.cold_open_words} words in total, "
             "that open the episode. Each sentence must stand alone and make sense as "
             "the last thing said before the briefing proper begins, because playback "
