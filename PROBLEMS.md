@@ -2006,3 +2006,42 @@ predicted follow-up and the prefetch plan are what that leans on instead.
 
 Not verified against real output: there is no API key here, so `python write.py
 "<query>" --minutes 3` is the check that closes this one.
+
+## 49. `./dev.sh check` could pass without ever opening a browser
+
+Picking the project up in a fresh container, the first `./dev.sh check` died
+with `No module named pytest`, which reads like a broken repo rather than a
+missing `pip install -r requirements.txt`. That is a small annoyance. The one
+underneath it is not.
+
+`playwright` is not in `requirements.txt`, so on any machine that has the deps
+but not playwright, the check ran the tests, the two interface checks and the
+preview build, **skipped the browser smoke test in silence**, and stopped. The
+guard was written as a convenience - don't fail on a machine without a browser -
+but the last line a reader sees in that case is the preview file listing, and
+the run looks complete. It is not: twelve behaviours (three rails, Go Deeper,
+attachments, mixes, Explore, messages, profile, mix visibility, echo on every
+player) went unchecked.
+
+This is the constraint CLAUDE.md already states - **failures must be visible,
+every fallback announces itself** - broken by a skip rather than a fallback,
+which is why it survived. A skipped check is a fallback: it substitutes "we did
+not look" for "we looked and it was fine", and says nothing.
+
+Two changes to `dev.sh`, both of them announcements rather than new checks:
+
+* Missing dependencies now stop the run with the exact command to fix it,
+  instead of a traceback from pytest.
+* A skipped smoke test prints **SKIPPED: the browser smoke test did not run**,
+  says nothing below it was checked in a browser, and gives the install command.
+
+Verified both paths deliberately: forcing a Python without the deps produces
+the dependency message, and shadowing `playwright` with a module that raises on
+import produces the skip banner. With playwright installed the full run ends in
+`all checks passed` with all twelve smoke behaviours listed, which is the state
+this branch is in.
+
+Worth stating for the next fresh container, because neither is in the code:
+`pip install -r requirements.txt` then `pip install playwright` is the setup,
+and there is still **no API key here**, so writing quality - including the
+untested ending rules from §48 - remains unverified.

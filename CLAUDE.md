@@ -299,11 +299,19 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-48 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-49 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
+A fresh container has none of the dependencies installed. Setup is two lines,
+and the second one is not optional:
+
+    pip install -r requirements.txt
+    pip install playwright        # or the browser smoke test skips itself
+
 Then run `./dev.sh check` before changing anything, so you know the baseline is
-green rather than assuming it.
+green rather than assuming it. A complete run ends with `all checks passed` and
+twelve named smoke behaviours; anything less means something was skipped, and
+`dev.sh` now says so out loud (PROBLEMS.md §49).
 
 What is true but not obvious from the code:
 

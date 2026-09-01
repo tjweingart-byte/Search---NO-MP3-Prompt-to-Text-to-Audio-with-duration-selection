@@ -17,6 +17,16 @@ MODE=${1:-serve}
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
+# A fresh machine (or a fresh container) has none of this installed, and a
+# bare "No module named pytest" reads like a broken repo rather than a missing
+# step. Say the command instead.
+if ! $PY -c "import pytest, fastapi, httpx" 2>/dev/null; then
+  printf '\n\033[1m== Dependencies missing\033[0m\n'
+  printf '  Run:  %s -m pip install -r requirements.txt\n' "$PY"
+  printf '  Then: %s -m pip install playwright   (for the browser smoke test)\n' "$PY"
+  exit 1
+fi
+
 if [ "$MODE" != "preview" ]; then
   step "Tests"
   $PY -m pytest tests/ -q
@@ -30,8 +40,16 @@ fi
 
 step "Phone preview"
 $PY preview/build_preview.py
+# Skipping the browser test silently is the failure this project has paid for
+# twice: the run still ends "all checks passed" having never opened a browser.
+# Every skip announces itself.
 if command -v node >/dev/null 2>&1 && $PY -c "import playwright" 2>/dev/null; then
   $PY tools/smoke_preview.py || echo "  (smoke test failed - the preview still built)"
+else
+  printf '  \033[1mSKIPPED: the browser smoke test did not run.\033[0m\n'
+  printf '  Nothing below was checked in a browser. To fix:\n'
+  printf '    %s -m pip install playwright\n' "$PY"
+  command -v node >/dev/null 2>&1 || printf '    and install node\n'
 fi
 
 [ "$MODE" = "check" ] && exit 0
