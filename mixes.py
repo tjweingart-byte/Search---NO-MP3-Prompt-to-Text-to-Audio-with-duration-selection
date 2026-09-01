@@ -99,6 +99,10 @@ class Mix:
     items: list[MixItem]
     created_at: float
     updated_at: float
+    #: Public mixes appear on the listener's profile. Private is the default:
+    #: a mix is a routine, and a routine is personal until someone decides
+    #: otherwise.
+    public: bool = False
 
     @property
     def topic_ids(self) -> list[str]:
@@ -114,6 +118,7 @@ class Mix:
             # Kept for anything still reading `topics`; bank entries only.
             "topics": [i.as_dict() for i in self.items if not i.custom],
             "custom_count": sum(1 for i in self.items if i.custom),
+            "public": self.public,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -186,6 +191,10 @@ class MixStore:
                 conn.execute("ALTER TABLE mixes ADD COLUMN items TEXT NOT NULL DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            try:
+                conn.execute("ALTER TABLE mixes ADD COLUMN public INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -209,14 +218,19 @@ class MixStore:
                 log.exception("unreadable mix items; falling back to bank ids")
         if not items:
             items = [_bank_item(t) for t in row[3].split(",") if t in BANK_BY_ID]
-        return Mix(row[0], row[1], row[2], items, row[4], row[5])
+        return Mix(row[0], row[1], row[2], items, row[4], row[5],
+                   bool(row[7]) if len(row) > 7 else False)
+
+    def public_for_user(self, user_id: str) -> list[Mix]:
+        """What this listener has chosen to show on their profile."""
+        return [m for m in self.list_for_user(user_id) if m.public]
 
     def list_for_user(self, user_id: str) -> list[Mix]:
         if not user_id:
             return []
         try:
             rows = self._conn().execute(
-                "SELECT id, user_id, name, topic_ids, created_at, updated_at, items"
+                "SELECT id, user_id, name, topic_ids, created_at, updated_at, items, public"
                 " FROM mixes WHERE user_id = ? ORDER BY created_at",
                 (user_id,),
             ).fetchall()
@@ -228,7 +242,7 @@ class MixStore:
     def get(self, user_id: str, mix_id: str) -> Optional[Mix]:
         try:
             row = self._conn().execute(
-                "SELECT id, user_id, name, topic_ids, created_at, updated_at, items"
+                "SELECT id, user_id, name, topic_ids, created_at, updated_at, items, public"
                 " FROM mixes WHERE id = ? AND user_id = ?",
                 (mix_id, user_id),
             ).fetchone()
@@ -263,6 +277,7 @@ class MixStore:
         mix_id: str,
         name: Optional[str] = None,
         topic_ids: Optional[Sequence] = None,
+        public: Optional[bool] = None,
     ) -> Mix:
         mix = self.get(user_id, mix_id)
         if not mix:
@@ -277,12 +292,15 @@ class MixStore:
                 raise MixError(f"You already have a mix called {mix.name}.")
         if topic_ids is not None:
             mix.items = clean_items(topic_ids)
+        if public is not None:
+            mix.public = bool(public)
         mix.updated_at = time.time()
         self._conn().execute(
-            "UPDATE mixes SET name = ?, topic_ids = ?, updated_at = ?, items = ?"
-            " WHERE id = ? AND user_id = ?",
+            "UPDATE mixes SET name = ?, topic_ids = ?, updated_at = ?, items = ?,"
+            " public = ? WHERE id = ? AND user_id = ?",
             (mix.name, ",".join(mix.topic_ids), mix.updated_at,
-             json.dumps([i.as_dict() for i in mix.items]), mix_id, user_id),
+             json.dumps([i.as_dict() for i in mix.items]), int(mix.public),
+             mix_id, user_id),
         )
         return mix
 

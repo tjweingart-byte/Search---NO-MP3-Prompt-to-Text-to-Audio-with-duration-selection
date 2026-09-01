@@ -223,119 +223,87 @@
   .msg-dot{ position:absolute; top:5px; right:5px; width:7px; height:7px; border-radius:50%;
     background:var(--copper); border:1.5px solid var(--bg); }
 
-  /* Profile: a scaffold, and honest about being one. */
-  .pf-card{ padding:16px; border-radius:14px; background:var(--surface);
-    border:1px solid var(--border); margin-bottom:12px; }
-  .pf-id{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.06em;
-    color:var(--text-muted); margin-top:6px; word-break:break-all; }
-  .pf-name{ font-family:'Fraunces', serif; font-size:19px; color:var(--text); }
-  .pf-stats{ display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:12px; }
-  .pf-stat{ padding:13px 10px; border-radius:12px; background:var(--surface);
-    border:1px solid var(--border); text-align:center; }
-  .pf-stat b{ display:block; font-family:'Fraunces', serif; font-weight:600; font-size:21px;
-    color:var(--text); font-variant-numeric:tabular-nums; }
-  .pf-stat span{ font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.07em;
-    text-transform:uppercase; color:var(--text-muted); }
-  .pf-kicker{ font-family:'JetBrains Mono', monospace; font-size:9px; letter-spacing:0.12em;
-    text-transform:uppercase; color:var(--text-muted); margin:18px 0 9px; }
-  .pf-tags{ display:flex; flex-wrap:wrap; gap:7px; }
-  .pf-tag{ padding:6px 12px; border-radius:999px; background:var(--surface);
-    border:1px solid var(--border-strong); font-size:11px; color:var(--text); }
-  .pf-row{ display:flex; align-items:center; justify-content:space-between; gap:12px;
-    padding:13px 14px; border-radius:12px; background:var(--surface);
-    border:1px solid var(--border); margin-bottom:9px; cursor:pointer; }
-  .pf-row span{ font-size:12px; color:var(--text); }
-  .pf-row b{ font-family:'JetBrains Mono', monospace; font-size:10px; color:var(--copper);
+  /* Profile. Two readings of one page: your own, and someone else's. What
+     differs is what you can do, not what it looks like. */
+  .pf-top{ display:flex; align-items:center; justify-content:space-between;
+    padding:6px 0 2px; min-height:34px; }
+  .pf-id{ display:flex; gap:15px; align-items:center; padding:14px 0 0; }
+  .pf-pic{ width:78px; height:78px; border-radius:50%; background:var(--paper);
+    color:var(--ink); flex:none; display:flex; align-items:center; justify-content:center; }
+  .pf-name{ font-family:'Fraunces', serif; font-size:25px; font-weight:400;
+    line-height:1.1; color:var(--text); }
+  .pf-at{ font-family:'JetBrains Mono', monospace; font-size:10.5px; color:var(--text-muted);
+    margin-top:5px; }
+  .pf-counts{ font-size:12px; color:var(--text-muted); margin-top:8px; }
+  .pf-counts b{ color:var(--text); font-weight:700; }
+  .pf-acts{ display:flex; gap:8px; padding:16px 0 0; }
+  .pf-btn{ border:1px solid var(--border-strong); border-radius:20px; height:34px;
+    padding:0 16px; display:flex; align-items:center; gap:7px; font-size:12.5px;
+    color:var(--text); background:none; cursor:pointer; }
+  .pf-btn.primary{ background:var(--copper); border-color:var(--copper); color:var(--ink);
     font-weight:700; }
+  .pf-btn.sq{ padding:0; width:34px; justify-content:center; }
+  .pf-tags{ display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  .pf-tag{ border:1px solid var(--border-strong); border-radius:16px; height:31px;
+    padding:0 15px; display:flex; align-items:center; font-size:12.5px; color:var(--text); }
+
+  .pf-rail{ display:flex; align-items:baseline; justify-content:space-between;
+    font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:0.13em;
+    text-transform:uppercase; color:var(--copper); margin:26px 0 2px; }
+  .pf-rail em{ font-style:normal; color:var(--text-muted); letter-spacing:0.05em; }
+  .pf-rail em b{ color:var(--copper); font-weight:700; cursor:pointer; }
+
+  .pf-friends{ display:flex; gap:13px; overflow-x:auto; padding:13px 0 2px;
+    scrollbar-width:none; }
+  .pf-friends::-webkit-scrollbar{ display:none; }
+  .pf-friend{ width:56px; flex:none; text-align:center; cursor:pointer; }
+  .pf-av{ width:50px; height:50px; border-radius:50%; background:var(--surface-hi, var(--surface));
+    border:1px solid var(--border-strong); margin:0 auto; display:flex; align-items:center;
+    justify-content:center; font-family:'Fraunces', serif; font-size:19px; color:var(--paper); }
+  .pf-av.add{ border-style:dashed; color:var(--copper); font-size:21px; }
+  .pf-friend span{ display:block; font-size:10px; color:var(--text-muted); margin-top:7px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .pf-time{ margin-top:22px; background:var(--surface); border:1px solid var(--border);
+    border-radius:13px; padding:16px 17px 17px; }
+  .pf-time-lab{ font-family:'JetBrains Mono', monospace; font-size:9px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--text-muted); }
+  .pf-time-big{ font-family:'Fraunces', serif; font-size:35px; color:var(--copper);
+    line-height:1; margin-top:9px; font-variant-numeric:tabular-nums; }
+  .pf-time p{ font-size:12.5px; color:var(--text-muted); line-height:1.45; margin-top:9px; }
+
+  .pf-headline{ font-family:'Fraunces', serif; font-size:24px; font-weight:400;
+    line-height:1.2; margin:32px 0 0; white-space:nowrap; }
+
+  .pf-folders{ display:flex; gap:11px; overflow-x:auto; padding:13px 0 2px;
+    scrollbar-width:none; }
+  .pf-folders::-webkit-scrollbar{ display:none; }
+  .pf-fold{ width:118px; flex:none; cursor:pointer; }
+  .pf-art{ height:94px; background:var(--paper); border-radius:10px; position:relative;
+    display:flex; align-items:center; justify-content:center; color:var(--ink); }
+  .pf-art svg{ margin-bottom:16px; }
+  .pf-art b{ position:absolute; left:10px; right:10px; bottom:9px; font-family:'Fraunces', serif;
+    font-size:12.5px; font-weight:400; line-height:1.15; }
+  .pf-fold-meta{ font-family:'JetBrains Mono', monospace; font-size:9px; letter-spacing:0.05em;
+    text-transform:uppercase; color:var(--text-muted); margin-top:8px; }
+
+  .pf-echoes{ display:grid; grid-template-columns:1fr 1fr; gap:9px; padding-top:13px; }
+  .pf-echo{ background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    min-height:66px; padding:10px 11px 26px; position:relative; cursor:pointer; }
+  .pf-echo .t{ font-family:'Fraunces', serif; font-size:12.5px; line-height:1.22;
+    color:var(--text); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; }
+  .pf-echo .m{ position:absolute; left:11px; bottom:9px; font-family:'JetBrains Mono', monospace;
+    font-size:8.5px; letter-spacing:0.07em; text-transform:uppercase; color:var(--text-muted); }
+  .pf-echo .m.own{ color:var(--copper); }
+  .pf-all{ margin-top:12px; height:38px; border:1px solid var(--border-strong);
+    border-radius:20px; display:flex; align-items:center; justify-content:center;
+    font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.05em;
+    color:var(--copper); cursor:pointer; }
   .pf-note{ padding:14px; border:1px dashed var(--border-strong); border-radius:12px;
-    font-size:10.5px; line-height:1.55; color:var(--text-muted); margin-top:6px; }
-
-  /* --- myFAM ------------------------------------------------------------
-     The wordmark: the A is a pair of chevrons, the same mark the app uses for
-     "further in". */
-  .wordmark{ white-space:nowrap; font-family:'Fraunces', serif;
-    font-weight:500; font-size:27px; color:var(--text); letter-spacing:-0.01em; }
-  /* Drawn, not set. Widths are the glyphs' own aspect ratios against one cap
-     height, so they stay in proportion at any size. */
-  /* Height is one cap height of whatever font actually renders - `cap` is the
-     CSS unit for exactly that - with the measured 0.65em as the fallback for
-     older browsers. This matters because the mark is drawn and the word beside
-     it is text: if the webfont has not loaded, the fallback face has a
-     different cap height, and a fixed em would leave the mark sitting off the
-     line next to it. Widths follow from each glyph's aspect ratio. */
-  .wm-glyph{ display:inline-block; width:auto; height:0.65em; height:1cap;
-    color:var(--copper); vertical-align:baseline; }
-  .wm-glyph svg, .wm-a svg{ display:block; width:100%; height:100%;
-    overflow:visible; }
-  .wm-glyph.f{ aspect-ratio:12.9 / 16.9; }
-  .wm-glyph.m{ aspect-ratio:14.9 / 16.9; }
-  /* Gap between the leading word and the mark on myFAM / DailyFAM / explore.
-     Not :not(:first-child) - the leading word is a text node, so the F really
-     is the first element and the rule silently never applied. */
-  .wm-glyph.f{ margin-left:0.15em; }
-  .fam-logo .wm-glyph.f{ margin-left:0; }   /* stands alone; stays centred */
-  /* One cap height tall, bottom on the baseline: the mark now measures the
-     same as the letters either side of it. */
-  .wm-a{ display:inline-block; width:auto; aspect-ratio:1; height:0.65em; height:1cap;
-    color:var(--copper); margin-left:0.09em; margin-right:0.15em;
-    vertical-align:baseline; }
-
-  /* Go Deeper: what is unfinished, and what the endings left open. Above the
-     recommendations because a thread someone already has is worth more than a
-     suggestion they have not met. */
-  .gd-head{ display:flex; align-items:baseline; justify-content:space-between;
-    margin:18px 0 10px; }
-  .gd-kicker{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.12em;
-    text-transform:uppercase; color:var(--copper); font-weight:700; }
-  .gd-count{ font-family:'JetBrains Mono', monospace; font-size:9.5px; color:var(--text-muted); }
-  .gd-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .gd-card{ position:relative; overflow:hidden; padding:12px 13px 13px; border-radius:12px;
-    background:var(--surface); border:1px solid var(--border); cursor:pointer;
-    display:flex; flex-direction:column; justify-content:space-between; min-height:74px; }
-  .gd-card:active{ transform:scale(0.99); }
-  .gd-card-title{ font-family:'Fraunces', serif; font-weight:500; font-size:12.5px;
-    line-height:1.3; color:var(--text); margin-bottom:8px; }
-  .gd-card-meta{ font-family:'JetBrains Mono', monospace; font-size:8.5px; letter-spacing:0.06em;
-    text-transform:uppercase; color:var(--copper); }
-  .gd-card.resume .gd-card-meta{ color:var(--text-muted); }
-  .gd-bar{ position:absolute; left:0; right:0; bottom:0; height:3px; background:var(--border-strong); }
-  .gd-bar span{ display:block; height:100%; background:var(--copper); }
-  .gd-ask{ display:flex; align-items:center; gap:8px; margin-top:10px; padding:13px 14px;
-    border:1px dashed var(--border-strong); border-radius:12px; color:var(--text-muted);
-    font-size:11.5px; cursor:pointer; }
-  .gd-ask b{ color:var(--copper); font-weight:700; }
-
-  /* Section headings speak instead of labelling: a sentence about why these
-     are here, in the display face rather than a mono kicker. */
-  .feed-title{ font-family:'Fraunces', serif; font-weight:400; font-size:20px;
-    line-height:1.25; color:var(--text); margin:26px 0 12px; text-wrap:balance; }
-
-  /* Cards carry their reason. A recommendation that cannot say why it is
-     there reads as arbitrary, and the tag doubles as the picture's caption. */
-  .seed-card .seed-tag{ position:absolute; left:12px; bottom:9px;
-    font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.1em;
-    text-transform:uppercase; color:#5a5347; }
-  .feed-rail .seed-thumb{ position:relative; }
-  .seed-why{ font-size:10px; line-height:1.4; color:var(--text-muted); margin-top:6px; }
-  .seed-why b{ color:var(--copper); font-weight:700; }
-
-  /* Now playing, docked above the tab bar. */
-  .nowbar{ flex:none; position:relative; display:flex; align-items:center; gap:11px;
-    margin:0 12px 8px; padding:9px 10px; border-radius:14px; overflow:hidden;
-    background:var(--surface); border:1px solid var(--border-strong); cursor:pointer; }
-  .nowbar-thumb{ flex:0 0 38px; height:38px; border-radius:9px; background:var(--paper);
-    color:var(--ink); display:flex; align-items:center; justify-content:center; }
-  .nowbar-body{ flex:1; min-width:0; }
-  .nowbar-title{ font-family:'Fraunces', serif; font-weight:500; font-size:12px;
-    color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .nowbar-meta{ font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.07em;
-    text-transform:uppercase; color:var(--text-muted); margin-top:3px; }
-  .nowbar-play{ flex:none; width:32px; height:32px; border-radius:50%; border:none;
-    background:var(--copper); color:var(--ink); display:flex; align-items:center;
-    justify-content:center; cursor:pointer; }
-  .nowbar-progress{ position:absolute; left:0; right:0; bottom:0; height:2px;
-    background:var(--border-strong); }
-  .nowbar-fill{ height:100%; width:0%; background:var(--copper); transition:width 200ms linear; }
+    font-size:10.5px; line-height:1.55; color:var(--text-muted); margin-top:14px; }
+  .pf-empty{ padding:15px; border:1px dashed var(--border-strong); border-radius:12px;
+    font-size:11px; line-height:1.5; color:var(--text-muted); margin-top:12px; }
 
   /* Explore, reels-style. One episode fills the screen and the next is
      deliberately not visible: not knowing what is coming is the point, so
@@ -644,6 +612,66 @@
   .ctrl-btn.mid .cc{ width:52px; height:52px; background:var(--copper); color:var(--ink); }
   .ctrl-btn .lbl{ font-family:'JetBrains Mono', monospace; font-size:8.5px; color:var(--text-muted); }
   .speed-pill{ font-family:'JetBrains Mono', monospace; font-size:10px; font-weight:600; background:var(--surface-2); border-radius:20px; padding:5px 10px; color:var(--text); cursor:pointer; }
+
+     The wordmark: the A is a pair of chevrons, the same mark the app uses for
+     "further in". */
+  .wordmark{ white-space:nowrap; font-family:'Fraunces', serif;
+    font-weight:500; font-size:27px; color:var(--text); letter-spacing:-0.01em; }
+  /* Drawn, not set. Widths are the glyphs' own aspect ratios against one cap
+     height, so they stay in proportion at any size. */
+  /* Height is one cap height of whatever font actually renders - `cap` is the
+     CSS unit for exactly that - with the measured 0.65em as the fallback for
+     older browsers. This matters because the mark is drawn and the word beside
+     it is text: if the webfont has not loaded, the fallback face has a
+     different cap height, and a fixed em would leave the mark sitting off the
+     line next to it. Widths follow from each glyph's aspect ratio. */
+  .wm-glyph{ display:inline-block; width:auto; height:0.65em; height:1cap;
+    color:var(--copper); vertical-align:baseline; }
+  .wm-glyph svg, .wm-a svg{ display:block; width:100%; height:100%;
+    overflow:visible; }
+  .wm-glyph.f{ aspect-ratio:12.9 / 16.9; }
+  .wm-glyph.m{ aspect-ratio:14.9 / 16.9; }
+  /* Gap between the leading word and the mark on myFAM / DailyFAM / explore.
+     Not :not(:first-child) - the leading word is a text node, so the F really
+     is the first element and the rule silently never applied. */
+  .wm-glyph.f{ margin-left:0.15em; }
+  .fam-logo .wm-glyph.f{ margin-left:0; }   /* stands alone; stays centred */
+  /* One cap height tall, bottom on the baseline: the mark now measures the
+     same as the letters either side of it. */
+  .wm-a{ display:inline-block; width:auto; aspect-ratio:1; height:0.65em; height:1cap;
+    color:var(--copper); margin-left:0.09em; margin-right:0.15em;
+    vertical-align:baseline; }
+
+  /* Public / private on a mix. Private is the default: a mix is a routine,
+     and a routine is personal until someone decides otherwise. */
+  .mix-public{ color:var(--copper); }
+  .mix-private{ color:var(--text-muted); }
+  .mix-vis{ display:flex; align-items:center; justify-content:space-between; gap:14px;
+    padding:13px 14px; margin:14px 0 10px; border-radius:12px; background:var(--surface);
+    border:1px solid var(--border); cursor:pointer; }
+  .mix-vis-t{ font-size:12.5px; color:var(--text); }
+  .mix-vis-s{ font-size:10px; color:var(--text-muted); margin-top:3px; }
+  .mix-switch{ flex:none; width:42px; height:24px; border-radius:999px;
+    background:var(--border-strong); position:relative; transition:background 160ms ease; }
+  .mix-switch span{ position:absolute; top:3px; left:3px; width:18px; height:18px;
+    border-radius:50%; background:var(--text-muted);
+    transition:transform 160ms ease, background 160ms ease; }
+  .mix-switch.on{ background:var(--copper); }
+  .mix-switch.on span{ transform:translateX(18px); background:var(--ink); }
+
+  /* Echo controls, on both players. Echoed uses the copper the app reserves
+     for "you did this", so it reads without a label. */
+  .sb-icon.echoed .circ{ background:var(--copper); }
+  .sb-icon.echoed .circ svg{ stroke:var(--ink); }
+  .reel-btn.echo-btn{ position:relative; }
+  .reel-btn.echo-btn span{ position:absolute; bottom:-12px;
+    font-family:'JetBrains Mono', monospace; font-size:7.5px; color:var(--text-muted); }
+  .reel-btn.echoed{ background:var(--copper); color:var(--ink); border-color:var(--copper); }
+  .reel-btn.echoed span{ color:var(--copper); }
+
+  @media (prefers-reduced-motion: reduce){
+    .mix-switch, .mix-switch span{ transition:none; }
+  }
 
   /* -------- tabbar -------- */
   /* Five tabs with search raised on a circle in the middle. Search is the
@@ -969,6 +997,7 @@
           <div class="sidebar">
             <div class="sb-icon" onclick="toggleFavorite(this)"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M12 21s-7.5-4.9-10-9.3C.4 8.5 2 5 5.6 5c2 0 3.5 1.1 4.4 2.6C11 6.1 12.4 5 14.4 5 18 5 19.6 8.5 18 11.7 15.5 16.1 12 21 12 21z"/></svg></div><div class="lbl">Favorite</div></div>
             <div class="sb-icon" onclick="openShareModal()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/></svg></div><div class="lbl">Share</div></div>
+            <div class="sb-icon echo-icon" id="echoIcon" onclick="toggleEcho()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg></div><div class="lbl">Echo</div></div>
             <div class="sb-icon" id="paCcIcon" onclick="paToggleCC()"><div class="circ"><span style="font-family:'JetBrains Mono',monospace;font-size:8.5px;font-weight:700;color:var(--paper);opacity:0.55;">CC</span></div><div class="lbl">Captions<br>off</div></div>
           </div>
         </div>
@@ -1014,6 +1043,7 @@
             <div class="reel-play" id="reelPlay" onclick="reelTogglePlay()">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
             </div>
+            <div class="reel-btn echo-btn" id="reelEcho" onclick="toggleEcho()" title="Echo to your friends"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg><span>echo</span></div>
             <div class="reel-btn" onclick="skipAudio(15)" title="Forward 15 seconds">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M13 18l8-6-8-6v4H4v4h9z"/></svg>
               <span>15</span>
@@ -1039,9 +1069,7 @@
       <!-- ============ PROFILE ============ -->
       <section class="screen" id="screen-profile">
         <div class="scroll">
-          <div class="myfam-header">
-            <h2>Profile</h2>
-          </div>
+          <div class="pf-top" id="pfTop"></div>
           <div id="profileBody"></div>
         </div>
         <div class="tabbar">
@@ -1641,6 +1669,59 @@
     var bar = document.getElementById("nowBar");
     if(bar) bar.hidden = true;
   }
+  // ---------------- Echoing ----------------
+  // Pushing a finished episode to the people who follow you. It generates
+  // nothing: the script already exists, so an echo is a row pointing at it.
+  // What changes is what the card says on the other end - "Rachel sent you
+  // this" rather than "someone asked this".
+  var echoedNow = false;
+
+  function currentEpisode(){
+    if(nowBarState) return { query: nowBarState.query, title: nowBarState.title,
+                             minutes: nowBarState.minutes };
+    if(typeof reelCurrent !== "undefined" && reelCurrent)
+      return { query: reelCurrent.query, title: reelCurrent.title,
+               minutes: reelCurrent.minutes };
+    return null;
+  }
+
+  function setEchoed(on){
+    echoedNow = on;
+    ["echoIcon", "reelEcho"].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el) el.classList.toggle("echoed", on);
+    });
+    var lbl = document.querySelector("#echoIcon .lbl");
+    if(lbl) lbl.textContent = on ? "Echoed" : "Echo";
+  }
+
+  function toggleEcho(){
+    var ep = currentEpisode();
+    if(!ep){ toast("Play something first"); return; }
+    if(echoedNow){
+      fetch("/api/echo?user=" + encodeURIComponent(famUserId())
+            + "&q=" + encodeURIComponent(ep.query) + "&minutes=" + ep.minutes,
+            { method: "DELETE" })
+        .then(function(){ setEchoed(false); toast("Echo taken back"); })
+        .catch(function(){ toast("Could not take that back"); });
+      return;
+    }
+    fetch("/api/echo", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ user: famUserId(), query: ep.query, title: ep.title,
+                             minutes: ep.minutes,
+                             thread: episodeThread || "" })
+    }).then(function(r){
+      return r.json().then(function(d){
+        if(!r.ok) throw new Error(d.error || "Could not echo that");
+        return d;
+      });
+    }).then(function(){
+      setEchoed(true);
+      toast("Echoed \u2014 your friends will see this");
+    }).catch(function(err){ toast(err.message || "Could not echo that"); });
+  }
+
   function toggleNowBar(){
     if(!FamAudio.isActive()) return;
     if(FamAudio.isPaused()){ FamAudio.resume(); setNowBarPlaying(true); }
@@ -1660,6 +1741,7 @@
     rememberEpisode(title, minutes, context || "");
     var episodeTopicId = bankTopicId || "";
     var reportedOutcome = false;
+    setEchoed(false);
     FamAudio.play(title, minutes, {
       onFirstAudio: function(){
         startProgress(totalSeconds);
@@ -2467,7 +2549,9 @@
         + '<div class="mix-card-body">'
         + '<div class="mix-name">' + escapeHtml(m.name) + '</div>'
         + '<div class="mix-meta">' + entries.length
-        + (entries.length === 1 ? " topic · daily" : " topics · daily") + '</div>'
+        + (entries.length === 1 ? " topic · daily" : " topics · daily")
+        + ' · <span class="' + (m.public ? "mix-public" : "mix-private") + '">'
+        + (m.public ? "public" : "private") + '</span></div>'
         + '<div class="mix-preview">' + (escapeHtml(names) || "Nothing in it yet") + '</div>'
         + '</div>'
         + '<div class="mix-chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" '
@@ -2511,6 +2595,15 @@
       html += '<div class="mix-empty">This mix is empty. Add the topics you want '
         + 'to hear about every day.</div>';
     }
+    // Public mixes appear on the profile. Private is the default: a mix is a
+    // routine, and a routine is personal until someone decides otherwise.
+    html += '<div class="mix-vis" onclick="toggleMixVisibility()">'
+      + '<div><div class="mix-vis-t">' + (m.public ? "Public" : "Private") + '</div>'
+      + '<div class="mix-vis-s">' + (m.public
+          ? "Shown on your profile"
+          : "Only you can see this mix") + '</div></div>'
+      + '<div class="mix-switch' + (m.public ? " on" : "") + '"><span></span></div>'
+      + '</div>';
     html += '<button class="mix-new" onclick="editMixTopics()">'
       + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
       + 'stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
@@ -2552,10 +2645,22 @@
     var m = mixById(currentMixId);
     if(!m) return;
     showActionSheet([
+      { label: m.public ? "Make private" : "Make public", action: toggleMixVisibility },
       { label: "Rename", action: renameMix },
       { label: "Edit topics", action: editMixTopics },
       { label: "Delete mix", action: deleteMix }
     ]);
+  }
+
+  // Public mixes appear on the profile. Private is the default: a mix is a
+  // routine, and a routine is personal until someone decides otherwise.
+  function toggleMixVisibility(){
+    var m = mixById(currentMixId);
+    if(!m) return;
+    saveMix("PATCH", "/api/mixes/" + m.id, { public: !m.public }, function(saved){
+      openMix(saved.id);
+      toast(saved.public ? "On your profile now" : "Private again");
+    });
   }
 
   function renameMix(){
@@ -3213,60 +3318,237 @@
   // to invent numbers, and every invented one is a promise to keep later.
   function openProfile(){
     setTab("profile");
+    viewingProfile = null;          // your own
+    loadProfile();
+  }
+
+  // Someone else's profile. Same page, different verbs: you can add them and
+  // message them, and the parts that are only yours - friends, listening time,
+  // the manage links - are simply not there.
+  var viewingProfile = null;
+
+  function openFriendProfile(name){
+    viewingProfile = name;
+    navigate("profile");
     loadProfile();
   }
 
   function loadProfile(){
     var el = document.getElementById("profileBody");
     if(!el) return;
+    if(viewingProfile){ renderFriendProfile(viewingProfile); return; }
     fetch("/api/profile?user=" + encodeURIComponent(famUserId()))
       .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
       .then(renderProfile)
       .catch(function(){
+        document.getElementById("pfTop").innerHTML = "";
         el.innerHTML = '<div class="pf-note">Could not load your profile. '
           + 'Nothing is lost — this fills in when the server is back.</div>';
       });
   }
 
-  function renderProfile(p){
-    var since = p.since
-      ? new Date(p.since * 1000).toLocaleDateString(undefined,
-          { month: "long", year: "numeric" })
-      : null;
-    var html = '<div class="pf-card">'
-      + '<div class="pf-name">Listening on this device</div>'
-      + '<div class="pf-id">' + escapeHtml(p.listener || "unknown") + '</div>'
-      + '</div>';
+  function personSVG(size){
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="12" cy="9" r="4.2"/>'
+      + '<path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></svg>';
+  }
+  function shareSVG(){
+    return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'
+      + '<path d="M12 16V4M8 8l4-4 4 4"/><path d="M4 14v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg>';
+  }
+  function folderArt(i){
+    var arts = [
+      '<circle cx="12" cy="12" r="7"/><path d="M12 8v4l3 2"/>',
+      '<path d="M3 19h18"/><path d="M5 16l4-5 4 3 6-8"/>',
+      '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.6 2.6 0 1 1 3.3 2.5c-.6.2-.8.7-.8 1.3v.7"/><circle cx="12" cy="17.2" r=".9" fill="currentColor" stroke="none"/>'
+    ];
+    return '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="1.3">' + arts[i % arts.length] + '</svg>';
+  }
 
-    html += '<div class="pf-stats">'
-      + '<div class="pf-stat"><b>' + p.played + '</b><span>Started</span></div>'
-      + '<div class="pf-stat"><b>' + p.finished + '</b><span>Finished</span></div>'
-      + '<div class="pf-stat"><b>' + p.open_threads + '</b><span>Threads open</span></div>'
+  // "my FAM is your FAM" - the mark set inline twice, at heading size.
+  function famIsFam(){
+    var mark = '<span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.55 4.55 12.9 16.9" '
+      + 'fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" '
+      + 'stroke-linejoin="round"><path d="M6 20V9.2A3.2 3.2 0 0 1 9.2 6H16"/>'
+      + '<path d="M6 13h8"/></svg></span>'
+      + '<span class="wm-a" aria-hidden="true"><svg viewBox="3.55 4.55 16.9 16.9" fill="none" '
+      + 'stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round">'
+      + '<path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span>'
+      + '<span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.55 4.55 14.9 16.9" '
+      + 'fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" '
+      + 'stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span>';
+    return '<h2 class="pf-headline" aria-label="my FAM is your FAM">my' + mark
+      + ' is your' + mark + '</h2>';
+  }
+
+  function foldersBlock(mixes, mine){
+    if(!mixes.length){
+      return '<div class="pf-rail">DailyFAM folders <em>0</em></div>'
+        + '<div class="pf-empty">' + (mine
+            ? 'None of your mixes are public yet. Open one in DailyFAM and switch it '
+              + 'to public to show it here.'
+            : 'Nothing shared yet.') + '</div>';
+    }
+    return '<div class="pf-rail">DailyFAM folders <em>' + mixes.length
+      + (mine ? ' public · <b onclick="openPlayFAM()">manage</b>' : '') + '</em></div>'
+      + '<div class="pf-folders">' + mixes.map(function(m, i){
+          var n = (m.items || m.topics || []).length;
+          return '<div class="pf-fold" onclick="openPlayFAM()">'
+            + '<div class="pf-art">' + folderArt(i) + '<b>' + escapeHtml(m.name) + '</b></div>'
+            + '<div class="pf-fold-meta">' + n + (n === 1 ? ' fam' : ' fams') + ' · daily</div>'
+            + '</div>';
+        }).join("") + '</div>';
+  }
+
+  function echoesBlock(echoes, total, mine){
+    if(!echoes.length){
+      return '<div class="pf-rail">Echoes <em>0</em></div>'
+        + '<div class="pf-empty">' + (mine
+            ? 'Nothing echoed yet. The echo button on any player sends an episode to '
+              + 'your friends — it costs nothing, because the script already exists.'
+            : 'Nothing echoed yet.') + '</div>';
+    }
+    var html = '<div class="pf-rail">Echoes <em>' + total
+      + (mine ? ' · <b onclick="openEchoList()">manage</b>' : '') + '</em></div>';
+    html += '<div class="pf-echoes">' + echoes.slice(0, 4).map(function(e, i){
+      return '<div class="pf-echo" onclick="playEcho(' + i + ')">'
+        + '<div class="t">' + escapeHtml(e.title || e.query) + '</div>'
+        + '<div class="m' + (e.asked ? " own" : "") + '">'
+        + (e.asked ? "asked" : "echoed") + ' · ' + e.minutes + ' min</div></div>';
+    }).join("") + '</div>';
+    if(total > 4){
+      html += '<div class="pf-all" onclick="openEchoList()">See all ' + total + ' echoes</div>';
+    }
+    return html;
+  }
+
+  var profileEchoes = [];
+  function playEcho(i){
+    var e = profileEchoes[i];
+    if(!e) return;
+    var key = "echo_" + i + "_" + Date.now();
+    TOPICS[key] = { title: e.title || e.query, source: "From your echoes",
+                    caption: "Live captions will appear here as this plays—",
+                    prompt: e.query, exploreMinutes: e.minutes, titleOverridden: true };
+    generate(key);
+  }
+  function openEchoList(){ toast("Every echo is listed above for now"); }
+
+  function renderProfile(p){
+    profileEchoes = p.echoes || [];
+    var named = !!p.name;
+
+    document.getElementById("pfTop").innerHTML =
+      '<div></div><button class="pf-btn sq" onclick="editIdentity()" aria-label="Settings">'
+      + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/>'
+      + '<path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>'
+      + '</svg></button>';
+
+    var html = '<div class="pf-id"><div class="pf-pic">' + personSVG(46) + '</div><div>'
+      + '<div class="pf-name">' + escapeHtml(named ? p.name : "Set up your profile") + '</div>'
+      + '<div class="pf-at">' + (p.handle ? "@" + escapeHtml(p.handle) : "no handle yet") + '</div>'
+      // Friends are not counted here because there is no follow graph yet, and
+      // a number with nothing behind it is the one thing a profile must not do.
+      + '<div class="pf-counts"><b>' + p.finished + '</b> finished · <b>'
+      + (p.echo_count || 0) + '</b> echoed</div>'
+      + '</div></div>';
+
+    html += '<div class="pf-acts">'
+      + '<button class="pf-btn" onclick="editIdentity()">'
+      + (named ? "Edit profile" : "Set up profile") + '</button>'
+      + '<button class="pf-btn sq" onclick="openShareModal()">' + shareSVG() + '</button>'
+      + '<button class="pf-btn sq" onclick="openMessages()" aria-label="Messages">'
+      + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+      + '<path d="M4 5h16v11H9l-5 4z"/></svg></button>'
       + '</div>';
 
     if(p.subjects && p.subjects.length){
-      html += '<div class="pf-kicker">What you listen to</div><div class="pf-tags">'
-        + p.subjects.map(function(t){
-            return '<div class="pf-tag">' + escapeHtml(t) + '</div>';
-          }).join("") + '</div>';
+      html += '<div class="pf-tags">' + p.subjects.map(function(t){
+        return '<div class="pf-tag">' + escapeHtml(t) + '</div>';
+      }).join("") + '</div>';
     }
 
-    html += '<div class="pf-kicker">Playback</div>'
-      + '<div class="pf-row" onclick="openVoiceMenu()"><span>Voice</span><b>'
-      + escapeHtml(voiceLabel(selectedVoice)) + '</b></div>'
-      + '<div class="pf-row" onclick="openLengthMenu()"><span>Default length</span><b>'
-      + selectedLengthMinutes + ' min</b></div>'
-      + '<div class="pf-row" onclick="openMessages()"><span>Messages</span><b>Open</b></div>';
+    html += '<div class="pf-time"><div class="pf-time-lab">This month</div>'
+      + '<div class="pf-time-big">' + p.finished + '</div>'
+      + '<p>episodes finished, and ' + (p.open_threads || 0)
+      + ' thread' + (p.open_threads === 1 ? '' : 's') + ' still open.</p></div>';
 
-    html += '<div class="pf-kicker">Account</div>'
-      + '<div class="pf-note">There are no accounts yet. Everything above is kept '
-      + 'on this device'
-      + (since ? ', since ' + escapeHtml(since) : '')
-      + ' — clearing your browser data starts you over, and a second device is a '
-      + 'second listener. Signing in is what would join them up.</div>';
+    html += famIsFam();
+    html += foldersBlock(p.mixes || [], true);
+    html += echoesBlock(profileEchoes, p.echo_count || 0, true);
+
+    html += '<div class="pf-note">There are no accounts yet, and no friends list — '
+      + 'your name and handle live on this device, and an echo is visible to everyone '
+      + 'rather than to a chosen few. Signing in and following people is what would '
+      + 'make those two things real.</div>';
 
     document.getElementById("profileBody").innerHTML = html;
   }
+
+  // A friend's profile, drawn from the prototype contact list: there is no
+  // follow graph on the server, so this is the demo's people, not real ones.
+  function renderFriendProfile(name){
+    document.getElementById("pfTop").innerHTML =
+      '<button class="pf-btn sq" onclick="goBack()" aria-label="Back">'
+      + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="2.2" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>'
+      + '<button class="pf-btn sq" onclick="toast(\'More options\')">•••</button>';
+
+    var handle = name.toLowerCase().replace(/[^a-z]/g, "");
+    var html = '<div class="pf-id"><div class="pf-pic">' + personSVG(46) + '</div><div>'
+      + '<div class="pf-name">' + escapeHtml(name) + '</div>'
+      + '<div class="pf-at">@' + escapeHtml(handle) + '</div>'
+      + '<div class="pf-counts">follows you</div></div></div>';
+
+    html += '<div class="pf-acts">'
+      + '<button class="pf-btn primary" onclick="toast(\'Following is not built yet\')">Add friend</button>'
+      + '<button class="pf-btn sq" onclick="openMessages()" aria-label="Message">'
+      + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+      + '<path d="M4 5h16v11H9l-5 4z"/></svg></button>'
+      + '<button class="pf-btn sq" onclick="openShareModal()">' + shareSVG() + '</button>'
+      + '</div>';
+
+    html += famIsFam();
+    html += '<div class="pf-note">Profiles for other people are not connected to '
+      + 'anything yet. Their public mixes and echoes appear here once there is a '
+      + 'follow graph to fetch them with.</div>';
+    document.getElementById("profileBody").innerHTML = html;
+  }
+
+  function editIdentity(){
+    showModal({
+      title: "Your name",
+      placeholder: "e.g. Ian Solomon",
+      confirmLabel: "Next",
+      onConfirm: function(name){
+        showModal({
+          title: "Pick a handle",
+          placeholder: "iansolomon",
+          confirmLabel: "Save",
+          onConfirm: function(handle){
+            fetch("/api/me", {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({ user: famUserId(), name: name, handle: handle })
+            }).then(function(r){
+              return r.json().then(function(d){
+                if(!r.ok) throw new Error(d.error || "Could not save that");
+                return d;
+              });
+            }).then(function(){ loadProfile(); toast("Saved"); })
+              .catch(function(err){ toast(err.message); });
+          }
+        });
+      }
+    });
+  }
+
+
+
 
 
   function renderThreadList(){
@@ -3468,7 +3750,7 @@
 
   function loadExplore(){
     setReelText("Loading…", "", "");
-    fetch("/api/explore?limit=60")
+    fetch("/api/explore?limit=60&user=" + encodeURIComponent(famUserId()))
       .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
       .then(function(data){
         var eps = data.episodes || [];
@@ -3561,6 +3843,7 @@
   function playReel(){
     var ep = reelCurrent;
     if(!ep) return;
+    setEchoed(false);
     setReelPlaying(true);
     FamAudio.play(ep.query, ep.minutes, {
       onFirstAudio: function(){

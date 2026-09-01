@@ -203,11 +203,16 @@ another rule.
 6. **"What your followers are listening to" has no follow graph behind it.**
    It ranks co-listener overlap. The heading promises a social network the app
    does not have; either build follows or rename it.
-7. **Profile is a scaffold, deliberately.** `/api/profile` returns only what
+7. **Echoes are the social layer, and they generate nothing.** `social.py`
+   stores an echo as a row pointing at a query whose script already exists, so
+   pushing an episode to other listeners costs nothing. It changes what the
+   Explore card says, not what has to be written. Mixes are private by default
+   and appear on the profile once made public.
+8. **Profile is a scaffold, deliberately.** `/api/profile` returns only what
    the event log actually holds - started, finished, open threads, subjects -
    because a profile page is the easiest place in an app to invent numbers,
    and every invented one is a promise to keep later.
-8. **Personalisation needs state the app does not have**: user identity, an
+9. **Personalisation needs state the app does not have**: user identity, an
    interaction log, and a recommender. Everything today is stateless.
 
 ## Constraints that are settled — do not undo without discussing

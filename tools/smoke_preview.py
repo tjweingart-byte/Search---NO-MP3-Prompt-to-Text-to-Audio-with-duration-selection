@@ -99,9 +99,34 @@ def main() -> int:
 
         def profile():
             page.evaluate("openProfile()")
-            page.wait_for_timeout(900)
+            page.wait_for_timeout(1200)
             assert page.eval_on_selector(".screen.active", "e => e.id") == "screen-profile"
-            assert page.eval_on_selector_all(".pf-stat b", "e => e.length") == 3
+            assert page.query_selector(".pf-name"), "no identity block"
+            assert page.eval_on_selector_all(".pf-echo", "e => e.length") > 0, "no echoes"
+            assert page.eval_on_selector_all(".pf-art b", "e => e.length") > 0, "no folders"
+            assert page.query_selector(".pf-headline"), "no my-FAM-is-your-FAM headline"
+
+        def mix_visibility():
+            # Public/private has to be reachable, not buried in a menu.
+            page.evaluate("openPlayFAM()")
+            page.wait_for_selector(".mix-card", timeout=10000, state="attached")
+            page.wait_for_timeout(400)
+            page.evaluate("document.querySelectorAll('.mix-card')[0].click()")
+            page.wait_for_timeout(500)
+            switch = page.query_selector(".mix-switch")
+            assert switch, "no public/private switch inside a mix"
+            before = "on" in (switch.get_attribute("class") or "")
+            page.click(".mix-vis")
+            page.wait_for_timeout(900)
+            after = "on" in (page.query_selector(".mix-switch").get_attribute("class") or "")
+            assert after != before, "the visibility switch did not move"
+
+        def echo_button():
+            # Present on both players; the reel is the one people will use.
+            page.evaluate("openExplore()")
+            page.wait_for_timeout(2200)
+            assert page.query_selector("#reelEcho"), "no echo control on the reel"
+            assert page.query_selector("#echoIcon"), "no echo control on the player"
 
         def explore():
             page.evaluate("openExplore()")
@@ -120,7 +145,9 @@ def main() -> int:
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)
         check("Messages opens and closes", messages_sheet)
-        check("Profile renders its stats", profile)
+        check("Profile renders identity, folders and echoes", profile)
+        check("Mix visibility can be toggled", mix_visibility)
+        check("Echo control is on both players", echo_button)
 
         if errors:
             failures.append(f"page errors: {errors}")

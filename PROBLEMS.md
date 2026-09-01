@@ -1588,3 +1588,50 @@ still outstanding.
 exists. Explore already shipped once as a screen with no way out; a sheet is
 the same failure waiting to happen, and "present in the DOM" would have passed
 that bug too.
+
+## 39. Echoes: a social layer that generates nothing
+
+**An echo is a row, not an episode.** Someone finishes something and pushes it
+to other listeners. The episode may well have reached them anyway - scripts are
+shared, so a popular question is already in the cache Explore reads from - but
+the echo changes what the card *says*: "Rachel sent you this" instead of
+"someone asked this", which is a different reason to press play.
+
+That is the whole design, and it is the same argument as the rest of the
+product: the expensive thing is the script, and an echo points at one that
+already exists. The social layer costs a SQLite row. `social.py` also holds the
+minimum identity an echo needs to make sense - a name and a handle - because
+"posted by ___" needs a ___.
+
+Echoing twice is one echo (the intent is "send this", not "send it twice"), an
+echo can be taken back, the same question at a different length is a different
+episode, and your own echoes are never labelled back to you.
+
+**Mixes are private until they are not.** A mix is a routine, and a routine is
+personal, so `public` defaults to false and publishing is a deliberate switch
+inside the mix. Public mixes are what the profile shows.
+
+**What the profile still refuses to invent.** There is no follow graph, so
+there is no friends count, no friends row, and echoes are visible to everyone
+rather than to a chosen few. The page says that in plain words instead of
+showing a number with nothing behind it. `recent_echoes` is where the filter
+goes when follows exist, and nothing else has to change.
+
+**A bad edit duplicated 69,000 characters of the interface.** Replacing a
+region with `s[:start] + new + s[end:]` when `start` came *after* `end` in the
+file silently produced `A + B + new + B + C`. Two consequences worth recording:
+
+- The duplicate was invisible to the page, because the second copy of every
+  function simply shadowed the first - until it shadowed the *new* profile with
+  the *old* one, which is how it surfaced.
+- Repairing it needed a guard, not confidence. Deleting from the second marker
+  to the next section would have removed fifteen functions that existed only
+  once; the fix was to delete exactly the byte-identical prefix and assert that
+  no function name disappeared.
+
+The same edit also deleted the whole wordmark stylesheet, which broke all four
+marks at once (603px misalignment). The lesson is not "be careful with
+indices": it is that a large single-file interface has no compiler to catch
+this, so every structural edit needs a check that runs afterwards. The browser
+smoke test now covers the visibility switch and the echo controls for exactly
+that reason.

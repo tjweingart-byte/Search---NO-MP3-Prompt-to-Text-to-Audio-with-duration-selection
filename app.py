@@ -30,6 +30,7 @@ from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import topics as topics_mod
 import mixes as mixes_mod
+import social as social_mod
 import voice_store
 from tts import (
     TTSUnavailable,
@@ -219,6 +220,7 @@ async def script(req: ScriptRequest, request: Request) -> dict:
 
 EVENTS = topics_mod.EventStore(os.environ.get("MYFAM_DB", "myfam.db"))
 MIXES = mixes_mod.MixStore(os.environ.get("MIXES_DB", "mixes.db"))
+SOCIAL = social_mod.SocialStore(os.environ.get("SOCIAL_DB", "social.db"))
 
 
 class MixRequest(BaseModel):
@@ -228,6 +230,8 @@ class MixRequest(BaseModel):
     #: Validated in mixes.clean_items rather than here, so one place owns the
     #: rules and the message the listener sees.
     topic_ids: Optional[list[Union[str, dict]]] = None
+    #: Public mixes appear on the listener's profile.
+    public: Optional[bool] = None
 
 
 @app.get("/api/topics")
@@ -265,7 +269,7 @@ async def create_mix(req: MixRequest, request: Request):
 async def update_mix(mix_id: str, req: MixRequest, request: Request):
     _rate_limit(request)
     try:
-        mix = MIXES.update(req.user, mix_id, req.name, req.topic_ids)
+        mix = MIXES.update(req.user, mix_id, req.name, req.topic_ids, req.public)
     except mixes_mod.MixError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return mix.as_dict()
@@ -317,11 +321,75 @@ async def record_event(req: EventRequest, request: Request):
     return {"ok": True}
 
 
+class PersonRequest(BaseModel):
+    user: str = Field(..., max_length=64)
+    name: str = Field("", max_length=social_mod.MAX_NAME)
+    handle: str = Field("", max_length=social_mod.MAX_HANDLE + 1)
+
+
+class EchoRequest(BaseModel):
+    user: str = Field(..., max_length=64)
+    query: str = Field(..., max_length=300)
+    title: str = Field("", max_length=200)
+    minutes: int = Field(3, ge=1, le=10)
+    thread: str = Field("", max_length=200)
+
+
+@app.post("/api/me")
+async def set_me(req: PersonRequest, request: Request):
+    """Name and handle for this device. Not an account - see /api/profile."""
+    _rate_limit(request)
+    try:
+        return SOCIAL.set_person(req.user, req.name, req.handle)
+    except social_mod.SocialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/echo")
+async def post_echo(req: EchoRequest, request: Request):
+    """Push a finished episode to the people who follow this listener.
+
+    Costs nothing to generate: an echo is a row pointing at a query whose
+    script already exists, which is exactly why the social layer is cheap.
+    """
+    _rate_limit(request)
+    try:
+        echo = SOCIAL.echo(req.user, req.query, req.title, req.minutes, req.thread)
+    except social_mod.SocialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return echo.as_dict()
+
+
+@app.delete("/api/echo")
+async def delete_echo(request: Request, user: str = Query("", max_length=64),
+                      q: str = Query("", max_length=300),
+                      minutes: int = Query(3, ge=1, le=10)):
+    _rate_limit(request)
+    return {"ok": SOCIAL.unecho(user, q, minutes)}
+
+
+@app.get("/api/echoes")
+async def list_echoes(request: Request, user: str = Query("", max_length=64)):
+    _rate_limit(request)
+    person = SOCIAL.person(user)
+    return {"echoes": [e.as_dict(person["name"], person["handle"])
+                       for e in SOCIAL.echoes_by(user)]}
+
+
 @app.get("/api/profile")
 async def profile(request: Request, user: str = Query("", max_length=64)):
     """Counts and subjects from this listener's own event log. No model call."""
     _rate_limit(request)
-    return topics_mod.summary(EVENTS, user)
+    body = topics_mod.summary(EVENTS, user)
+    person = SOCIAL.person(user)
+    body["name"] = person["name"]
+    body["handle"] = person["handle"]
+    body["joined"] = person["joined"]
+    body["mixes"] = [m.as_dict() for m in MIXES.public_for_user(user)]
+    body["echoes"] = [e.as_dict(person["name"], person["handle"])
+                      for e in SOCIAL.echoes_by(user, limit=12)]
+    body["echo_count"] = len(SOCIAL.echoes_by(user, limit=200))
+    return body
 
 
 @app.get("/api/godeeper")
@@ -337,7 +405,8 @@ async def go_deeper(request: Request, user: str = Query("", max_length=64)):
 
 
 @app.get("/api/explore")
-async def explore(request: Request, limit: int = Query(30, ge=1, le=60)):
+async def explore(request: Request, limit: int = Query(30, ge=1, le=60),
+                  user: str = Query("", max_length=64)):
     """Episodes other listeners have already generated, newest first.
 
     This endpoint costs nothing and, by design, can cause nothing to be
@@ -350,6 +419,10 @@ async def explore(request: Request, limit: int = Query(30, ge=1, le=60)):
     if store is None:
         return {"episodes": [], "reason": "The shared cache is switched off."}
     now = time.time()
+    # Who echoed what. An echo does not create an episode - the script was
+    # already here - it changes what the card says, from "someone asked this"
+    # to "Rachel sent you this", which is a different reason to press play.
+    labels = SOCIAL.recent_echoes(exclude_user=user)
     episodes = [
         {
             "query": entry["query"],
@@ -358,9 +431,12 @@ async def explore(request: Request, limit: int = Query(30, ge=1, le=60)):
             "plays": entry["plays"],
             "thread": entry["thread"],
             "age_seconds": max(0.0, now - entry["created"]),
+            "echoed_by": labels.get((entry["query"], entry["minutes"]), {}).get("by", ""),
         }
         for entry in store.recent(limit)
     ]
+    # An echoed episode leads, because someone chose to send it.
+    episodes.sort(key=lambda e: (not e["echoed_by"], e["age_seconds"]))
     return {"episodes": episodes}
 
 

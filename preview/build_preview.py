@@ -60,18 +60,20 @@ def load_fixtures() -> dict:
         ],
     }
 
-    def mix(mix_id, name, ids, typed=()):
+    def mix(mix_id, name, ids, typed=(), public=False):
         items = [dict(by_id[i], query=by_id[i]["query"], custom=False) for i in ids]
         items += [{"id": "q:" + t.lower().replace(" ", "")[:10], "title": t, "query": t,
                    "custom": True, "subtitle": "Added by you", "icon": "leaf"} for t in typed]
         return {"id": mix_id, "name": name, "items": items,
                 "topics": [i for i in items if not i["custom"]],
                 "topic_ids": [i["id"] for i in items if not i["custom"]],
-                "custom_count": len(typed), "created_at": 0, "updated_at": 0}
+                "custom_count": len(typed), "public": public,
+                "created_at": 0, "updated_at": 0}
 
     mixes = {
         "mixes": [
-            mix("m1", "Morning", ["fed-next-move", "ai-agents", "morning-mindset"]),
+            mix("m1", "Morning", ["fed-next-move", "ai-agents", "morning-mindset"],
+                public=True),
             mix("m2", "At the gym", ["training-load", "the-trade", "habits-research"]),
             mix("m3", "Wind down", ["sleep-science", "anxiety-loop"],
                 typed=["what my council is doing about the high street"]),
@@ -81,7 +83,8 @@ def load_fixtures() -> dict:
 
     explore = {"episodes": [
         {"query": q, "title": q[:1].upper() + q[1:], "minutes": m,
-         "plays": p, "thread": th, "age_seconds": age}
+         "plays": p, "thread": th, "age_seconds": age,
+         "echoed_by": "Rachel Solomon" if m == 5 else ""}
         for q, m, p, th, age in [
             ("why the strait of hormuz moves the oil price", 3, 4,
              "why the shipping lanes run through Omani water", 140),
@@ -123,6 +126,30 @@ def load_fixtures() -> dict:
             "searched": 12, "open_threads": 2,
             "subjects": ["tech", "money", "science", "health"],
             "since": _time.time() - 63 * 86400,
+            "name": "Ian Solomon", "handle": "iansolomon",
+            "joined": _time.time() - 63 * 86400,
+            "echo_count": 7,
+            "mixes": [
+                {"id": "m1", "name": "Morning Run", "public": True,
+                 "items": [{"id": "x"}] * 14, "topics": [], "topic_ids": [],
+                 "custom_count": 0, "created_at": 0, "updated_at": 0},
+                {"id": "m2", "name": "Market Watch", "public": True,
+                 "items": [{"id": "x"}] * 9, "topics": [], "topic_ids": [],
+                 "custom_count": 0, "created_at": 0, "updated_at": 0},
+                {"id": "m3", "name": "Kids' Questions", "public": True,
+                 "items": [{"id": "x"}] * 21, "topics": [], "topic_ids": [],
+                 "custom_count": 0, "created_at": 0, "updated_at": 0},
+            ],
+            "echoes": [
+                {"title": "The Two-Mile Lane That Moves the Oil", "minutes": 4,
+                 "query": "why the strait of hormuz moves the oil price", "asked": True},
+                {"title": "How a City's Food Supply Chain Works", "minutes": 4,
+                 "query": "how a city's food supply chain actually works", "asked": False},
+                {"title": "Who Actually Makes the World's Chips", "minutes": 6,
+                 "query": "why semiconductor manufacturing is concentrated", "asked": True},
+                {"title": "What We Actually Know About Sleep", "minutes": 5,
+                 "query": "what sleep research actually establishes", "asked": False},
+            ],
         },
         "/api/health": {"ok": True, "demo": True, "engine": "preview"},
         "/api/event": {"ok": True},
@@ -182,7 +209,8 @@ SHIM = """
     if (path === "/api/mixes" && method === "GET") return json(mixes);
     if (path === "/api/mixes" && method === "POST") {
       var body = JSON.parse((init && init.body) || "{}");
-      var made = buildMix("m" + (nextMixId++), body.name || "New mix", body.topic_ids || []);
+      var made = buildMix("m" + (nextMixId++), body.name || "New mix",
+                          body.topic_ids || [], !!body.public);
       mixes.mixes.push(made);
       return json(made);
     }
@@ -194,14 +222,15 @@ SHIM = """
       var patch = JSON.parse((init && init.body) || "{}");
       var current = mixes.mixes[at];
       mixes.mixes[at] = buildMix(id, patch.name || current.name,
-        patch.topic_ids !== undefined ? patch.topic_ids : current.items);
+        patch.topic_ids !== undefined ? patch.topic_ids : current.items,
+        patch.public !== undefined ? patch.public : current.public);
       return json(mixes.mixes[at]);
     }
     if (FIXTURES[path]) return json(FIXTURES[path]);
     return json({ error: "Not available in the preview build." }, 404);
   };
 
-  function buildMix(id, name, entries) {
+  function buildMix(id, name, entries, isPublic) {
     var bank = {};
     FIXTURES["/api/topics"].topics.forEach(function (t) { bank[t.id] = t; });
     var items = entries.map(function (e) {
@@ -222,7 +251,7 @@ SHIM = """
              topic_ids: items.filter(function (i) { return !i.custom; })
                              .map(function (i) { return i.id; }),
              custom_count: items.filter(function (i) { return i.custom; }).length,
-             created_at: 0, updated_at: 0 };
+             public: !!isPublic, created_at: 0, updated_at: 0 };
   }
 
   // Two part-heard episodes, so the preview shows Go Deeper as it looks once
