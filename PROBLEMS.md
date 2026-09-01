@@ -1786,3 +1786,43 @@ sections; both are now three. The one test that failed was asserting a section
 that no longer exists, and its docstring - "the whole reason for four sections"
 - was rewritten rather than deleted, because the signal it covers is still
 there and a silently rotting one is worse than none.
+
+## 44. The tiles were cut on a phone and green in the checks
+
+Reported from a real device with a photo: the Go Deeper titles were being cut
+mid-word - "Talking About AI...", "The World's Chips". Everything here was
+green.
+
+**What I had actually verified was the wrong thing.** After halving the tiles I
+measured `.gd-card` height (48px, exactly half, correct) and looked at four
+short fixture titles in a screenshot. Neither asks the only question that
+mattered: *is any text being clipped?* Adding that check afterwards showed the
+48px version clipped **28 of 28** titles in the bank, not just the long ones.
+A measurement that confirms the number you set is not a test of the thing the
+number was for.
+
+Two causes, and the second is the interesting one:
+
+* Three lines, not two. Two lines of a headline at half a card's width is not
+  enough for the titles this bank actually contains.
+* **`flex:none` on the title.** The card is a flex column with
+  `justify-content:space-between`, so the title box was being *shrunk below*
+  the three lines `-webkit-line-clamp` allowed. Text was cut with room still
+  in the card - the clamp said three lines and the layout granted two. Height
+  alone would not have fixed it.
+
+Also: the preview fixture only ever showed bank titles, but a thread card's
+title is the raw `<<NEXT: ...>>` text, six to twelve words - longer than
+anything in the bank and the case most likely to clip. The new check measures
+every bank title *and* a twelve-word thread.
+
+Now in the smoke test: set a title into a real tile and compare `scrollHeight`
+to `clientHeight`. It fails on the version that shipped, which is the only
+reason to believe it.
+
+Tiles are 68px - down from 96, up from the 48 that did not fit.
+
+**"Ask FAM anything" is gone** from under the grid: the search field says the
+same thing two rows above it. The empty state used to be that button alone
+under a "Go deeper" heading, so with the button gone the whole block now
+renders nothing rather than a heading over empty space.

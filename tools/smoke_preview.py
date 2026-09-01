@@ -15,6 +15,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT = ROOT / "preview" / "fam-preview.html"
 
+sys.path.insert(0, str(ROOT))
+import topics as topics_mod  # noqa: E402  - the real bank, not a fixture copy
+
 
 def main() -> int:
     from playwright.sync_api import sync_playwright
@@ -68,6 +71,36 @@ def main() -> int:
             page.wait_for_selector(".feed-rail .seed-card", timeout=10000, state="attached")
             rails = page.eval_on_selector_all(".feed-section", "e => e.length")
             assert rails == 3, f"expected 3 sections, saw {rails}"
+
+        def go_deeper_titles_fit():
+            """A clipped title is invisible to every other check.
+
+            The tiles are a fixed height, so the only thing that tells you a
+            headline is being cut mid-word is looking at a phone - which is
+            how it shipped once. Every title the bank can produce is measured
+            here, plus a thread at the longest the prompt asks for.
+            """
+            page.evaluate("openMyFamTab()")
+            page.wait_for_selector(".gd-card-title", timeout=10000, state="attached")
+            titles = [t.title for t in topics_mod.TOPIC_BANK]
+            titles.append(
+                # `<<NEXT: six to twelve words>>` - a thread card shows this raw.
+                "What happens to the grid operators when the subsidy expires next year"
+            )
+            clipped = page.evaluate(
+                """(xs) => {
+                    var el = document.querySelector(".gd-card-title");
+                    var original = el.textContent;
+                    var bad = xs.filter(function(x){
+                        el.textContent = x;
+                        return el.scrollHeight > el.clientHeight + 1;
+                    });
+                    el.textContent = original;
+                    return bad;
+                }""",
+                titles,
+            )
+            assert not clipped, f"Go Deeper tile cuts these titles off: {clipped}"
 
         def dailyfam():
             page.evaluate("openPlayFAM()")
@@ -168,6 +201,7 @@ def main() -> int:
 
         print(f"smoke test: {target.name}")
         check("myFAM renders three rails", myfam)
+        check("Go Deeper titles are not cut off", go_deeper_titles_fit)
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)
