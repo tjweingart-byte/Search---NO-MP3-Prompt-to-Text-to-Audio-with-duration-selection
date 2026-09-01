@@ -324,7 +324,7 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-53 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-54 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
@@ -350,6 +350,11 @@ What is true but not obvious from the code:
   claim was once made without them and was wrong.
 - Deleting CSS from `static/index.html` has broken this app twice. Use
   `tools/check_css.py` and `tools/shots.py`, not judgement.
+- **A setting is settled only where it is copied.** `.env.example` shipped the
+  cold open and web search *on* while `config.py` had them off with the
+  reasoning attached (PROBLEMS.md §54), so following the documented setup
+  configured the product against its own spec. `tests/test_env_example.py` now
+  fails on any disagreement between the two.
 
 ## Working notes
 

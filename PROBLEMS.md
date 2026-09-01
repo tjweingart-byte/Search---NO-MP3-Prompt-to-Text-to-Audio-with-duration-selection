@@ -2269,3 +2269,60 @@ network policy (403 on CONNECT), so `setup_voices.py` cannot be exercised end to
 end from the build container and no real Piper audio has been produced here.
 That is the same gap CLAUDE.md records against voice quality; the download path
 is unchanged and only the store location was ever in question.
+
+## 54. The example config turned on the two things the product exists to avoid
+
+Reported from a real run, as a consistent pattern: three to five seconds of
+audio, then 30-45 seconds of nothing with the page unresponsive, then the rest
+of the episode plays **continuing from where the burst stopped** - and the
+episode itself is good.
+
+The audio half of that is fully explained, and the cause is not in the pipeline.
+`.env.example` disagreed with every settled default in `config.py`:
+
+| `.env.example` shipped | `config.py` default |
+|---|---|
+| `ENABLE_COLD_OPEN=1` | `False` |
+| `ENABLE_WEB_SEARCH=1`, `MAX_WEB_SEARCHES=5` | `False`, `3` |
+| `MODEL=claude-opus-5` | `claude-sonnet-5` |
+
+Those three settings compose into exactly the reported shape. The cold open is
+a small fast model writing one framing sentence - about eighteen words, **three
+to five seconds spoken** - and then the listener waits for the real script,
+which with five web searches on the slower model is **30-45 seconds**. When it
+arrives it continues from where the opener stopped, because that is what the
+opener is for. This is the cold-open seam of PROBLEMS 21 and 46, which CLAUDE.md
+already describes as structural rather than a bug: *"a 30s researched call means
+30s of preamble... the cure is a faster script, not a longer opener."*
+
+**The finding is not the settings, it is the file.** CLAUDE.md records all three
+as settled decisions with the reasoning attached; `config.py` sets them
+correctly and comments why. And the file people are told to copy set them the
+other way. A comment saying "off by default" is not a defence when the thing
+anyone actually copies says `1`. The product's one-sentence spec - *type a
+question and within about a second audio starts giving the answer* - was
+configured against itself, by following the documented setup.
+
+Fixed at the file, and then at the class: `tests/test_env_example.py` walks every
+name in `.env.example`, resolves it against the live `Settings` default, and
+fails on any disagreement. The per-setting assertions catch the three that are
+known to hurt; the general one catches whichever drifts next. The preflight also
+now shouts when either latency switch is on, naming what the listener will hear.
+
+**What is not explained: the page being unresponsive.** `tools/stall_probe.py`
+was written to reproduce it - it plants a 50 ms heartbeat in a real Chromium,
+plays an episode, and reports the largest gap between beats, needing no API key
+because the stall would be a function of bytes and timing rather than words. It
+does not reproduce here: first audio 0.70s, the whole three-minute episode
+buffered, **longest main-thread stall 0.18s**. Three candidate mechanisms were
+checked and ruled out against the code: the recursive promise chain in the
+fetch pump (real, but one chunk per sentence means tens of chunks, not the
+thousands needed to go quadratic), synthesis blocking the server's event loop
+(`say` is awaited through `_run`, not run synchronously), and per-slice
+scheduling (bounded at ~4 buffer sources per second).
+
+So the honest position: the gap is explained and fixed, the unresponsiveness is
+not reproduced. The most likely remaining explanation is host CPU contention -
+`say` spawning a subprocess per sentence on the same laptop as the browser -
+which would starve the renderer without any code path being at fault. The probe
+is committed so the next occurrence can be measured rather than described.
