@@ -121,12 +121,39 @@ def main() -> int:
             after = "on" in (page.query_selector(".mix-switch").get_attribute("class") or "")
             assert after != before, "the visibility switch did not move"
 
+        #: Every screen a listener can control playback from. Echo belongs on
+        #: all of them - checking two ids by name is what let the main player
+        #: ship without one.
+        PLAYERS = ["screen-player", "screen-playall", "screen-explore"]
+
         def echo_button():
-            # Present on both players; the reel is the one people will use.
             page.evaluate("openExplore()")
             page.wait_for_timeout(2200)
-            assert page.query_selector("#reelEcho"), "no echo control on the reel"
-            assert page.query_selector("#echoIcon"), "no echo control on the player"
+            missing = page.evaluate(
+                """(ids) => ids.filter(function(id){
+                       var el = document.getElementById(id);
+                       return !el || !el.querySelector("[data-echo]");
+                   })""",
+                PLAYERS,
+            )
+            assert not missing, f"no echo control on: {missing}"
+
+        def echo_state_reaches_every_player():
+            """One echo must light up all of them, not just the one tapped."""
+            page.evaluate("setEchoed(true)")
+            lit = page.evaluate(
+                """() => Array.from(document.querySelectorAll("[data-echo]"))
+                       .filter(function(el){ return el.classList.contains("echoed"); }).length"""
+            )
+            total = page.evaluate("""() => document.querySelectorAll("[data-echo]").length""")
+            page.evaluate("setEchoed(false)")
+            still = page.evaluate(
+                """() => Array.from(document.querySelectorAll("[data-echo]"))
+                       .filter(function(el){ return el.classList.contains("echoed"); }).length"""
+            )
+            assert total >= 3, f"expected an echo control on every player, found {total}"
+            assert lit == total, f"only {lit} of {total} echo controls showed the echoed state"
+            assert still == 0, f"{still} echo control(s) stayed lit after un-echoing"
 
         def explore():
             page.evaluate("openExplore()")
@@ -147,7 +174,8 @@ def main() -> int:
         check("Messages opens and closes", messages_sheet)
         check("Profile renders identity, folders and echoes", profile)
         check("Mix visibility can be toggled", mix_visibility)
-        check("Echo control is on both players", echo_button)
+        check("Echo control is on every player", echo_button)
+        check("Echo state reaches every player", echo_state_reaches_every_player)
 
         if errors:
             failures.append(f"page errors: {errors}")

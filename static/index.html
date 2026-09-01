@@ -524,6 +524,7 @@
   .reel-btn.echo-btn span{ position:absolute; bottom:-12px;
     font-family:'JetBrains Mono', monospace; font-size:7.5px; color:var(--text-muted); }
   .reel-btn.echoed{ background:var(--copper); color:var(--ink); border-color:var(--copper); }
+  .pt-icon.echoed{ background:var(--copper); color:var(--ink); border-color:var(--copper); }
   .reel-btn.echoed span{ color:var(--copper); }
 
   @media (prefers-reduced-motion: reduce){
@@ -895,6 +896,7 @@
           <div class="pc-row2">
             <div class="speed-len-pill" id="speedLenPill" onclick="openSpeedLengthModal()">1.2× · 3 min</div>
             <span class="pt-icon" onclick="openShareModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/></svg></span>
+            <span class="pt-icon" id="playerEcho" data-echo onclick="toggleEcho()" title="Echo to your friends"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg></span>
             <span class="pt-icon" id="ccIcon" onclick="toggleCC()"><span style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;">CC</span></span>
           </div>
         </div>
@@ -915,7 +917,7 @@
           <div class="sidebar">
             <div class="sb-icon" onclick="toggleFavorite(this)"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M12 21s-7.5-4.9-10-9.3C.4 8.5 2 5 5.6 5c2 0 3.5 1.1 4.4 2.6C11 6.1 12.4 5 14.4 5 18 5 19.6 8.5 18 11.7 15.5 16.1 12 21 12 21z"/></svg></div><div class="lbl">Favorite</div></div>
             <div class="sb-icon" onclick="openShareModal()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/></svg></div><div class="lbl">Share</div></div>
-            <div class="sb-icon echo-icon" id="echoIcon" onclick="toggleEcho()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg></div><div class="lbl">Echo</div></div>
+            <div class="sb-icon echo-icon" id="echoIcon" data-echo onclick="toggleEcho()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg></div><div class="lbl">Echo</div></div>
             <div class="sb-icon" id="paCcIcon" onclick="paToggleCC()"><div class="circ"><span style="font-family:'JetBrains Mono',monospace;font-size:8.5px;font-weight:700;color:var(--paper);opacity:0.55;">CC</span></div><div class="lbl">Captions<br>off</div></div>
           </div>
         </div>
@@ -961,7 +963,7 @@
             <div class="reel-play" id="reelPlay" onclick="reelTogglePlay()">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
             </div>
-            <div class="reel-btn echo-btn" id="reelEcho" onclick="toggleEcho()" title="Echo to your friends"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg><span>echo</span></div>
+            <div class="reel-btn echo-btn" id="reelEcho" data-echo onclick="toggleEcho()" title="Echo to your friends"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg><span>echo</span></div>
             <div class="reel-btn" onclick="skipAudio(15)" title="Forward 15 seconds">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M13 18l8-6-8-6v4H4v4h9z"/></svg>
               <span>15</span>
@@ -1582,12 +1584,14 @@
 
   function setEchoed(on){
     echoedNow = on;
-    ["echoIcon", "reelEcho"].forEach(function(id){
-      var el = document.getElementById(id);
-      if(el) el.classList.toggle("echoed", on);
+    // Every echo control carries data-echo. Listing ids here instead is how
+    // the main player ended up without one: a fourth player would have had to
+    // remember to edit this function as well as add the button.
+    document.querySelectorAll("[data-echo]").forEach(function(el){
+      el.classList.toggle("echoed", on);
+      var lbl = el.querySelector(".lbl");
+      if(lbl) lbl.textContent = on ? "Echoed" : "Echo";
     });
-    var lbl = document.querySelector("#echoIcon .lbl");
-    if(lbl) lbl.textContent = on ? "Echoed" : "Echo";
   }
 
   function toggleEcho(){

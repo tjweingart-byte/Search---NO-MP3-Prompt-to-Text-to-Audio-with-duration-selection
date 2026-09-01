@@ -1736,3 +1736,23 @@ anything at all, so missing Go Deeper chips are the smallest of the problems,
 and the engine failure is already loud. `piper` and `h2` still look like unused
 imports to a linter; both are availability probes. Churn in code that is
 working is how the last three regressions got in.
+
+## 42. Echo on every player, found by not naming them
+
+The main player - the one a search lands on - had no echo control. playFAM and
+the Explore reel had one; `screen-player` did not, so the most-used surface in
+the app was the one you could not echo from.
+
+The cause is worth more than the fix. `setEchoed` kept the two controls in step
+by listing their ids: `["echoIcon", "reelEcho"]`. Adding a third player meant
+remembering to edit a function somewhere else, and the smoke test asserted
+those same two ids by name, so it agreed the app was fine. **A check written
+against the things that exist cannot notice the thing that is missing.**
+
+Now every echo control carries `data-echo`, `setEchoed` drives whatever it
+finds, and the smoke test iterates the list of *player screens* asserting each
+contains one. A fourth player without an echo button fails; both checks were
+confirmed to fail before the button was put back.
+
+Screenshots of all nine surfaces before and after: only the player's control
+row changed, in the band where the button went.
