@@ -12,6 +12,12 @@ seconds.
 Judge it on: does the first sentence tell you something true and specific? Would
 any of it survive being written about a different topic? Does it end because it
 is finished, or because it ran out of room?
+
+Read the last two sentences hardest. They are the part with no test behind it -
+the rules say land it and stop, never tease, no rhetorical question, no recap -
+and a prompt rule is only a request until you have seen the model obey it. The
+predicted follow-up is printed under the script: it is never spoken, and the
+script is barred from gesturing at it, so it is checked separately.
 """
 from __future__ import annotations
 
@@ -21,7 +27,7 @@ import time
 
 from anthropic_client import build_async_client
 from config import settings
-from script_generator import ScriptGenerator, count_words, plan_episode
+from script_generator import ScriptGenerator, ScriptNotes, count_words, plan_episode
 
 PRICES = {
     "claude-opus-5": (5.0, 25.0),
@@ -67,7 +73,8 @@ async def main() -> int:
     started = time.perf_counter()
     first_at = None
     sentences = []
-    async for sentence in generator.stream_sentences(plan):
+    notes = ScriptNotes()
+    async for sentence in generator.stream_sentences(plan, notes):
         if first_at is None:
             first_at = time.perf_counter() - started
         sentences.append(sentence)
@@ -82,6 +89,13 @@ async def main() -> int:
     print(f"  {words} words  ->  {spoken_minutes:.1f} min spoken "
           f"(you asked for {plan.minutes})")
     print(f"  first sentence after {first_at or 0:.1f}s, finished in {elapsed:.1f}s")
+    # Never spoken. Printed because half of the ending rewrite lives here: the
+    # suggestion moved out of the script and into this line, so judging the
+    # script alone would only see half of the change.
+    if notes.thread:
+        print(f'  predicted follow-up (never spoken): "{notes.thread}"')
+    else:
+        print("  NOTE: no predicted follow-up. Go Deeper falls back without one.")
     if words < plan.word_budget * 0.8:
         print("  NOTE: came in short. That is allowed now - it should mean it ran "
               "out of things worth saying, not that it gave up.")
