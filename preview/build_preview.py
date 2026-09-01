@@ -98,6 +98,7 @@ def load_fixtures() -> dict:
         ]
     ]}
 
+    import time as _time
     return {
         "/api/myfam": myfam,
         "/api/mixes": mixes,
@@ -117,6 +118,12 @@ def load_fixtures() -> dict:
         "/api/voices": {"voices": [
             {"id": "preview:narrator", "label": "Narrator (preview)", "engine": "preview"}
         ], "default": "preview:narrator"},
+        "/api/profile": {
+            "listener": "preview-listener", "played": 34, "finished": 21,
+            "searched": 12, "open_threads": 2,
+            "subjects": ["tech", "money", "science", "health"],
+            "since": _time.time() - 63 * 86400,
+        },
         "/api/health": {"ok": True, "demo": True, "engine": "preview"},
         "/api/event": {"ok": True},
     }

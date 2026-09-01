@@ -1558,3 +1558,33 @@ reason and tempt you to weaken it.
 `topics.SECTIONS`** instead of hardcoding them, after the preview kept showing
 the old order following this change. A fixture that can disagree with the code
 is worse than no fixture.
+
+## 38. Profile takes the fifth tab; Messages becomes a sheet
+
+**Messages was never a place, it was a detour.** It sat in the tab bar next to
+the four surfaces the product is actually about, which gave it equal billing
+and cost a slot. It now opens from the myFAM header - replacing the three dots,
+which did nothing but toast "concept" - as a sheet pushed over whatever you
+were doing, with an X that returns you there. That is a different promise from
+a tab: you come back to where you were rather than having to navigate home.
+The sheet carries no tab bar, because it is over the app rather than one of its
+places, and a thread opened inside it returns to the sheet rather than skipping
+past it.
+
+**Profile is a scaffold and says so.** Everything on it comes from this
+listener's own event log: started, finished, threads still open, and the
+subjects they are positive about. A skipped subject is excluded, because a skip
+is evidence against a tag and has no business on a list of what someone likes.
+
+The temptation on a profile page is to fill it - followers, streaks, hours
+saved, a rank. Every one of those would be invented here, and an invented
+number is a promise the product has to keep later. So the account section says
+the true thing instead: there are no accounts, this is one device, clearing
+browser data starts you over, and signing in is what would join them up. That
+is also the clearest statement anywhere in the app of what identity work is
+still outstanding.
+
+**The smoke test now opens and closes the sheet** rather than checking it
+exists. Explore already shipped once as a screen with no way out; a sheet is
+the same failure waiting to happen, and "present in the DOM" would have passed
+that bug too.

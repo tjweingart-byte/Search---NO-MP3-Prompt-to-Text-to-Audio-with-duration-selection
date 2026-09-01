@@ -203,6 +203,53 @@
     justify-content:center; color:var(--text-muted); opacity:0.5; }
 
   /* Explore: a vertical feed of episodes that already exist. */
+  /* Messages opens over the app rather than replacing a tab: it is a place
+     you drop into and leave, not one of the five places you live. */
+  .screen.sheet{ background:var(--bg); }
+  .screen.sheet.active{ animation:sheet-in 220ms cubic-bezier(0.22,0.7,0.3,1); }
+  @keyframes sheet-in{ from{ transform:translateY(14px); opacity:0; } }
+  @media (prefers-reduced-motion: reduce){
+    .screen.sheet.active{ animation:none; }
+  }
+  .sheet-close{ width:30px; height:30px; border-radius:50%; border:1px solid var(--border-strong);
+    background:none; color:var(--text); display:flex; align-items:center;
+    justify-content:center; cursor:pointer; }
+  .sheet-close:active{ background:rgba(244,239,228,0.06); }
+
+  .myfam-msg-btn{ position:relative; width:34px; height:34px; border-radius:50%;
+    border:1px solid var(--border-strong); background:none; color:var(--text);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .myfam-msg-btn:active{ background:rgba(244,239,228,0.06); }
+  .msg-dot{ position:absolute; top:5px; right:5px; width:7px; height:7px; border-radius:50%;
+    background:var(--copper); border:1.5px solid var(--bg); }
+
+  /* Profile: a scaffold, and honest about being one. */
+  .pf-card{ padding:16px; border-radius:14px; background:var(--surface);
+    border:1px solid var(--border); margin-bottom:12px; }
+  .pf-id{ font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.06em;
+    color:var(--text-muted); margin-top:6px; word-break:break-all; }
+  .pf-name{ font-family:'Fraunces', serif; font-size:19px; color:var(--text); }
+  .pf-stats{ display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:12px; }
+  .pf-stat{ padding:13px 10px; border-radius:12px; background:var(--surface);
+    border:1px solid var(--border); text-align:center; }
+  .pf-stat b{ display:block; font-family:'Fraunces', serif; font-weight:600; font-size:21px;
+    color:var(--text); font-variant-numeric:tabular-nums; }
+  .pf-stat span{ font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.07em;
+    text-transform:uppercase; color:var(--text-muted); }
+  .pf-kicker{ font-family:'JetBrains Mono', monospace; font-size:9px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--text-muted); margin:18px 0 9px; }
+  .pf-tags{ display:flex; flex-wrap:wrap; gap:7px; }
+  .pf-tag{ padding:6px 12px; border-radius:999px; background:var(--surface);
+    border:1px solid var(--border-strong); font-size:11px; color:var(--text); }
+  .pf-row{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:13px 14px; border-radius:12px; background:var(--surface);
+    border:1px solid var(--border); margin-bottom:9px; cursor:pointer; }
+  .pf-row span{ font-size:12px; color:var(--text); }
+  .pf-row b{ font-family:'JetBrains Mono', monospace; font-size:10px; color:var(--copper);
+    font-weight:700; }
+  .pf-note{ padding:14px; border:1px dashed var(--border-strong); border-radius:12px;
+    font-size:10.5px; line-height:1.55; color:var(--text-muted); margin-top:6px; }
+
   /* --- myFAM ------------------------------------------------------------
      The wordmark: the A is a pair of chevrons, the same mark the app uses for
      "further in". */
@@ -765,7 +812,7 @@
           <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab centre active" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
           <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab" data-tab="profile" onclick="openProfile()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0114.4 0"/></svg></div><div class="lbl">Profile</div></div>
         </div>
       </section>
 
@@ -774,7 +821,10 @@
         <div class="scroll">
           <div class="myfam-header">
             <h2 class="wordmark" aria-label="myFAM">my<span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.55 4.55 12.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V9.2A3.2 3.2 0 0 1 9.2 6H16"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.55 4.55 16.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.55 4.55 14.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span></h2>
-            <button class="myfam-dots-btn" onclick="toast('More options (concept)')">•••</button>
+            <button class="myfam-msg-btn" onclick="openMessages()" aria-label="Messages">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg>
+              <span class="msg-dot" id="msgUnread" hidden></span>
+            </button>
           </div>
           <div class="myfam-searchrow">
             <div class="search-bar-lg" onclick="openSearchFAM()">
@@ -804,7 +854,7 @@
           <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab centre" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
           <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab" data-tab="profile" onclick="openProfile()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0114.4 0"/></svg></div><div class="lbl">Profile</div></div>
         </div>
       </section>
 
@@ -827,7 +877,7 @@
           <div class="tab active" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab centre" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
           <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab" data-tab="profile" onclick="openProfile()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0114.4 0"/></svg></div><div class="lbl">Profile</div></div>
         </div>
       </section>
 
@@ -981,29 +1031,44 @@
           <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab centre" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
           <div class="tab active" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab" data-tab="profile" onclick="openProfile()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0114.4 0"/></svg></div><div class="lbl">Profile</div></div>
         </div>
       </section>
 
       <!-- ============ MESSAGES (inbox) ============ -->
-      <section class="screen" id="screen-messages">
+      <!-- ============ PROFILE ============ -->
+      <section class="screen" id="screen-profile">
         <div class="scroll">
           <div class="myfam-header">
-            <h2>Messages</h2>
-            <button class="myfam-add-btn" onclick="openNewChatModal()">+</button>
+            <h2>Profile</h2>
           </div>
-          <div class="search-bar" onclick="toast('Search messages (demo only)')">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-            <span>Search messages</span>
-          </div>
-          <div id="threadList"></div>
+          <div id="profileBody"></div>
         </div>
         <div class="tabbar">
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
           <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
           <div class="tab centre" data-tab="home" onclick="setTab('home')"><div class="dot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div></div>
           <div class="tab" data-tab="explore" onclick="openExplore()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg></div><div class="lbl">explore</div></div>
-          <div class="tab active" data-tab="messages" onclick="openMessages()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H4a2 2 0 01-2-2V6a2 2 0 012-2z"/></svg></div><div class="lbl">Messages</div></div>
+          <div class="tab active" data-tab="profile" onclick="openProfile()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0114.4 0"/></svg></div><div class="lbl">Profile</div></div>
+        </div>
+      </section>
+
+      <section class="screen sheet" id="screen-messages">
+        <div class="scroll">
+          <div class="myfam-header">
+            <h2>Messages</h2>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <button class="myfam-add-btn" onclick="openNewChatModal()">+</button>
+              <button class="sheet-close" onclick="closeMessages()" aria-label="Close messages">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="search-bar" onclick="toast('Search messages (demo only)')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <span>Search messages</span>
+          </div>
+          <div id="threadList"></div>
         </div>
       </section>
 
@@ -3129,10 +3194,80 @@
     navigate("connect");
   }
 
+  // Messages is a sheet now, not a tab: pushed over whatever you were doing
+  // and closed again, so you come back to where you were rather than having
+  // to navigate home.
   function openMessages(){
     renderThreadList();
-    setTab("messages");
+    navigate("messages");
+    var dot = document.getElementById("msgUnread");
+    if(dot) dot.hidden = true;
   }
+  function closeMessages(){
+    goBack();
+  }
+
+  // ---------------- Profile ----------------
+  // A scaffold, and honest about being one. Everything on it comes from this
+  // listener's own event log - a profile page is the easiest place in an app
+  // to invent numbers, and every invented one is a promise to keep later.
+  function openProfile(){
+    setTab("profile");
+    loadProfile();
+  }
+
+  function loadProfile(){
+    var el = document.getElementById("profileBody");
+    if(!el) return;
+    fetch("/api/profile?user=" + encodeURIComponent(famUserId()))
+      .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
+      .then(renderProfile)
+      .catch(function(){
+        el.innerHTML = '<div class="pf-note">Could not load your profile. '
+          + 'Nothing is lost — this fills in when the server is back.</div>';
+      });
+  }
+
+  function renderProfile(p){
+    var since = p.since
+      ? new Date(p.since * 1000).toLocaleDateString(undefined,
+          { month: "long", year: "numeric" })
+      : null;
+    var html = '<div class="pf-card">'
+      + '<div class="pf-name">Listening on this device</div>'
+      + '<div class="pf-id">' + escapeHtml(p.listener || "unknown") + '</div>'
+      + '</div>';
+
+    html += '<div class="pf-stats">'
+      + '<div class="pf-stat"><b>' + p.played + '</b><span>Started</span></div>'
+      + '<div class="pf-stat"><b>' + p.finished + '</b><span>Finished</span></div>'
+      + '<div class="pf-stat"><b>' + p.open_threads + '</b><span>Threads open</span></div>'
+      + '</div>';
+
+    if(p.subjects && p.subjects.length){
+      html += '<div class="pf-kicker">What you listen to</div><div class="pf-tags">'
+        + p.subjects.map(function(t){
+            return '<div class="pf-tag">' + escapeHtml(t) + '</div>';
+          }).join("") + '</div>';
+    }
+
+    html += '<div class="pf-kicker">Playback</div>'
+      + '<div class="pf-row" onclick="openVoiceMenu()"><span>Voice</span><b>'
+      + escapeHtml(voiceLabel(selectedVoice)) + '</b></div>'
+      + '<div class="pf-row" onclick="openLengthMenu()"><span>Default length</span><b>'
+      + selectedLengthMinutes + ' min</b></div>'
+      + '<div class="pf-row" onclick="openMessages()"><span>Messages</span><b>Open</b></div>';
+
+    html += '<div class="pf-kicker">Account</div>'
+      + '<div class="pf-note">There are no accounts yet. Everything above is kept '
+      + 'on this device'
+      + (since ? ', since ' + escapeHtml(since) : '')
+      + ' — clearing your browser data starts you over, and a second device is a '
+      + 'second listener. Signing in is what would join them up.</div>';
+
+    document.getElementById("profileBody").innerHTML = html;
+  }
+
 
   function renderThreadList(){
     var html = FAM_CONTACTS.map(function(c){

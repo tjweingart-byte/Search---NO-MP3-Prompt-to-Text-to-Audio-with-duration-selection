@@ -571,6 +571,29 @@ def build_feed(store: EventStore, user_id: str, now: Optional[float] = None) -> 
     return {"sections": sections, "personalised": bool(profile)}
 
 
+def summary(store: EventStore, user_id: str, now: Optional[float] = None) -> dict:
+    """What this app actually knows about a listener.
+
+    Deliberately only what the event log really holds. A profile page is the
+    easiest place in an app to invent numbers - followers, streaks, hours
+    saved - and every invented one is a promise the product has to keep later.
+    """
+    events = store.for_user(user_id, limit=1000)
+    profile = taste(events, now)
+    top = sorted(profile.items(), key=lambda kv: -kv[1])
+    return {
+        "listener": user_id,
+        "played": sum(1 for e in events if e.kind == "play"),
+        "finished": sum(1 for e in events if e.kind == "complete"),
+        "searched": sum(1 for e in events if e.kind == "search"),
+        "open_threads": len(store.open_threads(user_id)),
+        # Only tags they are actually positive about; a skip pushes a tag
+        # negative and it has no business on a list of what someone likes.
+        "subjects": [tag for tag, weight in top if weight > 0][:5],
+        "since": min((e.at for e in events), default=0.0),
+    }
+
+
 def _empty_reason(key: str) -> str:
     return {
         "trending": "Nothing has been played yet today.",

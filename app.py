@@ -317,6 +317,13 @@ async def record_event(req: EventRequest, request: Request):
     return {"ok": True}
 
 
+@app.get("/api/profile")
+async def profile(request: Request, user: str = Query("", max_length=64)):
+    """Counts and subjects from this listener's own event log. No model call."""
+    _rate_limit(request)
+    return topics_mod.summary(EVENTS, user)
+
+
 @app.get("/api/godeeper")
 async def go_deeper(request: Request, user: str = Query("", max_length=64)):
     """Threads left open by episodes this listener finished.

@@ -84,6 +84,25 @@ def main() -> int:
             page.wait_for_timeout(300)
             assert page.query_selector(".typed-offer"), "typing offers no way to add it"
 
+        def messages_sheet():
+            # The sheet has to be leavable. A tab that cannot be left is the
+            # bug this app already shipped once, on Explore.
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(600)
+            page.click("#screen-myfam .myfam-msg-btn")
+            page.wait_for_timeout(700)
+            assert page.eval_on_selector(".screen.active", "e => e.id") == "screen-messages"
+            page.click("#screen-messages .sheet-close")
+            page.wait_for_timeout(700)
+            assert page.eval_on_selector(".screen.active", "e => e.id") == "screen-myfam", \
+                "closing messages did not return to myFAM"
+
+        def profile():
+            page.evaluate("openProfile()")
+            page.wait_for_timeout(900)
+            assert page.eval_on_selector(".screen.active", "e => e.id") == "screen-profile"
+            assert page.eval_on_selector_all(".pf-stat b", "e => e.length") == 3
+
         def explore():
             page.evaluate("openExplore()")
             page.wait_for_timeout(2500)
@@ -100,6 +119,8 @@ def main() -> int:
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)
+        check("Messages opens and closes", messages_sheet)
+        check("Profile renders its stats", profile)
 
         if errors:
             failures.append(f"page errors: {errors}")

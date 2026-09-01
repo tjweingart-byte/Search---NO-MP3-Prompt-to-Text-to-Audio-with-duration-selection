@@ -317,3 +317,37 @@ def test_the_go_deeper_endpoint_serves_them(client):
 
 def test_go_deeper_is_empty_not_broken_for_a_new_listener(client):
     assert client.get("/api/godeeper?user=nobody").json()["threads"] == []
+
+
+# --- the profile summary --------------------------------------------------
+
+
+def test_the_profile_counts_only_what_actually_happened(store):
+    play(store, "u", "ai-agents")
+    play(store, "u", "sleep-science", kind="complete")
+    store.record(T.Event("u", "search", "", "how heat pumps work", ()))
+    body = T.summary(store, "u")
+    assert body["played"] == 1 and body["finished"] == 1 and body["searched"] == 1
+    assert body["listener"] == "u"
+
+
+def test_a_new_listener_has_an_empty_profile_not_a_fake_one(store):
+    body = T.summary(store, "nobody")
+    assert body["played"] == 0 and body["finished"] == 0
+    assert body["subjects"] == []
+    assert body["since"] == 0.0
+
+
+def test_a_skipped_subject_is_not_listed_as_something_they_like(store):
+    play(store, "u", "golf-evolution", kind="complete")
+    play(store, "u", "sleep-science", kind="skip")
+    subjects = T.summary(store, "u")["subjects"]
+    assert "sports" in subjects
+    assert "health" not in subjects, "a skip is evidence against, not for"
+
+
+def test_the_profile_endpoint_serves_it(client):
+    client.post("/api/event", json={"user": "p1", "kind": "complete",
+                                    "topic_id": "ai-agents"})
+    body = client.get("/api/profile?user=p1").json()
+    assert body["finished"] == 1 and "tech" in body["subjects"]
