@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from anthropic_client import build_async_client
+from cache import needs_fresh_information
 from config import settings
 
 log = logging.getLogger(__name__)
@@ -270,8 +271,6 @@ class EpisodePlan:
     target_seconds: int
     word_budget: int
     sections: list[str]
-    #: Words already spoken by the cold open, deducted from the body's budget.
-    reserved_words: int = 0
     #: What the listener has already heard, for a "go deeper" follow-up.
     context: str = ""
     #: Look up live sources. Costs 10-25s before the first word, so it is off
@@ -298,7 +297,7 @@ class EpisodePlan:
 
     @property
     def body_budget(self) -> int:
-        return max(30, self.word_budget - self.reserved_words)
+        return max(30, self.word_budget)
 
     @property
     def min_words(self) -> int:
@@ -342,26 +341,26 @@ def plan_episode(
     else:
         sections = ["the full arc, including how it came to be this way"]
 
-    reserved = 18 if settings.enable_cold_open else 0
-    use_search = settings.enable_web_search if search is None else bool(search)
+    # Option B: the question decides. An explicit search=1/0 on the request
+    # still wins - that is what "opt in" means - but the default is neither
+    # "always" nor "never", it is "when the answer depends on something recent".
+    if search is None:
+        mode = getattr(settings, "search_mode", "auto")
+        use_search = (
+            True if mode == "always"
+            else False if mode == "never"
+            else needs_fresh_information(query)
+        )
+    else:
+        use_search = bool(search)
     return EpisodePlan(
-        query, minutes, target_seconds, word_budget, sections, reserved, context,
+        query, minutes, target_seconds, word_budget, sections, context,
         use_search, cached_only, tuple(attachments or ()),
     )
 
 
 def build_prompt(plan: EpisodePlan) -> str:
     budget = plan.body_budget
-    # Empty unless a cold open is running. When one is, the listener has
-    # already heard an opening line, so the script must not write its own -
-    # without this the two stack up and the episode opens twice.
-    already_opened = (
-        "\nThe episode has ALREADY opened with one short framing sentence that "
-        "the listener has heard. Do not write a greeting, a hook, or a restatement "
-        "of the question - continue straight into substance.\n"
-        if plan.reserved_words
-        else ""
-    )
     attached = ""
     if plan.readable or plan.images:
         blocks = "\n\n".join(a.as_prompt_block() for a in plan.readable)
@@ -406,7 +405,7 @@ Answer them. They asked because they wanted to know something, and by the end
 they must know it well enough to say it back in their own words. That is the
 job; the rest is how it arrives.
 
-{already_opened}
+
 Pick a way in. Find the specific thing - the moment, the person, the number,
 the detail - that makes this worth hearing, and start there. Then keep them
 moving: each thing you tell them should make the next thing matter more. By the
@@ -537,92 +536,6 @@ class ScriptGenerator:
                 detail = getattr(final, "stop_details", None)
                 reason = getattr(detail, "explanation", None) or "the request was declined"
                 yield clean_for_speech(f"I can't put together a briefing on that. {reason}")
-
-    async def cold_open(
-        self, plan: EpisodePlan, spoken_so_far: str = ""
-    ) -> AsyncIterator[str]:
-        """One framing sentence, written by a small fast model, no tools.
-
-        This runs *concurrently* with the main researched call. Its only job is
-        to be speakable within a few hundred milliseconds so the listener hears
-        something while web search is still running.
-
-        The prompt forbids any factual claim, because this model has done no
-        research and must not guess ahead of what the main model will say. It
-        frames the question; it never answers it.
-
-        `spoken_so_far` is what the listener has already heard from earlier
-        fills. Each fill used to be an independent call with an identical
-        prompt, so a slow script produced several openings in a row that
-        circled the same ground and did not follow from one another. Given what
-        came before, a fill continues it instead of starting again.
-        """
-        avoid = ""
-        if _RECENT_OPENERS:
-            recent = "\n".join("- " + o for o in _RECENT_OPENERS[-5:])
-            avoid = (
-                "\nThese are the openings this listener has already heard today. "
-                "Do not reuse their wording, their rhythm, or their opening move:\n"
-                f"{recent}\n"
-            )
-        already = ""
-        if spoken_so_far.strip():
-            already = (
-                "\nThe listener is already part-way into this episode. This is "
-                "what they have heard so far, word for word:\n"
-                f"<heard>{spoken_so_far.strip()[-1200:]}</heard>\n"
-                "Continue directly from that last sentence. Do not open again, "
-                "do not restate the subject, and do not circle back to a point "
-                "it has already made - carry the same line of thought forward.\n"
-            )
-        prompt = (
-            "A listener asked for a spoken briefing on this topic:\n"
-            f"<topic>{plan.query}</topic>\n"
-            f"{already}\n"
-            f"Write up to four short sentences, {settings.cold_open_words} words in total, "
-            "that open the episode. Each sentence must stand alone and make sense as "
-            "the last thing said before the briefing proper begins, because playback "
-            "may cut over to the main script after any one of them.\n\n"
-            "Make it specific to THIS topic. Name the subject, and say what kind of "
-            "question it is - what is unsettled about it, what a listener would want "
-            "to know, why someone would be asking now. A listener who hears several "
-            "of these should never feel they are hearing a template.\n\n"
-            f"{avoid}\n"
-            "Critical constraints:\n"
-            "- State NO facts, figures, dates, names, results or opinions about the "
-            "topic. You have done no research and anything you assert could be wrong. "
-            "Frame the question; never answer it.\n"
-            "- No greeting, no 'welcome to the show', no show name, no 'let's dive in'.\n"
-            "- Do not say 'here is your briefing' or any variation. Start with substance "
-            "about the shape of the question.\n"
-            "- Output only the sentences. No <<NEXT>> line - you are opening "
-            "the episode, not ending it."
-        )
-        try:
-            message = await self.client.messages.create(
-                model=settings.cold_open_model,
-                max_tokens=100,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            if message.stop_reason == "refusal":
-                return
-            text = clean_for_speech(" ".join(b.text for b in message.content if b.type == "text"))
-            # Yield sentence by sentence: the pipeline stops taking them the
-            # moment the real script is ready, so later ones are often unused.
-            remember_opener(text)
-            while text:
-                match = _SENTENCE_END.search(text)
-                if not match:
-                    break
-                piece, text = text[: match.end()].strip(), text[match.end() :]
-                if piece:
-                    yield piece
-            if text.strip():
-                yield text.strip()
-        except Exception:
-            # A missing cold open costs a second of latency, not the episode.
-            log.warning("cold open failed; falling back to the main script", exc_info=True)
 
     async def top_up(
         self, plan: EpisodePlan, spoken_so_far: str, words_needed: int

@@ -24,9 +24,9 @@ as they interact with the app.
 
 ## The architectural consequence that matters most
 
-Today every episode is generated **on demand**, which is why the app needs a
-fast-model "cold open" to cover the wait, and why a gap can appear when that
-opener runs out before the researched script arrives.
+Today every episode is generated **on demand**. There used to be a fast-model
+"cold open" covering that wait; it is gone (PROBLEMS.md §55). Nothing is spoken
+until the real episode is.
 
 **On the browse surfaces, that whole problem is avoidable.** myFAM and dailyFAM
 know what the listener might tap *before* they tap it. So:
@@ -36,13 +36,14 @@ know what the listener might tap *before* they tap it. So:
 > The audio is nearly free (~330x realtime, milliseconds).
 > Pre-generate *scripts* for likely-next episodes; synthesise audio on tap.
 
-That yields instant playback with no cold open and no gap, and wastes only cheap
+That yields instant playback with no wait at all, and wastes only cheap
 text when a prediction is wrong — not audio compute or bandwidth. The existing
 script cache (`cache.py`) is already the right place to put pre-generated
 scripts; it stores scripts, not audio, for exactly this reason.
 
-Corollary: **the cold open is a workaround for on-demand latency.** Do not
-extend it to the browse surfaces. Prefetch there instead.
+Corollary: **latency is answered by starting earlier, never by filling the
+gap.** The cold open tried to fill it and was removed. Prefetch on the browse
+surfaces; on search, keep the work small enough that there is no gap to fill.
 
 ## The one-sentence spec
 
@@ -189,20 +190,14 @@ another rule.
    Note: voice is deliberately **not** part of the script cache key, because a
    voice changes the audio and not the words. Switching voice therefore reuses
    the cached script — measured at ~90 ms and zero API cost.
-3. ~~**The cold-open → script gap**~~ — *fixed twice; measured this time*
-   (PROBLEMS.md §21, then §46). §21 claimed silence was "structurally
-   impossible up to a 60s ceiling". **That was wrong** - a rebound variable was
-   orphaning opener sentences mid-flight, so on a 30s script 52 were written
-   and 11 spoken with 11.5s of dead air. Fills are now kept in a list and
-   drained oldest-first. `python tools/gap_probe.py` measures it with no API
-   key and reports 0.00s at every latency from 2s to 30s; run it before
-   believing any future claim about this.
-   **What remains is not a bug but a consequence:** a 30s researched call means
-   30s of preamble, because the listener must hear *something*, and the opener
-   may state no facts - so the seam between it and the script is structural.
-   The cure is a faster script - fewer web searches, a faster model, or
-   prefetch on the browse surfaces - not a longer opener.
-   Note the cold open is still **off** by default (`ENABLE_COLD_OPEN=0`).
+3. ~~**The cold-open → script gap**~~ — *dissolved, not fixed* (PROBLEMS.md
+   §55). Two sessions went into making the opener cover the research wait, and
+   heard on a real machine it was 3-5 seconds of contentless speech in front of
+   a 30-45 second silence. Five does not cover forty-five, and the opener was
+   prompted to state no facts, so what it did cover was worthless. **The whole
+   feature is deleted** - not switched off - along with `tools/gap_probe.py`,
+   which existed only to measure it. The interface now shows an honest wait
+   that names what it is waiting for and counts the seconds.
 4. **myFAM is built; the taste model is deliberately crude.** `topics.py` ranks
    a *shared* bank of ~28 topics three ways (trending / co-listener / history)
    from an append-only event log. Tags come from keyword matching, not a
@@ -250,10 +245,18 @@ another rule.
   substance now ends early instead of being padded. Enforcing the number in both
   directions is what produced filler: it made the model pad. `ALLOW_TOPUPS=1`
   restores the old behaviour.
-- **No filler, ever.** The cold open is off (`ENABLE_COLD_OPEN=0`). It was
-  prompted to state no facts, which made it worthless by construction, and
-  covering a long research wait meant 15-30 seconds of it. Nothing plays until
-  the real briefing does; the interface shows an honest loading state.
+- **No filler, ever, and no setting for it.** The cold open was deleted, not
+  disabled - a knob left behind is an invitation to turn it back on, and this
+  one was turned back on by an example file. Nothing plays until the real
+  briefing does. The interface says what it is waiting for and how long it has
+  been waiting; a wait you were warned about is a different experience from the
+  same wait unexplained.
+- **Search is opt-in, and the question opts in.** `SEARCH_MODE=auto` reads the
+  query with the same keyword signal the cache uses for freshness: "latest",
+  "today", "score", "breaking" get researched; everything else is answered from
+  what the model already knows, immediately. `search=1`/`search=0` on a request
+  still wins. Paying 10-25 seconds on every episode bought nothing for "what is
+  the NASDAQ", which is most of what people ask.
 - **Failures must be visible.** Silent success (empty audio, a placeholder tone,
   demo mode mistaken for live) has caused more lost time on this project than
   any real bug. Every fallback must announce itself. *(PROBLEMS.md §51: demo
@@ -324,7 +327,7 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-54 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-55 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
@@ -346,8 +349,9 @@ What is true but not obvious from the code:
   sounds* is unverified until someone runs it with a key.
 - The checks answer "does it work", not "does it look right". `tools/shots.py`
   photographs all nine surfaces so a refactor can be proved neutral;
-  `tools/gap_probe.py` measures dead air without a key. Both exist because a
-  claim was once made without them and was wrong.
+  `tools/stall_probe.py` measures browser stalls without a key, and
+  `tools/compare_search.py` measures what research actually buys. Each exists
+  because a claim was once made without it and was wrong.
 - Deleting CSS from `static/index.html` has broken this app twice. Use
   `tools/check_css.py` and `tools/shots.py`, not judgement.
 - **A setting is settled only where it is copied.** `.env.example` shipped the

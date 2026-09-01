@@ -1358,6 +1358,7 @@
       el.style.color = "var(--sage)";
       el.textContent = "Live — briefings written by " + h.model + ", voice: " + h.tts.selected + ".";
     }
+    if(h.research_words) RESEARCH_WORDS = h.research_words;
     if(h.tts.selected === "debug"){
       el.textContent += "  No speech engine found: you will hear a placeholder tone.";
       el.style.color = "var(--coral)";
@@ -1527,9 +1528,51 @@
   var activeGenOverlay = null;
   var genTimeout = null;
 
+  var genTicker = null;
+
   function clearGenOverlay(){
     if(genTimeout){ clearTimeout(genTimeout); genTimeout = null; }
+    if(genTicker){ clearInterval(genTicker); genTicker = null; }
     if(activeGenOverlay){ activeGenOverlay.classList.remove("active"); activeGenOverlay = null; }
+  }
+
+  // The words that make a question a researched one. Served by /api/health from
+  // the same set the server decides with, so the interface cannot tell the
+  // listener one thing while the server does another.
+  var RESEARCH_WORDS = [];
+
+  function willResearch(query){
+    var words = String(query || "").toLowerCase().split(/[^a-z0-9]+/);
+    for(var i = 0; i < words.length; i++){
+      if(RESEARCH_WORDS.indexOf(words[i]) >= 0) return true;
+    }
+    return false;
+  }
+
+  // The honest wait. There is no filler any more - nothing is spoken until the
+  // real episode is - so the only decent thing left is to say what is happening
+  // and how long it has been happening for. A researched episode says so up
+  // front, because a wait you were warned about is a different experience from
+  // the same wait unexplained.
+  function startHonestWait(overlay, query){
+    var node = overlay ? overlay.querySelector(".gen-text") : null;
+    if(!node) return;
+    var researching = willResearch(query);
+    var lead = researching
+      ? "Checking recent sources — this one needs today's facts"
+      : "Writing your episode";
+    var started = Date.now();
+    node.textContent = lead + "…";
+    if(genTicker) clearInterval(genTicker);
+    genTicker = setInterval(function(){
+      var seconds = Math.round((Date.now() - started) / 1000);
+      // Under three seconds the counter is noise; past that it is the only
+      // thing telling the listener the app has not died.
+      node.textContent = seconds < 3 ? lead + "…" : lead + "… " + seconds + "s";
+      if(researching && seconds === 12){
+        node.textContent = "Still reading. Researched episodes take longer to start.";
+      }
+    }, 500);
   }
 
   function onGenerationStarted(){
@@ -1550,6 +1593,8 @@
     clearGenOverlay();
     activeGenOverlay = overlay;
     if(overlay) overlay.classList.add("active");
+
+    startHonestWait(overlay, key && key.query ? key.query : (key && key.title) || "");
 
     // Never spin forever if the server is unreachable or wedged.
     genTimeout = setTimeout(function(){

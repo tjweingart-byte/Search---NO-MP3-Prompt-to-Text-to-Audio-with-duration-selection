@@ -86,6 +86,34 @@ def is_shareable(query: str) -> bool:
     return not _PERSONAL.search(query)
 
 
+def research_words() -> set:
+    """The words that make a question a researched one.
+
+    Served to the interface so it can say "checking recent sources" *before*
+    the request goes out, from the same list the server decides with. A second
+    copy in JavaScript would drift, and the two would disagree about what the
+    listener was told.
+    """
+    return set(_VOLATILE)
+
+
+def needs_fresh_information(query: str) -> bool:
+    """Does answering this honestly require something that happened recently?
+
+    The same signal the cache already uses to decide that "latest news on X"
+    goes stale in minutes while "why is the sky blue" is good for a month. It
+    is exactly the question "should this episode be researched", so search now
+    reads it too rather than being on or off for everything.
+
+    Deliberately a keyword test, not a model call: classifying the query with a
+    model would put a round trip in front of the first word, which is the one
+    cost this product refuses - and being wrong costs one episode answered from
+    memory that could have been fresher, not a broken episode.
+    """
+    tokens = set(_SPACE.split(_PUNCT.sub(" ", query.lower())))
+    return bool(tokens & _VOLATILE)
+
+
 def ttl_for(query: str) -> int:
     """How long a script for this query stays usable, in seconds.
 

@@ -2326,3 +2326,83 @@ not reproduced. The most likely remaining explanation is host CPU contention -
 `say` spawning a subprocess per sentence on the same laptop as the browser -
 which would starve the renderer without any code path being at fault. The probe
 is committed so the next occurrence can be measured rather than described.
+
+## 55. The filler is deleted, and the question decides whether to research
+
+Two decisions taken after hearing the product run, both reversing things this
+file previously recorded as settled.
+
+### The cold open is gone, not off
+
+Its own premise was arithmetically impossible. It is eighteen words - three to
+five seconds spoken - and it existed to cover a research wait of 30-45 seconds.
+Five does not become forty-five by tuning. And the opener's prompt said, in
+capitals, **"State NO facts, figures, dates, names, results or opinions about
+the topic... Frame the question; never answer it"**, so the five seconds it did
+cover carried nothing. A listener heard a few seconds of throat-clearing, then
+silence, then the episode.
+
+§21 and §46 both treated this as a bug in the implementation and fixed it
+twice - a rebound variable orphaning sentences, then the fill queue. Both fixes
+were correct and neither mattered, because the feature could not work at that
+ratio. Roughly 45 lines of `pipeline.py`, a second model call, five settings,
+twelve tests and an entire measuring tool (`tools/gap_probe.py`) served
+something that was never going to do its job.
+
+**Deleted rather than disabled, deliberately.** It was already off by default;
+`.env.example` turned it back on and cost a session (§54). A setting left
+behind is an invitation. There is now no `cold_open` method on any generator,
+no `_run_cold_open`, no `ENABLE_COLD_OPEN`, and a test asserts that a generator
+which still offers a `cold_open` method is ignored rather than duck-typed back
+into service.
+
+The trade is stated plainly, because it is a real cost: **on-demand latency is
+now exposed.** A researched episode makes the listener wait with nothing
+playing. That was judged better than covering it with words that say nothing.
+
+### The honest wait
+
+What replaces it is not audio. The interface names what it is waiting for -
+"Checking recent sources — this one needs today's facts" against "Writing your
+episode" - and counts seconds past three, so a wait is legible rather than a
+dead screen. Which message it shows comes from `/api/health`, which serves the
+same keyword set the server decides with; a second copy in JavaScript would
+drift and the listener would be told one thing while the server did another.
+
+### Search is opt-in, and the question opts in
+
+`SEARCH_MODE=auto|never|always`, default `auto`. Auto reads the query with
+`needs_fresh_information()` - the same `_VOLATILE` set `cache.py` already used
+to decide that "latest news on X" goes stale in minutes. It is exactly the
+question "does answering this honestly need something recent", so search reads
+it too. `search=1`/`search=0` on a request still wins; `ENABLE_WEB_SEARCH=1`
+maps to `always` so an existing `.env` does not silently change meaning.
+
+Deliberately a keyword test rather than a model call: classifying the query
+with a model puts a round trip in front of the first word, and being wrong
+costs one episode answered from memory that could have been fresher - not a
+broken episode.
+
+### On `MAX_WEB_SEARCHES=5`
+
+Asked why five, and whether more is better. **A cap is not a target.** It sets
+`max_uses` on the web-search tool: the model takes as many as it judges it
+needs up to that ceiling, so raising it does not buy more research, it raises
+how much the model *may* do - and each search it takes costs seconds before the
+first word plus a per-search charge on top of the tokens. Five was a guess; the
+comment in `config.py` said "three is enough for a briefing" while
+`.env.example` shipped five, which is the same disagreement as §54 in miniature.
+Now 3 in both.
+
+Whether even three earns its latency is unmeasured, so `tools/compare_search.py`
+runs one query at several depths and reports time to first word, total time,
+word count and the scripts themselves - because "did the extra searches change
+the writing" is a reading judgement, not a number.
+
+### What this cost
+
+12 tests deleted, 20 added, and the suite dropped from 30s to 8s - most of that
+time was the opener tests sleeping through simulated research latency. Still
+unverified here, as ever: no API key, so the search comparison has never been
+run and the latency of a `never`-mode episode has not been measured on a real
+machine.

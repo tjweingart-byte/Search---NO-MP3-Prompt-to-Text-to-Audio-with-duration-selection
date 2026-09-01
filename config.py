@@ -142,46 +142,27 @@ class Settings:
     allow_topups: bool = field(
         default_factory=lambda: os.environ.get("ALLOW_TOPUPS", "0") not in ("0", "false", "False")
     )
-    # OFF by default. Web search is the single biggest cost in time-to-first-word
-    # - it front-loads 10-25 seconds before the model writes anything - and the
-    # whole product promise is that audio starts almost immediately. Turn it on
-    # per request with `search=1`, for a question that genuinely needs today's
-    # facts and where the listener will accept waiting for them.
+    # auto | never | always.
+    #
+    # `auto` reads the question: one that names a moving target - "latest",
+    # "today", "score", "breaking" - gets researched and waits for it; one that
+    # does not is answered from what the model already knows, immediately.
+    # Search front-loads 10-25 seconds before the first word, so paying that on
+    # every episode meant paying it mostly for questions that did not need it.
+    # A request can still say search=1 or search=0 explicitly and win.
+    search_mode: str = field(
+        default_factory=lambda: (
+            "always" if os.environ.get("ENABLE_WEB_SEARCH", "") in ("1", "true", "True")
+            else os.environ.get("SEARCH_MODE", "auto").lower()
+        )
+    )
+    #: Kept so existing callers and the health report still have a boolean to
+    #: read; "does this specific episode search" is now a per-question answer.
     enable_web_search: bool = field(
-        default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "0") not in ("0", "false", "False")
+        default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "0") not in ("0", "false", "False", "")
     )
-    # Each search adds seconds before the first researched sentence, and the
-    # listener hears that wait as preamble. Three is enough for a briefing.
-    max_web_searches: int = _env_int("MAX_WEB_SEARCHES", 3)
+    max_web_searches: int = _env_int("MAX_WEB_SEARCHES", 3)  # a ceiling, not a target
 
-    # --- Cold open --------------------------------------------------------
-    # A small, fast model writes one framing sentence with no tools while the
-    # main model is still researching, so speech starts almost immediately.
-    # OFF. The opener was prompted to state no facts, which made it filler by
-    # construction, and covering a long research wait meant 15-30 seconds of it.
-    # Nobody wants that. The interface now shows an honest loading state instead.
-    # ENABLE_COLD_OPEN=1 brings it back.
-    enable_cold_open: bool = field(
-        default_factory=lambda: os.environ.get("ENABLE_COLD_OPEN", "0") not in ("0", "false", "False")
-    )
-    cold_open_model: str = field(
-        default_factory=lambda: os.environ.get("COLD_OPEN_MODEL", "claude-haiku-4-5")
-    )
-    # Several short framing sentences, released only as long as the main script
-    # is still being written. Unused ones are discarded, so this is an upper
-    # bound on preamble, not a fixed cost.
-    cold_open_words: int = _env_int("COLD_OPEN_WORDS", 70)
-    # Longest the opener may keep talking while waiting for the main script.
-    # Past this a gap is preferable to endless preamble.
-    # Wall-clock ceiling on the opener. Long enough to cover a researched call
-    # (web search plus a slow model can run past 30s); past it a gap is better
-    # than talking indefinitely about nothing.
-    cold_open_max_seconds: float = _env_float("COLD_OPEN_MAX_SECONDS", 60.0)
-    # How long to let the main script fail before any opener is spoken, so a
-    # bad key produces a clean error rather than an intro to nothing.
-    cold_open_grace: float = _env_float("COLD_OPEN_GRACE", 0.35)
-
-    # --- Shared script cache ---------------------------------------------
     cache_enabled: bool = field(
         default_factory=lambda: os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")
     )

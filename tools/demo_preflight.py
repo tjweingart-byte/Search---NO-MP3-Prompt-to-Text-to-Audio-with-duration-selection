@@ -75,21 +75,15 @@ def main() -> int:
 
     if live:
         say(f"  writing    {BOLD}live{RESET}  ·  {settings.model}  ·  "
-            f"search {'on' if settings.enable_web_search else 'off by default'}")
+            f"search {settings.search_mode}")
         # The two settings that put seconds in front of the first word. Both
         # are off by default and both have been turned on by accident, by an
         # .env copied from an example that disagreed with the code.
-        if settings.enable_cold_open:
-            say(f"  {BOLD}COLD OPEN IS ON{RESET} - you will hear a few seconds of "
-                f"filler, then dead air")
-            say(f"{DIM}             until the real script arrives. ENABLE_COLD_OPEN=0 "
-                f"to stop it.{RESET}")
-            worst = max(worst, 1)
-        if settings.enable_web_search:
-            say(f"  {BOLD}WEB SEARCH IS ON BY DEFAULT{RESET} - every episode waits "
-                f"10-25s before")
-            say(f"{DIM}             the first word. ENABLE_WEB_SEARCH=0; ask for it "
-                f"per request instead.{RESET}")
+        if settings.search_mode == "always":
+            say(f"  {BOLD}SEARCH_MODE=always{RESET} - every episode waits 10-25s "
+                f"before the first word,")
+            say(f"{DIM}             including the ones that did not need it. "
+                f"SEARCH_MODE=auto reads the question.{RESET}")
             worst = max(worst, 1)
         # Which file the key came from, because "a key is set" has been the
         # wrong answer to "is the right key set" more than once here.

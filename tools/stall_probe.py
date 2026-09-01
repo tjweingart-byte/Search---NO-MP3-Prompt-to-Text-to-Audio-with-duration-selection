@@ -72,7 +72,7 @@ def run(minutes: int, seconds_to_watch: float) -> int:
         print("playwright is not installed:  pip install playwright", file=sys.stderr)
         return 2
 
-    env = dict(os.environ, PORT=str(PORT), FAM_IGNORE_DOTENV="1", ENABLE_COLD_OPEN="0")
+    env = dict(os.environ, PORT=str(PORT), FAM_IGNORE_DOTENV="1")
     server = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(PORT)],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

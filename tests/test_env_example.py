@@ -54,22 +54,29 @@ def defaults(monkeypatch):
 @pytest.mark.parametrize("key, attr", [
     ("MODEL", "model"),
     ("EFFORT", "effort"),
+    ("SEARCH_MODE", "search_mode"),
 ])
 def test_text_settings_match(defaults, key, attr):
     assert example_values()[key] == str(getattr(defaults, attr))
 
 
-@pytest.mark.parametrize("key, attr", [
-    ("ENABLE_WEB_SEARCH", "enable_web_search"),
-    ("ENABLE_COLD_OPEN", "enable_cold_open"),
-])
-def test_the_latency_switches_are_off_in_both_places(defaults, key, attr):
-    """These two are the one-sentence spec expressed as settings."""
-    assert getattr(defaults, attr) is False, f"{attr} default drifted"
-    assert example_values()[key] == "0", (
-        f"{key}=1 in .env.example: copying it puts seconds in front of the "
-        f"first word, which is the one thing the product refuses"
+def test_search_is_not_on_for_every_episode(defaults):
+    """The one-sentence spec expressed as a setting. `always` pays 10-25s on
+    every episode including the ones that never needed it."""
+    assert defaults.search_mode == "auto", "the default search mode drifted"
+    assert example_values()["SEARCH_MODE"] == "auto", (
+        "SEARCH_MODE in .env.example is not auto: copying it puts seconds in "
+        "front of the first word, which is the one thing the product refuses"
     )
+
+
+def test_the_filler_setting_is_gone_from_both(defaults):
+    """The cold open was removed, not switched off. A setting left behind is
+    an invitation to turn it back on."""
+    assert not hasattr(defaults, "enable_cold_open")
+    assert "ENABLE_COLD_OPEN" not in example_values()
+    assert "COLD_OPEN" not in (pathlib.Path(__file__).resolve().parent.parent
+                               / ".env.example").read_text()
 
 
 def test_no_setting_in_the_example_disagrees_with_the_code(defaults):

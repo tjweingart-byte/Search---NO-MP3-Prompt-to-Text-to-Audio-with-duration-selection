@@ -19,19 +19,6 @@ from pipeline import GenerationStats, PodcastPipeline  # noqa: E402
 from script_generator import build_prompt, clean_for_speech, now_line, plan_episode  # noqa: E402
 from tts import DebugEngine  # noqa: E402
 
-
-@pytest.fixture
-def with_opener(monkeypatch):
-    """The opener is opt-in now; these tests exercise that path deliberately."""
-    import dataclasses
-
-    import pipeline as pipeline_module
-    import script_generator as sg
-
-    patched = dataclasses.replace(settings, enable_cold_open=True, allow_topups=True)
-    monkeypatch.setattr(pipeline_module, "settings", patched)
-    monkeypatch.setattr(sg, "settings", patched)
-    return patched
 from cache import (  # noqa: E402
     MemoryScriptCache,
     SqliteScriptCache,
@@ -148,14 +135,34 @@ def test_a_long_script_is_trimmed_to_the_selected_length():
     assert stats.truncated, "a long script should have been trimmed"
 
 
-def test_a_short_script_ends_early_rather_than_being_padded(with_opener):
+def test_a_short_script_ends_early_rather_than_being_padded(monkeypatch):
     """Deliberate change: the length is a ceiling, not a quota.
 
     Padding a script that has run out of substance produces exactly the filler
     the opener was removed for. With top-ups enabled the old behaviour is still
-    available, and still lands on the clock.
+    available, and still lands on the clock - so this pins both directions.
     """
     plan = plan_episode("a question", 5)
+
+    # Default: no padding. A short script is a short episode.
+    lean = PodcastPipeline(generator=FakeGenerator(0.7), engine=DebugEngine(), cache=None)
+    lean_stats = GenerationStats()
+
+    async def run_lean():
+        async for _ in lean.stream_pcm(plan, lean_stats):
+            pass
+
+    asyncio.run(run_lean())
+    assert lean_stats.topups == 0, "padding is on by default again"
+    assert lean_stats.audio_seconds < plan.target_seconds - 10, "it padded anyway"
+
+    # ALLOW_TOPUPS=1 restores the old behaviour, and it still lands on the clock.
+    import dataclasses
+
+    import pipeline as pipeline_module
+
+    monkeypatch.setattr(pipeline_module, "settings",
+                        dataclasses.replace(settings, allow_topups=True))
     pipeline = PodcastPipeline(generator=FakeGenerator(0.7), engine=DebugEngine(), cache=None)
     stats = GenerationStats()
 
@@ -445,150 +452,22 @@ def _episode(delay, minutes=2):
     return stats, opener_spoken
 
 
-def test_opener_grows_to_cover_slow_research(with_opener):
-    """The listener must never run out of audio while the script is written."""
-    _, quick = _episode(0.0)
-    _, slow = _episode(3.0)
-    assert len(quick) < len(slow), "a slower model should get more introduction"
-    assert len(slow) > 1, "one sentence cannot cover a multi-second wait"
 
 
-def test_no_opener_sentence_is_written_and_then_thrown_away(with_opener):
-    """Every sentence a fill delivers must reach the listener.
-
-    Starting a refill used to rebind the single `opener` name, orphaning
-    whatever the previous call had not yet queued. Those sentences were
-    written, paid for and dropped - and because they were dropped, the buffer
-    ran dry and the listener heard the gap while a replacement was fetched.
-    Measured on a 30s script: 52 sentences written, 4 spoken.
-    """
-
-    class CountingOpener(SlowResearchGenerator):
-        """Delivers slowly enough that a refill fires mid-delivery."""
-
-        written: list = []
-
-        async def cold_open(self, plan, spoken_so_far=""):
-            for i, sentence in enumerate(OPENER_SENTENCES):
-                if i:
-                    await asyncio.sleep(0.05)
-                self.written.append(sentence)
-                yield sentence
-
-    CountingOpener.written = []
-    plan = plan_episode("a topic", 2)
-    stats = GenerationStats()
-    pipeline = PodcastPipeline(
-        generator=CountingOpener(2.0), engine=DebugEngine(), cache=None
-    )
-
-    async def run():
-        async for _ in pipeline.stream_pcm(plan, stats):
-            pass
-
-    asyncio.run(run())
-    spoken = [s for s in stats.script if s.startswith("Opener")]
-    written = len(CountingOpener.written)
-    # Some waste is legitimate: when the script arrives mid-fill, the rest of
-    # that call and whatever is still buffered go unspoken. That is bounded by
-    # roughly one fill plus one buffer - not by most of what was bought.
-    allowance = 2 * len(OPENER_SENTENCES)
-    assert written, "the opener never ran"
-    assert len(spoken) >= written - allowance, (
-        f"{written} opener sentences written, only {len(spoken)} spoken - "
-        "fills in flight are being orphaned, or refetched before they finish"
-    )
 
 
-def test_a_refill_continues_what_the_listener_already_heard(with_opener):
-    """Fills used to be independent calls with an identical prompt.
-
-    A slow script then produced several openings in a row, each starting the
-    episode again, which is what made the run-up read as disjointed.
-    """
-    seen: list = []
-
-    class ContextOpener(SlowResearchGenerator):
-        async def cold_open(self, plan, spoken_so_far=""):
-            seen.append(spoken_so_far)
-            for sentence in OPENER_SENTENCES:
-                yield sentence
-
-    plan = plan_episode("a topic", 2)
-    stats = GenerationStats()
-    pipeline = PodcastPipeline(
-        generator=ContextOpener(3.0), engine=DebugEngine(), cache=None
-    )
-
-    async def run():
-        async for _ in pipeline.stream_pcm(plan, stats):
-            pass
-
-    asyncio.run(run())
-    assert len(seen) > 1, "a 3s wait should have needed at least one refill"
-    assert seen[0] == "", "the first call has nothing to continue from"
-    assert any(later.strip() for later in seen[1:]), (
-        "a refill was asked to open the episode again with no idea what the "
-        "listener had already been told"
-    )
 
 
-def test_an_opener_that_predates_the_context_argument_still_runs(with_opener):
-    """DemoGenerator takes the plan alone; that must not break the episode."""
-
-    class OldStyle(SlowResearchGenerator):
-        async def cold_open(self, plan):          # no spoken_so_far
-            for sentence in OPENER_SENTENCES:
-                yield sentence
-
-    plan = plan_episode("a topic", 2)
-    stats = GenerationStats()
-    pipeline = PodcastPipeline(generator=OldStyle(2.0), engine=DebugEngine(), cache=None)
-
-    async def run():
-        async for _ in pipeline.stream_pcm(plan, stats):
-            pass
-
-    asyncio.run(run())
-    assert [s for s in stats.script if s.startswith("Opener")], "no opener was spoken"
 
 
-def test_opener_is_not_wasted_when_research_is_fast(with_opener):
-    _, quick = _episode(0.0)
-    assert len(quick) <= 2, "fast research should cut over almost immediately"
-    assert len(quick) >= 1, "something should still open the episode"
 
 
 @pytest.mark.parametrize("delay", [0.0, 1.0, 3.0])
-def test_duration_holds_whatever_the_research_latency(delay, with_opener):
+def test_duration_holds_whatever_the_research_latency(delay):
     stats, _ = _episode(delay)
     assert abs(stats.audio_seconds - 120) <= 3.0
 
 
-def test_no_opener_is_spoken_when_the_script_fails(with_opener):
-    """Never introduce an episode that is not coming."""
-
-    class Failing(SlowResearchGenerator):
-        async def stream_sentences(self, plan, notes=None):
-            raise RuntimeError("model is down")
-            yield ""  # pragma: no cover
-
-    plan = plan_episode("a topic", 1)
-    stats = GenerationStats()
-    pipeline = PodcastPipeline(generator=Failing(0.0), engine=DebugEngine(), cache=None)
-
-    async def run():
-        async for _ in pipeline.stream_pcm(plan, stats):
-            pass
-
-    with pytest.raises(RuntimeError, match="model is down"):
-        asyncio.run(run())
-    assert stats.sentences == 0
-
-
-# --------------------------------------------------------------------------
-# Time scope, follow-up scope, and opener refill
-# --------------------------------------------------------------------------
 
 
 def test_the_script_is_told_what_time_it_is():
@@ -622,30 +501,6 @@ class ShortOpenerGenerator(SlowResearchGenerator):
         yield "Only one framing sentence."
 
 
-def test_the_opener_is_extended_rather_than_running_into_silence(with_opener):
-    """The reported bug: opener ends, script is not ready, listener hears nothing."""
-    plan = plan_episode("a topic", 3)
-    stats = GenerationStats()
-    pipeline = PodcastPipeline(
-        generator=ShortOpenerGenerator(4.0), engine=DebugEngine(), cache=None
-    )
-
-    async def run():
-        async for _ in pipeline.stream_pcm(plan, stats):
-            pass
-
-    asyncio.run(run())
-    openers = [s for s in stats.script if s.startswith("Only one")]
-    assert len(openers) > 1, "a one-sentence opener must be refilled, not left to run dry"
-
-
-# --------------------------------------------------------------------------
-# The opener must never let the stream fall silent
-#
-# Regression for the reported "consistent 5-7 second pause". The opener used to
-# get a fixed number of top-ups, covering roughly twenty seconds; a researched
-# call can take longer, and the listener heard the difference as dead air.
-# --------------------------------------------------------------------------
 
 
 class ShortOpenerSlowBody:
@@ -683,62 +538,14 @@ def _run_with_slow_body(delay, minutes=3):
     return stats, generator
 
 
-@pytest.mark.parametrize("delay", [0.5, 2.0])
-def test_the_stream_never_starves_while_the_script_is_written(delay, with_opener):
-    """Audio produced must stay ahead of the wall clock the whole way."""
-    stats, _ = _run_with_slow_body(delay)
-    assert not stats.starved, (
-        f"the listener heard silence: min headroom {stats.min_headroom:.1f}s"
-    )
-    assert stats.min_headroom > 0
 
 
-def test_the_opener_is_topped_up_when_one_batch_is_not_enough(with_opener):
-    """A single short opener cannot cover a slow script, so more is fetched."""
-    stats, generator = _run_with_slow_body(2.0)
-    assert generator.opener_calls > 1, "the opener should have been refilled"
 
 
-def test_a_fast_script_wastes_no_preamble(with_opener):
-    """The opener is paced to the listener, so a quick script uses almost none."""
-    stats, generator = _run_with_slow_body(0.0)
-    assert generator.opener_calls == 1, "no top-up should be needed"
-    openers = [s for s in stats.script if s.startswith("One short")]
-    assert len(openers) <= 2, f"spoke {len(openers)} opener sentences for a fast script"
 
 
-def test_duration_still_lands_despite_a_long_opener(with_opener):
-    stats, _ = _run_with_slow_body(2.0)
-    assert abs(stats.audio_seconds - 180) <= 4.0
 
 
-# --------------------------------------------------------------------------
-# The default: no filler
-#
-# The opener was prompted to state no facts, which made it filler by
-# construction; covering a long research wait meant 15-30 seconds of it. And
-# padding a short script back to length reintroduces the same problem from the
-# other end. Both are now off by default.
-# --------------------------------------------------------------------------
-
-
-def test_no_opener_is_spoken_by_default():
-    """Nothing plays until the real briefing does."""
-    assert settings.enable_cold_open is False
-
-    plan = plan_episode("a topic", 2)
-    stats = GenerationStats()
-    generator = ShortOpenerSlowBody(0.2)
-    pipeline = PodcastPipeline(generator=generator, engine=DebugEngine(), cache=None)
-
-    async def run():
-        async for _ in pipeline.stream_pcm(plan, stats):
-            pass
-
-    asyncio.run(run())
-    assert generator.opener_calls == 0, "the opener must not be called at all"
-    assert not any(s.startswith("One short framing") for s in stats.script)
-    assert stats.cold_open is False
 
 
 def test_a_short_script_is_not_padded_back_to_length():

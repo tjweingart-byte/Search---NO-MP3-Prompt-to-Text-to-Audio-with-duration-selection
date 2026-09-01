@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from anthropic_client import build_async_client, describe_http_version, http2_enabled
-from cache import MemoryScriptCache, SqliteScriptCache, build_cache
+from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_words
 from demo_script import DemoGenerator
 from config import describe_key, settings
 from pipeline import GenerationStats, NotCached, PodcastPipeline
@@ -270,10 +270,10 @@ async def health() -> dict:
         "min_minutes": settings.min_minutes,
         "max_minutes": settings.max_minutes,
         "tts": engine_report(),
-        "cold_open": {
-            "enabled": settings.enable_cold_open,
-            "model": settings.cold_open_model,
-        },
+        # How the listener is told what is happening while they wait. There is
+        # no filler any more, so the interface has to be honest instead.
+        "search_mode": settings.search_mode,
+        "research_words": sorted(research_words()),
         "cache": _cache_report(),
         "voice_store": VOICE_STORE["dir"],
     }
