@@ -2559,3 +2559,66 @@ Two smoke behaviours now pin it: "Searching shows the loading screen" and
 and never routes through `generate()`, because it replays cached episodes and
 refuses to generate. It has its own turn animation; a loading screen there
 would promise work that is not happening.
+
+## 59. WellSaid added as an alternate voice, and the two ways that could go wrong quietly
+
+Two specific WellSaid voices - Chase J (speaker 35) and Kai M (speaker 32) -
+wanted A/B testing against Piper inside the real product rather than in
+isolation. The engine interface made this small: `TTSEngine.synth(text, wpm,
+voice) -> PCM` plus a `voice:` id prefix that `engine_for_voice()` routes on,
+so a new engine is a new class and nothing in the script pipeline changes.
+`pipeline.py`, `script_generator.py`, search, myFAM and the player are all
+untouched.
+
+**Verified rather than assumed**, since the brief asked for the current API:
+`POST https://api.wellsaidlabs.com/v1/tts/stream`, `X-Api-Key` header,
+`{"text", "speaker_id"}` body, ~1000 characters per request. Their docs site
+is unreachable from the build container, so this came from their published
+reference and their own example repo - which is also where `WELLSAID_API_KEY`
+comes from as the variable name. **Unconfirmed anywhere reachable: whether they
+serve WAV as well as MP3.** So the request asks for WAV and accepts MP3, reads
+whichever actually arrived, and logs it. WAV needs no decoder; MP3 goes through
+ffmpeg in memory, and if ffmpeg is missing the error says so rather than
+producing silence.
+
+**Two failures this could have shipped with, both caught by writing the test
+first:**
+
+1. **A paid engine became the default.** `default_voice()` returned
+   `list_voices()[0]`. On a machine with no Piper installed - which is most
+   fresh containers - WellSaid was first, so every listener would have been
+   billed per character without anyone choosing it. `default_voice()` now skips
+   paid engines entirely and falls back to the placeholder tone, which
+   announces itself as broken. A surprise bill does not.
+
+2. **It would have silently become Piper.** `engine_for_voice()` falls back to
+   the best available engine when a voice is unavailable, which is right for a
+   Piper voice that was uninstalled - the listener still hears their episode.
+   It is exactly wrong here: the only reason to select WellSaid is to hear
+   WellSaid, so a fallback means judging one engine by another's output. It now
+   raises with the reason and the command that fixes it.
+
+**Sample rate had to be decided, not discovered.** `app.py` writes the stream
+header from `engine.sample_rate` before the first synthesis, so the engine
+cannot wait to be told what WellSaid sends. Everything is resampled on arrival
+to the app's own rate, which is fixed and knowable.
+
+**Chunking is mostly theoretical and still built.** The pipeline already
+synthesises one sentence at a time, so the 1000-character ceiling is reached
+only by an unusually long one. When it is, the split runs sentences, then
+clauses, then word boundaries - never mid-word - and the near-silence at each
+end of a chunk is trimmed before joining, because independently rendered chunks
+each carry their own lead-in and tail and concatenating them untrimmed stacks
+into a pause in the middle of a sentence. Single-chunk audio is not trimmed:
+that would eat the gap the pipeline puts *between* sentences.
+
+**What WellSaid cannot do:** there is no speaking-rate parameter, so the pacing
+controller's wpm is advisory. Logged once per process rather than per sentence.
+Duration is still a ceiling and over-runs are still trimmed.
+
+**Two test bugs of my own, the project's recurring kind.** `test_empty_text`
+had no key fixture and revealed a real ordering bug - the key was checked
+before the empty-text check, so synthesising a blank line raised instead of
+costing nothing. And patching `ws.asyncio.sleep` with a lambda that calls
+`asyncio.sleep` patches the very function it then calls: the retry recursed
+until the stack ended.

@@ -2097,7 +2097,7 @@
       if(fill) fill.style.width = "0%";
       if(knob) knob.style.left = "0%";
     })();
-    document.getElementById("speedLenPill").textContent = selectedSpeed + " · " + shownMinutes + " min";
+    document.getElementById("speedLenPill").textContent = pillText(shownMinutes);
 
     // album context, for scroll-to-next
     var hint = document.getElementById("nextHint");
@@ -2315,9 +2315,18 @@
   // ---------------- Length dropdown ----------------
   var SPEED_OPTIONS = ["1x", "1.2x", "1.5x", "2x"];
   var selectedSpeed = "1.2x";
+  // The pill names the voice as well as the speed and length. Comparing two
+  // engines is only possible if you can see which one is speaking without
+  // opening a menu to check - and "did that switch actually take" is the
+  // first question anyone asks during a voice test.
+  function pillText(minutes){
+    var voice = voiceLabel(selectedVoice);
+    return selectedSpeed + " · " + (minutes || selectedLengthMinutes) + " min"
+         + (voice && voice !== "Default" ? " · " + voice : "");
+  }
   function updateSpeedLenPillText(){
     var pill = document.getElementById("speedLenPill");
-    if(pill) pill.textContent = selectedSpeed + " · " + selectedLengthMinutes + " min";
+    if(pill) pill.textContent = pillText();
   }
   function openLengthMenu(){
     var items = [];
@@ -2378,6 +2387,7 @@
     selectedVoice = v.default || null;
     var el = document.getElementById("voiceModalVal");
     if(el) el.textContent = voiceLabel(selectedVoice);
+    updateSpeedLenPillText();
   }).catch(function(){});
 
   function openVoiceMenu(){
@@ -2390,6 +2400,7 @@
           selectedVoice = v.id;
           var el = document.getElementById("voiceModalVal");
           if(el) el.textContent = v.label;
+          updateSpeedLenPillText();
           // The voice changes the audio but not the script, so re-generating
           // reuses the cached script: no model call, no cost, near-instant.
           var onPlayer = document.querySelector(".screen.active")

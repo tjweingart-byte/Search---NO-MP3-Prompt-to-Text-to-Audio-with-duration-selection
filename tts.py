@@ -462,9 +462,15 @@ def build_engine(preference: str | None = None) -> TTSEngine:
         "espeak": EspeakEngine,
         "say": SayEngine,
         "debug": DebugEngine,
+        # Available by name only. It is deliberately absent from the automatic
+        # preference order below: a hosted voice bills per character, so it has
+        # to be asked for rather than arrived at.
+        "wellsaid": _wellsaid_engine,
     }
     if choice in explicit:
         cls = explicit[choice]
+        if cls is _wellsaid_engine:
+            cls = _wellsaid_engine()
         if not cls.available():
             raise TTSUnavailable(f"TTS engine '{choice}' is not installed or not configured")
         return cls()
@@ -478,12 +484,31 @@ def build_engine(preference: str | None = None) -> TTSEngine:
     return DebugEngine()
 
 
-ENGINES = {
+def _wellsaid_engine():
+    """Imported late: wellsaid.py imports this module for its base class."""
+    from wellsaid import WellSaidEngine
+
+    return WellSaidEngine
+
+
+class _LazyEngines(dict):
+    """`ENGINES` with WellSaid resolved on first use, to break the import
+    cycle without moving anything that already worked."""
+
+    def __missing__(self, key):
+        if key == "wellsaid":
+            cls = _wellsaid_engine()
+            self[key] = cls
+            return cls
+        raise KeyError(key)
+
+
+ENGINES = _LazyEngines({
     "piper": PiperEngine,
     "say": SayEngine,
     "espeak": EspeakEngine,
     "debug": DebugEngine,
-}
+})
 
 
 def list_voices() -> list[Voice]:
@@ -493,16 +518,35 @@ def list_voices() -> list[Voice]:
     entry is what a listener gets by default.
     """
     voices: list[Voice] = []
-    for name in ("piper", "say", "espeak"):
+    # Piper first, so default_voice() is unchanged by WellSaid being present:
+    # adding a paid hosted voice must not quietly become what everyone hears.
+    for name in ("piper", "wellsaid", "say", "espeak"):
         voices.extend(ENGINES[name].voices())
     if not voices:
         voices.extend(DebugEngine.voices())
     return voices
 
 
+#: Engines that must be chosen deliberately and can never be arrived at.
+#: WellSaid bills per character, so "nothing else was installed" is not a
+#: reason to start spending: on a machine without Piper it would otherwise
+#: become the default and every listener would be charged for, without anyone
+#: having asked for it.
+PAID_ENGINES = {"wellsaid"}
+
+
 def default_voice() -> str | None:
-    voices = list_voices()
-    return voices[0].id if voices else None
+    """What a listener gets without choosing. Never a paid engine.
+
+    If the only voices present are paid ones, the placeholder tone wins -
+    it announces itself as a failure, which is the correct outcome, where a
+    surprise bill is not.
+    """
+    for voice in list_voices():
+        if voice.engine not in PAID_ENGINES:
+            return voice.id
+    fallback = DebugEngine.voices()
+    return fallback[0].id if fallback else None
 
 
 def engine_for_voice(voice: str | None) -> TTSEngine:
@@ -517,6 +561,16 @@ def engine_for_voice(voice: str | None) -> TTSEngine:
         cls = ENGINES.get(name)
         if cls is not None and cls.available():
             return cls()
+        # Falling back is right for a local voice that has been uninstalled -
+        # the listener still hears their episode. It is wrong for WellSaid,
+        # which is only ever chosen in order to hear WellSaid: silently
+        # substituting Piper would mean judging one engine by another's output.
+        if name == "wellsaid":
+            raise TTSUnavailable(
+                "The WellSaid voices need WELLSAID_API_KEY to be set. "
+                "Run: python setup_wellsaid.py   (nothing was played, rather "
+                "than falling back to Piper.)"
+            )
         log.warning("voice %r is unavailable; falling back", voice)
     return build_engine()
 
@@ -543,6 +597,7 @@ def engine_report() -> dict:
         "piper": PiperEngine.available(),
         "espeak": EspeakEngine.available(),
         "say": SayEngine.available(),
+        "wellsaid": ENGINES["wellsaid"].available(),
         "debug": True,
         "voices": [v.as_dict() for v in list_voices()],
         "default_voice": default_voice(),
