@@ -40,6 +40,7 @@ fi
 
 step "Phone preview"
 $PY preview/build_preview.py
+$PY tools/build_loading_demo.py
 # Skipping the browser test silently is the failure this project has paid for
 # twice: the run still ends "all checks passed" having never opened a browser.
 # Every skip announces itself.
