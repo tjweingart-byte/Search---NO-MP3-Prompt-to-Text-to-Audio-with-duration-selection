@@ -262,6 +262,52 @@ def main() -> int:
             assert lit == total, f"only {lit} of {total} echo controls showed the echoed state"
             assert still == 0, f"{still} echo control(s) stayed lit after un-echoing"
 
+        def loading_screen_on_a_search():
+            """The listener must be able to tell the search was received.
+
+            This is the check the old code could not have passed: the overlay
+            was chosen by screen name and the home screen's id did not exist,
+            so pressing search showed the search page again and nothing else.
+            """
+            page.evaluate("setTab('home')")
+            page.wait_for_timeout(300)
+            assert not page.evaluate(
+                """() => document.getElementById("famLoading").classList.contains("active")"""
+            ), "the loading screen was showing before anything was asked for"
+
+            page.fill("#searchInput", "what happened with the fed today")
+            page.evaluate("runSearch()")
+            page.wait_for_timeout(400)
+            assert page.evaluate(
+                """() => document.getElementById("famLoading").classList.contains("active")"""
+            ), "pressing search showed no loading screen"
+
+            status = page.text_content("#famLoadingStatus") or ""
+            assert status.strip(), "the loading screen said nothing about what it was doing"
+            # PROBLEMS.md 55: the wait names itself. A brand animation that
+            # replaced that line would be the filler problem in a nicer font.
+            assert ("Writing" in status or "sources" in status
+                    or "sample script" in status or "rejected" in status), (
+                f"the loading screen does not say what it is waiting for: {status!r}"
+            )
+            page.evaluate("clearGenOverlay()")
+            page.wait_for_timeout(200)
+            assert not page.evaluate(
+                """() => document.getElementById("famLoading").classList.contains("active")"""
+            ), "the loading screen did not go away"
+
+        def loading_screen_covers_every_surface():
+            """One screen, not one per tab. Four overlays chosen by id is how
+            the home screen ended up with none."""
+            count = page.evaluate(
+                """() => document.querySelectorAll(".fam-loading").length"""
+            )
+            assert count == 1, f"expected one loading screen, found {count}"
+            leftovers = page.evaluate(
+                """() => document.querySelectorAll(".generating").length"""
+            )
+            assert leftovers == 0, f"{leftovers} old per-screen overlay(s) survive"
+
         def explore():
             page.evaluate("openExplore()")
             page.wait_for_timeout(2500)
@@ -278,6 +324,8 @@ def main() -> int:
         check("Go Deeper titles are not cut off", go_deeper_titles_fit)
         check("Go Deeper fills for a new listener", go_deeper_fills_for_a_new_listener)
         check("A file can be attached to a search", attachments)
+        check("Searching shows the loading screen", loading_screen_on_a_search)
+        check("One loading screen serves every surface", loading_screen_covers_every_surface)
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)

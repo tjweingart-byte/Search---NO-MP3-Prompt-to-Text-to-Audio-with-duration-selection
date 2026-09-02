@@ -657,7 +657,68 @@
   .next-hint svg{ animation:bob 1.4s infinite ease-in-out; }
   @keyframes bob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-3px); } }
 
-  /* -------- generating overlay -------- */
+  /* -------- the loading screen -------- */
+  /* Shown for every wait on every surface: a search, a myFAM tile, a DailyFAM
+     mix. The chevrons of the FAM mark rise and repeat; the dots fill one at a
+     time and reset. It says "received, and working" without claiming to know
+     how long - the line underneath does that honestly. */
+  .fam-loading{
+    position:absolute; inset:0; z-index:60; border-radius:34px;
+    background:
+      radial-gradient(420px 300px at 50% 42%, rgba(224,181,99,0.10), transparent 70%),
+      #0A0912;
+    display:none; flex-direction:column; align-items:center; justify-content:center; gap:22px;
+    padding:0 32px; text-align:center;
+  }
+  .fam-loading.active{ display:flex; }
+  .fam-loading-wm{ display:flex; align-items:center; gap:1px; color:var(--copper); opacity:.92; }
+  .fam-loading-wm .wm-glyph, .fam-loading-wm .wm-a{ width:26px; height:26px; display:block; }
+  .fam-loading-wm svg{ width:100%; height:100%; display:block; }
+
+  .fam-loading-mark{ width:96px; height:88px; color:var(--copper); margin-top:4px; }
+  .fam-loading-mark svg{ width:100%; height:100%; overflow:visible; }
+  .fam-loading-mark .chev{
+    opacity:0; transform-origin:50% 50%;
+    filter:drop-shadow(0 0 9px rgba(224,181,99,0.55));
+    animation:famRise 2.4s cubic-bezier(.4,0,.2,1) infinite;
+  }
+  .fam-loading-mark .c1{ animation-delay:0s; }
+  .fam-loading-mark .c2{ animation-delay:.22s; }
+  .fam-loading-mark .c3{ animation-delay:.44s; }
+  @keyframes famRise{
+    0%   { opacity:0; transform:translateY(11px); }
+    20%  { opacity:1; transform:translateY(0); }
+    62%  { opacity:1; transform:translateY(0); }
+    100% { opacity:0; transform:translateY(-11px); }
+  }
+
+  .fam-loading-word{
+    font-family:'Fraunces', serif; font-style:italic; font-size:21px;
+    color:var(--copper); letter-spacing:0.01em;
+  }
+  .fam-loading-dots{ display:flex; gap:9px; }
+  .fam-loading-dots i{
+    width:8px; height:8px; border-radius:50%; background:var(--copper);
+    opacity:.22; animation:famDot 2.4s linear infinite;
+  }
+  .fam-loading-dots i:nth-child(2){ animation-delay:.24s; }
+  .fam-loading-dots i:nth-child(3){ animation-delay:.48s; }
+  .fam-loading-dots i:nth-child(4){ animation-delay:.72s; }
+  .fam-loading-dots i:nth-child(5){ animation-delay:.96s; }
+  @keyframes famDot{
+    0%   { opacity:.22; transform:scale(.78); }
+    9%   { opacity:1;   transform:scale(1); }
+    88%  { opacity:1;   transform:scale(1); }
+    100% { opacity:.22; transform:scale(.78); }
+  }
+
+  /* Motion is decoration here; the words are the information. Anyone who has
+     asked for less of it still gets the full status line. */
+  @media (prefers-reduced-motion: reduce){
+    .fam-loading-mark .chev{ animation:none; opacity:1; }
+    .fam-loading-dots i{ animation:none; opacity:.7; }
+  }
+
   .demo-badge{
     display:none; align-items:center; gap:5px;
     font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.08em;
@@ -666,18 +727,10 @@
   }
   body.demo-mode .demo-badge{ display:inline-flex; }
 
-  .generating{
-    position:absolute; inset:0; background:var(--bg); z-index:30;
-    display:none; align-items:center; justify-content:center; flex-direction:column; gap:14px;
-    border-radius:34px;
+  .gen-text{
+    font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--text-muted);
+    line-height:1.5; max-width:250px;
   }
-  .generating.active{ display:flex; }
-  .gen-dots{ display:flex; gap:7px; }
-  .gen-dots span{ width:9px; height:9px; border-radius:50%; background:var(--copper); animation:pulse 1s infinite ease-in-out; }
-  .gen-dots span:nth-child(2){ animation-delay:.15s; }
-  .gen-dots span:nth-child(3){ animation-delay:.3s; }
-  @keyframes pulse{ 0%,80%,100%{ transform:scale(0.6); opacity:.5; } 40%{ transform:scale(1); opacity:1; } }
-  .gen-text{ font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--text-muted); }
 
   /* -------- toast -------- */
   .toast{
@@ -756,6 +809,36 @@
         <div class="fam-logo" style="padding:0;" aria-label="FAM">
           <span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.55 4.55 12.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V9.2A3.2 3.2 0 0 1 9.2 6H16"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.55 4.55 16.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.55 4.55 14.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span>
         </div>
+      </div>
+
+      <!-- ============ LOADING ============
+           One screen for every wait, deliberately. There used to be a
+           .generating overlay per screen chosen by id, and the id for the home
+           screen ("gen-home") did not exist - so a search from the search box,
+           the single most common action in the app, showed nothing at all and
+           the listener could not tell whether it had been received. An overlay
+           you have to pick is an overlay you can forget to make. -->
+      <div class="fam-loading" id="famLoading" role="status" aria-live="polite">
+        <div class="fam-loading-wm" aria-label="FAM">
+          <span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.55 4.55 12.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V9.2A3.2 3.2 0 0 1 9.2 6H16"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.55 4.55 16.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.55 4.55 14.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span>
+        </div>
+
+        <div class="fam-loading-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 44" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+            <path class="chev c1" d="M6 38l18-16 18 16"/>
+            <path class="chev c2" d="M6 26l18-16 18 16"/>
+            <path class="chev c3" d="M6 14l18-16 18 16"/>
+          </svg>
+        </div>
+
+        <div class="fam-loading-word">FAMiliarizing…</div>
+        <div class="fam-loading-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+
+        <!-- The honest wait, kept. PROBLEMS.md 55 removed the filler and put
+             this in its place: what it is waiting for, and how long it has
+             been. A brand animation that replaced it would be the same
+             mistake in a nicer font. -->
+        <div class="gen-text" id="famLoadingStatus">Writing your episode…</div>
       </div>
 
       <!-- ============ HOME ============ -->
@@ -891,7 +974,6 @@
           <div class="head-dots" onclick="openAlbumMenu()"><span></span><span></span><span></span></div>
         </div>
         <div class="scroll" id="detail-body"></div>
-        <div class="generating" id="gen-detail"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
       </section>
 
       <!-- ============ PLAYER ============ -->
@@ -927,7 +1009,6 @@
             <span class="pt-icon" id="ccIcon" onclick="toggleCC()"><span style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;">CC</span></span>
           </div>
         </div>
-        <div class="generating" id="gen-player"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
       </section>
 
       <!-- ============ PLAY ALL (segmented continuous player) ============ -->
@@ -962,7 +1043,6 @@
           <div class="pa-side" onclick="paSkip()"><div class="cc"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4l10 8-10 8V4zM19 5v14"/></svg></div><div class="lbl">Tap to skip topic</div></div>
         </div>
         <div class="speed-len-pill" id="paSpeedLenPill" style="margin:0 auto 16px; display:table;" onclick="toast('1x / 1.2x / 1.5x / 2x (demo)')">1.2× · 3 min</div>
-        <div class="generating" id="gen-playall"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
       </section>
 
       <!-- ============ DAILY FAM (Stories-style feed) ============ -->
@@ -1002,7 +1082,6 @@
             <span>swipe up for another</span>
           </div>
         </div>
-        <div class="generating" id="gen-explore"><div class="gen-dots"><span></span><span></span><span></span></div><div class="gen-text">FAMiliarizing you with this…</div></div>
         <div class="tabbar">
           <div class="tab" data-tab="myfam" onclick="openMyFamTab()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v10a4 4 0 004 4h8M6 3L4 5m2-2l2 2M14 13l4 4-4 4"/></svg></div><div class="lbl">myFAM</div></div>
           <div class="tab" data-tab="playfam" onclick="openPlayFAM()"><div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 5l6 7-6 7M13 5l6 7-6 7"/></svg></div><div class="lbl">DailyFAM</div></div>
@@ -1338,9 +1417,8 @@
                      + "the same built-in sample script describing how the audio works. It is not "
                      + "answering your search. Add your key to .env and restart for real briefings.";
       // Say so on the loading overlay too, where attention actually is.
-      Array.prototype.forEach.call(document.querySelectorAll(".generating .gen-text"), function(node){
-        node.textContent = "Playing the built-in sample script…";
-      });
+      var canned = document.getElementById("famLoadingStatus");
+      if(canned) canned.textContent = "Playing the built-in sample script…";
     } else if(h.credentials && h.credentials.state === "rejected"){
       // "Live" was a lie whenever the key did not work: the server had a key
       // configured, so it said live, and then every episode 502'd. The server
@@ -1351,9 +1429,8 @@
       el.textContent = "KEY REJECTED — " + h.credentials.detail
                      + "  Key in force: " + h.credentials.key
                      + ". Nothing will generate until this is fixed and the server restarted.";
-      Array.prototype.forEach.call(document.querySelectorAll(".generating .gen-text"), function(node){
-        node.textContent = "The server's API key was rejected…";
-      });
+      var rejected = document.getElementById("famLoadingStatus");
+      if(rejected) rejected.textContent = "The server's API key was rejected…";
     } else {
       el.style.color = "var(--sage)";
       el.textContent = "Live — briefings written by " + h.model + ", voice: " + h.tts.selected + ".";
@@ -1511,13 +1588,13 @@
       // and it is the input myFAM was asked to rank on.
       recordFamEvent("search", "", val);
       pendingFromSearch = true;
-      generate("_custom", "home");
+      generate("_custom");
       document.getElementById("searchInput").value = "";
       // The attachment belonged to that question. Leaving it on screen would
       // silently attach it to the next, unrelated one.
       clearAttachments();
     } else {
-      generate("spacex", "home");
+      generate("spacex");
     }
   }
 
@@ -1530,10 +1607,39 @@
 
   var genTicker = null;
 
+  function famLoadingEl(){ return document.getElementById("famLoading"); }
+
+  // The shortest time the loading screen may be on screen once it has been.
+  //
+  // Without a floor, a cache hit shows it for about three milliseconds - the
+  // smoke test measured 90ms to shown, 93ms to hidden. That is not a loading
+  // screen, it is a flicker, and it tells the listener less than showing
+  // nothing would. Below this the eye reads a glitch; above it, an intent.
+  var GEN_MIN_VISIBLE_MS = 450;
+  var genShownAt = 0;
+  var genHideTimer = null;
+
   function clearGenOverlay(){
+    // Immediate and unconditional: used when a new generation starts and when
+    // one fails. A failure is followed by a toast, and holding a loading
+    // screen over an error message would be its own small lie.
     if(genTimeout){ clearTimeout(genTimeout); genTimeout = null; }
     if(genTicker){ clearInterval(genTicker); genTicker = null; }
-    if(activeGenOverlay){ activeGenOverlay.classList.remove("active"); activeGenOverlay = null; }
+    if(genHideTimer){ clearTimeout(genHideTimer); genHideTimer = null; }
+    var el = famLoadingEl();
+    if(el) el.classList.remove("active");
+    activeGenOverlay = null;
+  }
+
+  function finishGenOverlay(){
+    // Audio has started. Hide the loading screen, but never so fast that it
+    // reads as a flash - see GEN_MIN_VISIBLE_MS.
+    var el = famLoadingEl();
+    if(!el || !el.classList.contains("active")){ clearGenOverlay(); return; }
+    var held = Date.now() - genShownAt;
+    if(held >= GEN_MIN_VISIBLE_MS){ clearGenOverlay(); return; }
+    if(genHideTimer) clearTimeout(genHideTimer);
+    genHideTimer = setTimeout(clearGenOverlay, GEN_MIN_VISIBLE_MS - held);
   }
 
   // The words that make a question a researched one. Served by /api/health from
@@ -1588,7 +1694,7 @@
   }
 
   function onGenerationStarted(){
-    clearGenOverlay();
+    finishGenOverlay();
     var activeId = document.querySelector(".screen.active") ? document.querySelector(".screen.active").id : "";
     if(activeId !== "screen-player"){ navigate("player"); }
   }
@@ -1598,13 +1704,15 @@
     toast(message || "Could not generate that briefing");
   }
 
-  function generate(key, overlayScreen, albumContext){
-    var overlayId = overlayScreen ? "gen-" + overlayScreen : (stack[stack.length-1] === "detail" ? "gen-detail" : "gen-home");
-    var overlay = document.getElementById(overlayId);
-    if(overlay) overlay.classList.add("active");
+  function generate(key, albumContext){
+    // One loading screen, whatever started the wait. This used to take a screen
+    // name and look up an overlay by id; the home screen's id did not exist, so
+    // a search - the commonest action in the app - showed nothing while it
+    // worked. An overlay you have to choose is one you can forget to make.
     clearGenOverlay();
+    var overlay = famLoadingEl();
     activeGenOverlay = overlay;
-    if(overlay) overlay.classList.add("active");
+    if(overlay){ overlay.classList.add("active"); genShownAt = Date.now(); }
 
     startHonestWait(overlay, key && key.query ? key.query : (key && key.title) || "");
 
@@ -1699,7 +1807,7 @@
     var key = currentPlayingTopicKey;
     if(!key || !TOPICS[key]){ return; }
     toast("Rebuilding at " + selectedLengthMinutes + " min");
-    generate(key, "player");
+    generate(key);
   }
 
   // ---------------- The thread this episode left open ----------------
@@ -2012,7 +2120,7 @@
     if(topics.length <= 1){ toast("That's the only topic in this album"); return; }
     var nextIndex = (currentTopicIndexInAlbum + 1) % topics.length;
     var nextKey = topics[nextIndex];
-    generate(nextKey, "player", currentAlbumForPlayer);
+    generate(nextKey, currentAlbumForPlayer);
   }
   function playerTapAdvance(e){
     if(currentAlbumForPlayer && BRANCHES[currentAlbumForPlayer]){
@@ -2099,7 +2207,7 @@
 
   function topicRowHTML(key, active, branchKey){
     var t = TOPICS[key];
-    return '<div class="topic-row'+(active?' active':'')+'" onclick="generate(\''+key+'\',\'detail\',\''+branchKey+'\')">'
+    return '<div class="topic-row'+(active?' active':'')+'" onclick="generate(\''+key+'\',\''+branchKey+'\')">'
       + '<div class="play"><svg width="10" height="10" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg></div>'
       + '<div class="t-body"><div class="tt">'+t.title+'</div>'
       + (active ? '<div class="ts">tap to generate new episode</div>' : '')
@@ -2109,7 +2217,7 @@
   }
   function favTopicRowHTML(key, branchKey){
     var t = TOPICS[key];
-    return '<div class="topic-row" onclick="generate(\''+key+'\',\'detail\',\''+branchKey+'\')">'
+    return '<div class="topic-row" onclick="generate(\''+key+'\',\''+branchKey+'\')">'
       + '<div class="play"><svg width="10" height="10" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg></div>'
       + '<div class="t-body"><div class="tt">'+t.title+'</div><div class="tsrc">from '+t.source+'</div></div>'
       + '<div class="menu-dots" onclick="event.stopPropagation(); openTopicMenu(\''+key+'\')"><span></span><span></span><span></span></div>'
@@ -2117,7 +2225,7 @@
   }
   function recoRowHTML(key, branchKey){
     var t = TOPICS[key];
-    return '<div class="reco-row" onclick="generate(\''+key+'\',\'detail\')">'
+    return '<div class="reco-row" onclick="generate(\''+key+'\')">'
       + '<div class="play"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M8 5v14l11-7z"/></svg></div>'
       + '<div class="t-body"><div class="tt">'+t.title+'</div></div>'
       + '<div class="add-plus" onclick="event.stopPropagation(); promoteRecoTopic(\''+key+'\',\''+branchKey+'\');">+</div>'
@@ -2288,7 +2396,7 @@
                       && document.querySelector(".screen.active").id === "screen-player";
           if(onPlayer && currentPlayingTopicKey){
             toast("Switching to " + v.label);
-            generate(currentPlayingTopicKey, "player");
+            generate(currentPlayingTopicKey);
           }
         }
       };
@@ -2344,8 +2452,7 @@
       parentTopic: (baseTitle && baseTitle !== "this") ? baseTitle : "",
       titleOverridden: false
     };
-    var overlayMap = { player: "player", dailyfam: "explore", playall: "playall" };
-    generate(newKey, overlayMap[goDeeperContext] || "home");
+    generate(newKey);
   }
 
   var FROM_OPTIONS = ["Today","Yesterday","This Week","This Month"];

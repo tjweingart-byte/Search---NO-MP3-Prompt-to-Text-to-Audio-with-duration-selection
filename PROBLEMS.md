@@ -2511,3 +2511,51 @@ question than the one asked, again. It now captures the count between the two
 listeners. And the year rule was first asserted against "the biggest story of
 2026", which trips on "biggest" long before the year is looked at; the test was
 wrong, not the code.
+
+## 58. Searching from home showed nothing at all, because the overlay it asked for did not exist
+
+The report was about doubt rather than about a bug: "when i click search on a
+searchFAM, it just shows the searchFAM page and the user questions whether or
+not their search was actually received."
+
+They were right, and it was not a perception problem. `generate()` picked its
+overlay by building an id - `"gen-" + overlayScreen` - and **there was no
+element with `id="gen-home"`**. Four screens had one (`gen-detail`,
+`gen-player`, `gen-playall`, `gen-explore`); home, the screen the product's
+one-sentence spec is about, did not. `document.getElementById` returned null,
+the code went on without complaint, and a search from the home screen showed
+the home screen for as long as generation took. The honest wait added in §55
+was writing its status into overlays nobody could see.
+
+**Why it survived.** Every id was correct in isolation, and the lookup could
+not fail loudly: an overlay that does not exist and an overlay that is simply
+not shown look identical from inside `generate()`. Nothing tied the set of
+screens that can start an episode to the set of screens that own an overlay.
+
+**The fix removes the coupling rather than adding the fifth overlay.** One
+full-screen `#famLoading` now sits inside `.frame`, above the tab bar
+(`z-index:60`), and covers every surface. There is no id to derive and no
+per-screen element to forget, so a sixth surface that generates gets the
+loading screen for free. `overlayScreen` and its `overlayMap` are gone from
+`generate()` and from every call site.
+
+It is the brand doing the waiting: the wordmark, three chevrons rising through
+`famRise`, "FAMiliarizing…", five dots. The §55 status line is kept underneath
+as `#famLoadingStatus` and still says what is being waited for and for how long
+- the animation is not allowed to replace the honest wait, only to frame it.
+Demo-mode and key-rejected notices write into that same line.
+
+**And a second, smaller thing the smoke test caught.** On a cache hit the
+screen appeared at 90 ms and was gone at 93 ms: a 3 ms flash, which reads as a
+glitch rather than as speed. `GEN_MIN_VISIBLE_MS = 450` and `finishGenOverlay()`
+hold it for 450 ms once shown, and `clearGenOverlay()` stays immediate for the
+failure path. Worth noting that the fastest possible case is the one that
+looked broken.
+
+Two smoke behaviours now pin it: "Searching shows the loading screen" and
+"One loading screen serves every surface". Fourteen behaviours pass.
+
+**Explore is deliberately excluded.** Its reel calls `FamAudio.play` directly
+and never routes through `generate()`, because it replays cached episodes and
+refuses to generate. It has its own turn animation; a loading screen there
+would promise work that is not happening.
