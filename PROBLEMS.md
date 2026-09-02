@@ -2464,3 +2464,50 @@ Unverified, as ever, without a key: how audible the handover actually is. The
 tests prove no known-half sentence is spoken after the researched half starts
 and that the halves never interleave; whether the join *sounds* like a join is
 a listening judgement.
+
+## 57. The heuristic widened, because the model's own knowledge has a date on it
+
+§55 gated research on the cache's freshness keywords. That set was written to
+answer a different question - "will this episode go stale in the cache" - and it
+only catches questions that *say* they are about now. "Who runs OpenAI" contains
+no time word at all and is exactly the kind of thing that has moved.
+
+**The number that forced this.** From the model docs rather than memory:
+
+| Model | Reliable knowledge cutoff |
+|---|---|
+| Claude Fable 5.1 | Jun 2026 |
+| Claude Opus 5 | May 2026 |
+| Claude Sonnet 5 | Jan 2026 |
+| Claude Haiku 4.5 | Feb 2025 |
+
+The app runs Sonnet 5, so "answer from what the model already knows" means
+answering from January 2026 - eight months back as this is written. There is no
+refresh cadence: a cutoff is fixed at training and only advances when a new
+model ships.
+
+**The asymmetry decides the tuning.** Since §56 a wrong "research this" costs a
+background call the listener never waits for, while a wrong "don't" costs a
+confidently dated answer with no signal that it is dated. So the set is now
+deliberately broad: roles that change hands (ceo, coach, minister, owner,
+resigned, appointed), numbers that move (price, valuation, score, standings,
+inflation), things in progress (election, trial, merger, launch, playoffs),
+superlatives - which are always claims about the present - and version words.
+Plus three phrase rules: a year at or after last year, "who is/runs/leads X",
+and "how many/much".
+
+It returns a **reason** rather than a bool, logged on every researched episode,
+because a heuristic nobody can see the workings of is a heuristic nobody can
+tune.
+
+**What it must still not do.** "Why is the sky blue", "how does a heat pump
+work", "why the Roman republic fell", "what happened in 1789" - pinned as
+answered from memory, because over-triggering is cheap rather than free.
+
+**Two test bugs caught while doing this, both the project's own recurring kind.**
+The cache-sharing test compared `gen.calls` to a variable read *after* the same
+run, which would have passed whatever happened - a check answering a cheaper
+question than the one asked, again. It now captures the count between the two
+listeners. And the year rule was first asserted against "the biggest story of
+2026", which trips on "biggest" long before the year is looked at; the test was
+wrong, not the code.

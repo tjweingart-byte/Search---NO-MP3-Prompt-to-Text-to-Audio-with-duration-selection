@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from anthropic_client import build_async_client
-from cache import needs_fresh_information
+from cache import research_reason
 from config import settings
 
 log = logging.getLogger(__name__)
@@ -352,11 +352,15 @@ def plan_episode(
     # "always" nor "never", it is "when the answer depends on something recent".
     if search is None:
         mode = getattr(settings, "search_mode", "auto")
-        use_search = (
-            True if mode == "always"
-            else False if mode == "never"
-            else needs_fresh_information(query)
-        )
+        if mode == "always":
+            use_search = True
+        elif mode == "never":
+            use_search = False
+        else:
+            reason = research_reason(query)
+            use_search = bool(reason)
+            if use_search:
+                log.info("researching %r: %s", query, reason)
     else:
         use_search = bool(search)
     return EpisodePlan(

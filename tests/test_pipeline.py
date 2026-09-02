@@ -259,6 +259,9 @@ def test_a_second_listener_reuses_the_first_listeners_script():
     bytes_first = _run_episode(
         PodcastPipeline(generator=gen, engine=DebugEngine(), cache=cache), plan, first
     )
+    # Captured between the two runs, not after both: comparing gen.calls to
+    # itself afterwards would pass whatever happened.
+    calls_after_first = gen.calls
 
     # A different person, phrasing it differently.
     plan2 = plan_episode("a recap of week 5 of the NFL season, please!", 3)
@@ -268,7 +271,11 @@ def test_a_second_listener_reuses_the_first_listeners_script():
     )
 
     assert first.cache == "miss" and second.cache == "hit"
-    assert gen.calls == 1, "the second listener should not have cost a model call"
+    # The first episode may cost one call or two - this query is a researched
+    # one, so it answers from knowledge while research runs underneath
+    # (PROBLEMS.md 56). What matters is that the *second* listener costs nothing.
+    assert gen.calls == calls_after_first, "the second listener spent a model call"
+    assert calls_after_first >= 1
     assert second.script == first.script
     # Identical script through an identical controller means identical audio.
     assert bytes_second == bytes_first

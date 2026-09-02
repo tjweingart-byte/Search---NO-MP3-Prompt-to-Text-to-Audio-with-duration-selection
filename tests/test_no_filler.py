@@ -148,3 +148,56 @@ def test_the_wait_says_what_it_is_waiting_for():
     assert "checking sources underneath" in index, "no honest state for a researched episode"
     assert "Writing your episode" in index, "no honest state for an instant one"
     assert "startHonestWait" in index
+
+
+# --- the widened heuristic --------------------------------------------------
+
+@pytest.mark.parametrize("query", [
+    "who runs OpenAI",
+    "who is the CEO of Boeing",
+    "what is the price of bitcoin",
+    "what is the newest iPhone",
+    "the best laptop for students",
+    "how many employees does Anthropic have",
+    "who won the super bowl",
+    "what happened in 2026",
+    "is the merger still going ahead",
+])
+def test_a_question_with_a_present_tense_answer_is_researched(query):
+    """The model's knowledge has a cutoff - Sonnet 5's is January 2026 - so
+    anything with a current state has probably moved. None of these say
+    "latest", and all of them go stale."""
+    assert cache_mod.research_reason(query), f"{query!r} would be answered from memory"
+
+
+@pytest.mark.parametrize("query", [
+    "what is the NASDAQ",
+    "how does a heat pump work",
+    "why the Roman republic fell",
+    "why is the sky blue",
+    "what happened in 1789",
+])
+def test_a_durable_question_is_still_answered_from_memory(query):
+    """Over-triggering is cheap, not free: an episode that researches "why is
+    the sky blue" spends a call and some seconds for nothing."""
+    assert not cache_mod.research_reason(query), f"{query!r} triggered research"
+
+
+def test_the_reason_is_reported_not_just_the_verdict():
+    """A heuristic nobody can see the workings of is one nobody can tune."""
+    assert "price" in cache_mod.research_reason("what is the price of gold")
+    # A year-only query: "biggest" would have tripped the word rule first.
+    assert "2026" in cache_mod.research_reason("a summary of 2026")
+
+
+def test_an_old_year_does_not_trigger_research():
+    assert not cache_mod.research_reason("what happened in 1969")
+
+
+def test_the_year_rule_moves_with_the_clock(monkeypatch):
+    """Hard-coding this year is how a heuristic rots silently."""
+    import datetime as _dt
+
+    future = _dt.datetime(2030, 1, 1).timestamp()
+    assert not cache_mod.research_reason("what happened in 2026", now=future)
+    assert cache_mod.research_reason("what happened in 2030", now=future)

@@ -22,6 +22,8 @@ import hashlib
 import json
 import logging
 import re
+import time
+from datetime import datetime
 import sqlite3
 import threading
 import time
@@ -42,14 +44,55 @@ _FILLER = {
     "explain", "describe", "summarize", "summarise", "recap", "briefing",
     "podcast", "episode", "some", "any", "there", "this", "that", "with",
 }
-# A query mentioning any of these is asking about a moving target. Caching one
-# for hours is how you serve yesterday's score as though it were live.
+# Words that make a question a *current* one rather than a durable one.
+#
+# Deliberately broad. The model's own knowledge has a cutoff - Sonnet 5's is
+# January 2026 - so anything with a present state has probably moved since,
+# and a question does not have to say "latest" to be asking about now. "Who
+# runs OpenAI" contains no time word at all and is exactly the kind of thing
+# that goes stale.
+#
+# Over-triggering is close to free since PROBLEMS.md 56: a researched episode
+# answers from knowledge immediately and the research lands underneath, so a
+# wrong "yes" costs a background call rather than a wait the listener hears.
+# A wrong "no" costs a confidently dated answer, which is much worse. Tuned
+# accordingly.
 _VOLATILE = {
+    # explicit time
     "latest", "today", "todays", "tonight", "now", "current", "currently",
-    "live", "breaking", "update", "updates", "score", "scores", "happening",
+    "live", "breaking", "update", "updates", "updated", "happening",
     "right", "moment", "just", "recent", "recently", "this", "upcoming",
-    "tomorrow", "yesterday",
+    "tomorrow", "yesterday", "week", "month", "season", "lately", "still",
+    "anymore", "nowadays", "since", "ongoing", "modern",
+    # who holds a position, which changes without announcing itself
+    "ceo", "cfo", "cto", "president", "chairman", "chairwoman", "chair",
+    "minister", "premier", "governor", "senator", "mayor", "pope", "king",
+    "queen", "coach", "manager", "captain", "owner", "leader", "boss",
+    "founder", "successor", "replacement", "hired", "fired", "resigned",
+    "stepped", "appointed", "elected", "runs", "leads", "heads", "owns",
+    # numbers that move
+    "price", "prices", "cost", "costs", "worth", "valuation", "value",
+    "stock", "stocks", "share", "shares", "market", "rate", "rates",
+    "revenue", "earnings", "profit", "salary", "score", "scores", "record",
+    "standings", "ranking", "rankings", "odds", "inflation", "rally",
+    # things in progress
+    "election", "war", "trial", "lawsuit", "strike", "merger", "acquisition",
+    "launch", "launched", "release", "released", "playoffs", "tournament",
+    "championship", "final", "finals", "draft", "negotiation", "negotiations",
+    "ceasefire", "deal", "ban", "tariff", "tariffs", "ruling", "verdict",
+    "outage", "recall", "shortage", "crisis",
+    # a superlative is a claim about right now
+    "best", "top", "biggest", "largest", "newest", "leading", "fastest",
+    "cheapest", "popular", "trending", "winning", "won", "beat",
+    # versions and models supersede each other constantly
+    "version", "release", "model", "generation", "successor",
 }
+
+#: A year at or after this is asking about the present, whatever else it says.
+#: Computed rather than written down, so it does not quietly rot.
+_RECENT_YEAR = re.compile(r"\b(20\d\d)\b")
+
+
 # Signals the query is about the person asking, which must never be shared.
 # Deliberately limited to possessives and contact details: "me", "I" and "we"
 # appear in perfectly ordinary phrasing ("give me a recap of week 5") and
@@ -97,21 +140,45 @@ def research_words() -> set:
     return set(_VOLATILE)
 
 
-def needs_fresh_information(query: str) -> bool:
-    """Does answering this honestly require something that happened recently?
+def research_reason(query: str, now: Optional[float] = None) -> str:
+    """Why this question should be researched, or "" if it should not.
 
-    The same signal the cache already uses to decide that "latest news on X"
-    goes stale in minutes while "why is the sky blue" is good for a month. It
-    is exactly the question "should this episode be researched", so search now
-    reads it too rather than being on or off for everything.
+    Returns a reason rather than a bool so the log can say what tripped it -
+    a heuristic nobody can see the workings of is a heuristic nobody can tune.
 
     Deliberately a keyword test, not a model call: classifying the query with a
-    model would put a round trip in front of the first word, which is the one
-    cost this product refuses - and being wrong costs one episode answered from
-    memory that could have been fresher, not a broken episode.
+    model puts a round trip in front of the first word, which is the one cost
+    this product refuses.
     """
-    tokens = set(_SPACE.split(_PUNCT.sub(" ", query.lower())))
-    return bool(tokens & _VOLATILE)
+    text = query.lower()
+    tokens = set(_SPACE.split(_PUNCT.sub(" ", text)))
+
+    hits = tokens & _VOLATILE
+    if hits:
+        return f"mentions {', '.join(sorted(hits)[:3])}"
+
+    # A recent year is a question about the present however it is phrased.
+    # "in 2026" needs research; "in 1789" does not.
+    this_year = datetime.fromtimestamp(now or time.time()).year
+    for match in _RECENT_YEAR.finditer(text):
+        if int(match.group(1)) >= this_year - 1:
+            return f"asks about {match.group(1)}"
+
+    # "Who is/runs/leads X" is a question about a seat someone currently holds,
+    # and seats change without the question changing.
+    if re.search(r"\bwho(?:'s|s)?\b.{0,20}\b(is|are|was|runs|leads|owns|heads|won|makes)\b", text):
+        return "asks who currently holds a position"
+
+    # "How many/much X does Y have" is a number that moves.
+    if re.search(r"\bhow (?:many|much)\b", text):
+        return "asks for a number that may have moved"
+
+    return ""
+
+
+def needs_fresh_information(query: str) -> bool:
+    """Does answering this honestly require something that happened recently?"""
+    return bool(research_reason(query))
 
 
 def ttl_for(query: str) -> int:
