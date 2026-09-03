@@ -252,7 +252,8 @@ def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None
 class ScriptRequest(BaseModel):
     query: str = Field(..., max_length=500)
     minutes: int = Field(..., ge=1, le=10)
-    search: bool = False
+    #: Omitted means "let the question decide" - see /api/audio.
+    search: bool | None = None
 
 
 @app.get("/api/health")
@@ -292,7 +293,7 @@ async def voices() -> dict:
 @app.post("/api/script")
 async def script(req: ScriptRequest, request: Request) -> dict:
     _rate_limit(request)
-    plan = _validated_plan(req.query, req.minutes)
+    plan = _validated_plan(req.query, req.minutes, "", req.search)
     generator = DemoGenerator() if DEMO_MODE else ScriptGenerator()
     notes = ScriptNotes()
     text = " ".join([s async for s in generator.stream_sentences(plan, notes)])
@@ -579,7 +580,9 @@ async def next_thread(
     q: str = Query(..., description="What the listener asked"),
     minutes: int = Query(3, ge=1, le=10),
     context: str = Query("", description="Topic the listener just heard"),
-    search: bool = Query(False),
+    # Same reason as /api/audio: this looks up a cache entry, and the entry it
+    # looks for has to be keyed the same way the audio request keyed it.
+    search: bool | None = Query(None),
 ):
     """The follow-up this listener is most likely to want, after this episode.
 
@@ -608,7 +611,14 @@ async def audio(
     fmt: str = Query("wav", pattern="^(wav|pcm)$"),
     context: str = Query("", description="Topic the listener just heard, for a follow-up"),
     voice: str = Query("", description="Voice id from /api/voices"),
-    search: bool = Query(False, description="Look up live sources; adds 10-25s before audio"),
+    # `None`, not False. An omitted parameter has to stay omitted all the way
+    # to plan_episode: `bool = Query(False)` turns "the listener said nothing"
+    # into "the listener said no", which is a different thing and beats
+    # SEARCH_MODE=auto. The browser never sends this parameter, so with a
+    # False default the freshness heuristic was consulted exactly never.
+    # search=1 / search=0 still win, which is what opt-in means.
+    search: bool | None = Query(None, description="Force research on (1) or off (0); "
+                                                  "omit to let the question decide"),
     user: str = Query("", max_length=64, description="Anonymous listener id, for myFAM"),
     cached_only: bool = Query(False, description="Replay only; never generate. Used by Explore"),
     topic_id: str = Query("", max_length=64, description="Bank topic id, when played from myFAM"),

@@ -359,10 +359,20 @@ def plan_episode(
         else:
             reason = research_reason(query)
             use_search = bool(reason)
+            # Said in both directions. Only the "yes" was logged, so the state
+            # this project was actually stuck in - never researching anything,
+            # because an omitted request parameter arrived as an explicit
+            # "no" - produced no output at all. A decision that is silent when
+            # it goes one way cannot be checked by watching.
             if use_search:
-                log.info("researching %r: %s", query, reason)
+                log.info("SEARCH yes  %r - %s", query, reason)
+            else:
+                log.info("SEARCH no   %r - nothing in it reads as time-sensitive; "
+                         "answering from what the model knows", query)
     else:
         use_search = bool(search)
+        log.info("SEARCH %-3s %r - the request asked for it explicitly",
+                 "yes" if use_search else "no", query)
     return EpisodePlan(
         query, minutes, target_seconds, word_budget, sections, context,
         use_search, cached_only, tuple(attachments or ()),

@@ -2729,3 +2729,48 @@ so a week of plumbing was spent before the thing that killed it - the billing
 model - was visible at all. It would have been visible in five minutes on the
 pricing page. Next time: synthesise the same script through each candidate
 offline, listen, decide, and only then write code.
+
+## 62. Search never ran, because an omitted parameter arrived as an explicit "no"
+
+Reported as "the model doesn't seem to be searching the web no matter what the
+prompt is". It wasn't. Not for any prompt, ever, in the app.
+
+`plan_episode` consults the freshness heuristic **only when `search is None`**,
+because an explicit `True`/`False` is the listener's own choice and has to win
+- that is what "opt in" means (§55). But `/api/audio` declared:
+
+    search: bool = Query(False)
+
+so FastAPI turned an *omitted* parameter into an explicit `False` before the
+planner ever saw it. And the browser never sends `search=` at all. Every
+episode the app has ever produced therefore said "the listener asked for no
+research", and `SEARCH_MODE=auto` - along with the whole widened heuristic of
+§57 - was dead code in production.
+
+`/api/next` had the same default, which is worse than it looks: it reads the
+cache entry `/api/audio` wrote, so if the two ever disagreed about whether an
+episode was researched they would disagree about the key and Go Deeper would
+silently never find a thread. And `/api/script` accepted a `search` field and
+then dropped it on the floor - it never passed it to `_validated_plan` at all.
+
+**Why every test passed.** They called `plan_episode(...)` directly with the
+argument left off, which produces `None` and exercises the heuristic
+beautifully. That is not what the app does. **A default that is correct inside
+a function and wrong at its boundary is invisible to any test that starts
+inside the boundary.** `tests/test_search_reaches_the_app.py` starts outside
+it, driving real requests through `TestClient`; on the old code six of its
+thirteen fail, while all 37 of the older search tests still pass. That gap is
+the whole lesson.
+
+Same shape as §52 ("verify, do not inspect") one level out: the tests answered
+"does the heuristic work" when the question was "does the heuristic run".
+
+**And the decision was silent when it went the wrong way.** `plan_episode`
+logged only when it *did* research, so the state the product was actually
+stuck in produced no output at all. It now prints `SEARCH yes` / `SEARCH no`
+with the reason on every episode, so watching the terminal answers the
+question that took a user report to surface.
+
+Unrelated but worth recording: `tools/compare_search.py` passes `search=`
+explicitly, so it was never affected. The measurements it produces were always
+going to be right; it is the app that was not searching.
