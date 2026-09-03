@@ -65,6 +65,22 @@ class WellSaidError(RuntimeError):
     """WellSaid refused or failed. Carries the real reason, never a fallback."""
 
 
+class WellSaidLocalError(WellSaidError):
+    """WellSaid answered; **this machine** could not use the answer.
+
+    A separate type because the two have opposite consequences for a key.
+    WellSaid returning HTTP 200 means the key is good, whatever happens next
+    locally - so a missing or broken decoder must not be allowed to condemn
+    it. Matching on the words in an error message got this wrong twice; the
+    distinction is now something the code states rather than something a
+    caller has to infer.
+    """
+
+
+class WellSaidUnreachable(WellSaidError):
+    """The request never arrived. Says nothing at all about the key."""
+
+
 # --- text ---------------------------------------------------------------
 
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
@@ -175,20 +191,23 @@ def _decode_mp3(buf: bytes, target_rate: int) -> bytes:
     """
     binary = shutil.which(settings.ffmpeg_binary)
     if not binary:
-        raise WellSaidError(
+        raise WellSaidLocalError(
             f"WellSaid returned MP3 and {settings.ffmpeg_binary!r} is not installed, so it "
             "cannot be decoded. Install it (macOS: brew install ffmpeg) and try again. "
             "Nothing was played rather than falling back to another voice."
         )
     import subprocess
 
-    done = subprocess.run(
-        [binary, "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
-         "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1", "-ar", str(target_rate), "pipe:1"],
-        input=buf, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120,
-    )
+    try:
+        done = subprocess.run(
+            [binary, "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+             "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1", "-ar", str(target_rate), "pipe:1"],
+            input=buf, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise WellSaidLocalError(f"Could not run {binary}: {exc}") from exc
     if done.returncode != 0:
-        raise WellSaidError(
+        raise WellSaidLocalError(
             f"ffmpeg could not decode WellSaid's audio: "
             f"{done.stderr.decode('utf-8', 'replace')[:300]}"
         )
@@ -204,7 +223,7 @@ def _to_pcm(buf: bytes, content_type: str, target_rate: int) -> bytes:
         return _resample(_to_mono(samples, channels), rate, target_rate).tobytes()
     if buf[:3] == b"ID3" or (len(buf) > 1 and buf[0] == 0xFF and buf[1] & 0xE0 == 0xE0):
         return _decode_mp3(buf, target_rate)
-    raise WellSaidError(
+    raise WellSaidLocalError(
         f"WellSaid sent {len(buf)} bytes of {content_type or 'an unlabelled format'}, "
         "which is neither WAV nor MP3. The audio was not played."
     )
@@ -372,7 +391,7 @@ class WellSaidEngine(TTSEngine):
                 if attempt < _MAX_ATTEMPTS:
                     await asyncio.sleep(attempt)
                     continue
-                raise WellSaidError(f"Could not reach WellSaid: {last}") from exc
+                raise WellSaidUnreachable(f"Could not reach WellSaid: {last}") from exc
 
             elapsed = time.perf_counter() - started
             if response.status_code == 200:
@@ -391,7 +410,8 @@ class WellSaidEngine(TTSEngine):
                 continue
             raise WellSaidError(self._explain(response.status_code, detail))
 
-        raise WellSaidError(f"WellSaid failed after {_MAX_ATTEMPTS} attempts: {last}")
+        raise WellSaidUnreachable(
+            f"WellSaid failed after {_MAX_ATTEMPTS} attempts: {last}")
 
     @staticmethod
     def _speaker_id(speaker: str):

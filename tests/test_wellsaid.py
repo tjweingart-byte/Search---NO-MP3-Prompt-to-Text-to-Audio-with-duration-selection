@@ -292,3 +292,59 @@ def test_a_retryable_status_is_retried_and_then_reported(keyed, monkeypatch):
     with pytest.raises(ws.WellSaidError):
         asyncio.run(ws.WellSaidEngine().synth("Hello.", 150, "wellsaid:35"))
     assert attempts["n"] == ws._MAX_ATTEMPTS, "a rate limit was not retried"
+
+
+# --- a good key must survive a bad machine ------------------------------
+#
+# The bug these pin: setup_wellsaid.py checked the key by synthesising a line
+# and treated ANY failure as "rejected". So when WellSaid served MP3 and
+# ffmpeg was not installed, a perfectly good key was thrown away and the
+# person was told their key was bad. They then had ffmpeg but no stored key,
+# and the app reported "no WellSaid voices - its key is not set".
+
+def test_a_decode_failure_is_a_different_kind_of_error_from_a_refusal(keyed, monkeypatch):
+    """Typed, not string-matched. Matching on the words in a message is how
+    this was got wrong: the wording changes and the meaning silently flips."""
+    monkeypatch.setattr(ws.shutil, "which", lambda _: None)
+    with pytest.raises(ws.WellSaidLocalError):
+        ws._to_pcm(b"ID3\x04\x00\x00\x00\x00\x00\x00", "audio/mpeg", 22050)
+    # Still a WellSaidError, so every existing caller is unaffected.
+    assert issubclass(ws.WellSaidLocalError, ws.WellSaidError)
+
+
+def test_an_unreachable_api_is_not_a_rejected_key(keyed, monkeypatch):
+    """A blocked network says nothing about the key. Reporting it as a
+    rejection sends someone off to regenerate a key that was fine."""
+    class Client:
+        def __init__(self, **_): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return False
+        async def post(self, *_, **__): raise OSError("Network is unreachable")
+
+    async def instant(_seconds):
+        return None
+
+    monkeypatch.setitem(sys.modules, "httpx", type("m", (), {"AsyncClient": Client}))
+    monkeypatch.setattr(ws.asyncio, "sleep", instant)
+    with pytest.raises(ws.WellSaidUnreachable):
+        asyncio.run(ws.WellSaidEngine().synth("Hello.", 150, "wellsaid:35"))
+
+
+def test_a_bad_key_is_still_a_plain_refusal(keyed, monkeypatch):
+    """The three kinds must stay distinguishable, or the fix is worthless."""
+    class Response:
+        status_code = 401
+        text = "invalid api key"
+        headers: dict = {}
+        content = b""
+
+    class Client:
+        def __init__(self, **_): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return False
+        async def post(self, *_, **__): return Response()
+
+    monkeypatch.setitem(sys.modules, "httpx", type("m", (), {"AsyncClient": Client}))
+    with pytest.raises(ws.WellSaidError) as caught:
+        asyncio.run(ws.WellSaidEngine().synth("Hello.", 150, "wellsaid:35"))
+    assert not isinstance(caught.value, (ws.WellSaidLocalError, ws.WellSaidUnreachable))

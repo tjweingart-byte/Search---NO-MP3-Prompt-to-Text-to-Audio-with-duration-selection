@@ -41,6 +41,15 @@ WHERE YOU PASTE THE WELLSAID KEY
   To add or change it later:      ./start.sh     (it will ask again)
   To check it:                    .fam-venv/bin/python setup_wellsaid.py --show
 
+  IF IT DOES NOT ASK YOU
+      Run this on its own and it will:
+
+          .fam-venv/bin/python setup_wellsaid.py
+
+      (Older versions had a "Paste your key now? [y/N]" question that could
+       answer itself when Terminal was not fully interactive. That question
+       is gone - it now just asks you directly.)
+
 
 HEARING THE THREE VOICES
 

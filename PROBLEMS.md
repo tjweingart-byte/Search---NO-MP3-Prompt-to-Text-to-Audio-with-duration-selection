@@ -2622,3 +2622,64 @@ before the empty-text check, so synthesising a blank line raised instead of
 costing nothing. And patching `ws.asyncio.sleep` with a lambda that calls
 `asyncio.sleep` patches the very function it then calls: the retry recursed
 until the stack ended.
+
+## 60. The WellSaid key could not be entered, and a good key was being thrown away
+
+Reported as: "FAM starts without prompting me for the WellSaid API key, the
+terminal says there are no WellSaid voices because the key is not set." Two
+separate faults, and each on its own is enough to produce exactly that.
+
+**1. The prompt answered itself.** `start.sh` asked "Paste your WellSaid key
+now? [y/N]" and read the reply with `read -r answer`. `read` returns
+immediately at end of input, so the moment stdin is not an interactive
+terminal the question is printed and declined in the same breath. From the
+outside that is indistinguishable from never being asked - which is how it was
+reported, and correctly so.
+
+The fix removes the question rather than fixing it. `setup_wellsaid.py`
+already asks for the key itself and already treats an empty line as "nothing
+changed", so the gate added a way to fail and nothing else. When stdin is not
+a terminal the script now says so and prints the command to run, instead of
+staging a conversation it cannot have.
+
+**Worth naming: this passed its own test.** The previous session tested the
+declined path by piping `n` into the script and confirmed it carried on. That
+proves the branch works and says nothing about whether a person can reach the
+other one. Testing a prompt without a terminal tests everything except the
+prompt. It is now driven through a real pty, and `tests/test_start_script.py`
+pins the shape - no `[y/N]`, no `read -r answer`, an explicit `[ -t 0 ]`.
+
+**2. A working key was refused because ffmpeg was missing.** `works()`
+validated a key by synthesising one line and treated *any* exception as
+"REJECTED - nothing was stored". So on an account that returns MP3, with
+ffmpeg not yet installed, WellSaid answered HTTP 200 - the key was fine - the
+local decode failed, and the key was discarded with a message implying the key
+was bad. Install ffmpeg afterwards and there is still no key, and the app
+truthfully reports "no WellSaid voices - its key is not set".
+
+This is `verify, do not inspect` (§52) overshooting in the opposite direction.
+That rule says a check must perform the real action rather than confirm
+configuration. It does not say a check may answer a *broader* question than
+the one it was asked. "Does WellSaid accept this key" and "can this machine
+decode what WellSaid sends" are two questions with opposite consequences for
+whether the key is stored.
+
+Three verdicts now, from three exception types rather than from words in a
+message - `WellSaidError`, `WellSaidLocalError`, `WellSaidUnreachable`:
+
+| What happened | The key |
+|---|---|
+| WellSaid returned audio | stored |
+| WellSaid returned audio, this machine cannot decode it | **stored**, with the fix named |
+| WellSaid refused the key | not stored |
+| The request never arrived | not stored, and *not* called a rejection |
+
+The last row matters as much as the ffmpeg one: a blocked network was
+reporting "REJECTED", which sends someone off to regenerate a key that was
+never the problem. `--no-verify` exists for a network that blocks the API.
+
+Typed rather than string-matched on purpose. The first version of this fix
+tested `if "ffmpeg" in message`, which is the same trap one level down: the
+wording changes and the meaning silently flips.
+
+Piper is untouched throughout, and a test says so.

@@ -17,6 +17,10 @@ by you. You will not be asked again on this machine.
 Get the key from your WellSaid Labs account at studio.wellsaidlabs.com, under
 **Settings → API**.
 
+If `./start.sh` does not ask you for the key, run the setup on its own:
+
+    .fam-venv/bin/python setup_wellsaid.py
+
 Check it any time:
 
     python setup_wellsaid.py --show     # is it there, and does it still work?
@@ -69,7 +73,13 @@ Three independent signals, so you never have to take it on trust:
   on a machine where nothing else is installed.
 * **If you see an ffmpeg error**, WellSaid served MP3 rather than WAV on your
   account. Install ffmpeg (`brew install ffmpeg` on a Mac) and it will decode
-  in memory — still no file is ever written.
+  in memory — still no file is ever written. Your key stays stored either way:
+  a missing decoder is a fault of the machine, not of the key, so you will not
+  have to paste it again.
+* **If WellSaid cannot be reached at all** — a VPN, a firewall, a work network —
+  you are told exactly that, rather than being told your key was rejected. To
+  store a key you are sure of without checking it first:
+  `.fam-venv/bin/python setup_wellsaid.py --no-verify`
 
 ## Changing the speaker ids
 
