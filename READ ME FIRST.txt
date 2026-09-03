@@ -1,0 +1,82 @@
+FAM — testing the WellSaid voices
+=================================
+
+WHAT YOU NEED
+  A Mac (or Linux) with Python 3.10 or newer.
+  Your Anthropic API key   — this writes the episodes.
+  Your WellSaid API key    — optional; this adds Chase J and Kai M.
+
+
+HOW TO RUN IT  (one command)
+
+  1. Open Terminal.
+  2. Type  cd    then a space, then DRAG THIS FOLDER onto the Terminal window
+     and press Return.  (That saves you typing the path.)
+  3. Type this and press Return:
+
+         ./start.sh
+
+  That's it. The first run takes a minute: it installs what it needs,
+  then asks you to paste each key, then downloads a voice, then opens
+  the app in your browser.
+
+  Later runs skip all of that and just start the app.
+
+  Mac shortcut: you can double-click START.command in Finder instead.
+  If macOS says it cannot be opened, right-click it and choose Open.
+
+
+WHERE YOU PASTE THE WELLSAID KEY
+
+  start.sh asks you. Paste it and press Return.
+  Your typing stays hidden — that is deliberate, not a bug.
+
+  It is checked before it is saved: WellSaid is asked to speak one line,
+  and the key is only stored if that works.
+
+  It is saved in  ~/.fam/env  — outside this folder, readable only by you,
+  and never inside the code. Replacing this folder with a newer copy will
+  not lose it.
+
+  To add or change it later:      ./start.sh     (it will ask again)
+  To check it:                    .fam-venv/bin/python setup_wellsaid.py --show
+
+
+HEARING THE THREE VOICES
+
+  1. Search for anything and let it start playing.
+  2. Tap the pill under the play button — it reads like  1.2x · 3 min · Lessac
+  3. Tap  Voice
+  4. Choose  Piper  /  Chase J (WellSaid)  /  Kai M (WellSaid)
+
+  The episode restarts in the new voice in about a second, with the SAME
+  words — the script is cached, so switching voice costs no extra Claude
+  call. That is what makes the comparison fair.
+
+
+HOW TO KNOW IT IS REALLY WELLSAID
+
+  Look at the Terminal window while it plays. WellSaid prints one line per
+  sentence:
+
+    provider=wellsaid voice='Chase J' speaker_id=35 first_audio=0.31s ...
+
+  No such lines means you are hearing Piper.
+  The pill on the player also names the voice speaking right now.
+
+  If WellSaid fails, the episode STOPS and shows the real error. It never
+  silently switches to Piper — that would make the comparison worthless.
+
+
+IF SOMETHING GOES WRONG
+
+  "command not found: ./start.sh"
+      You are not in the folder. Redo step 2 above.
+
+  "permission denied"
+      Run:  chmod +x start.sh START.command
+
+  An ffmpeg error when you pick a WellSaid voice
+      Your WellSaid account returns MP3. Run:  brew install ffmpeg
+
+  More detail: WELLSAID_TESTING.md in this folder.
