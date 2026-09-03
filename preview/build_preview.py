@@ -122,9 +122,30 @@ def load_fixtures() -> dict:
              "title": "The New College Football Arms Race",
              "from_title": "Who Really Pays for a Stadium", "at": 0},
         ]},
+        # What a real Mac reports, minus the hosted engine that was removed.
+        # One voice made the picker look like it had nothing to pick, and the
+        # grouping and the scrolling both only show up on a list long enough
+        # to need them - which is exactly the list a preview should show.
         "/api/voices": {"voices": [
-            {"id": "preview:narrator", "label": "Narrator (preview)", "engine": "preview"}
-        ], "default": "preview:narrator"},
+            {"id": "piper:en_GB-alba-medium", "label": "Alba (GB, medium)",
+             "engine": "piper", "detail": "neural, ships with the app"},
+            {"id": "piper:en_GB-northern_english_male-medium",
+             "label": "Northern_English_Male (GB, medium)",
+             "engine": "piper", "detail": "neural, ships with the app"},
+            {"id": "piper:en_US-amy-medium", "label": "Amy (US, medium)",
+             "engine": "piper", "detail": "neural, ships with the app"},
+            {"id": "piper:en_US-lessac-medium", "label": "Lessac (US, medium)",
+             "engine": "piper", "detail": "neural, ships with the app"},
+            {"id": "say:Samantha", "label": "Samantha", "engine": "say", "detail": "en-US"},
+            {"id": "say:Daniel", "label": "Daniel", "engine": "say", "detail": "en-GB"},
+            {"id": "say:Karen", "label": "Karen", "engine": "say", "detail": "en-AU"},
+            {"id": "say:Moira", "label": "Moira", "engine": "say", "detail": "en-IE"},
+            {"id": "say:Aman", "label": "Aman", "engine": "say", "detail": "en-IN"},
+            {"id": "say:Fred", "label": "Fred", "engine": "say", "detail": "en-US"},
+            {"id": "say:Rishi", "label": "Rishi", "engine": "say", "detail": "en-IN"},
+            {"id": "say:Tara", "label": "Tara", "engine": "say", "detail": "en-IN"},
+            {"id": "say:Tessa", "label": "Tessa", "engine": "say", "detail": "en-ZA"},
+        ], "default": "piper:en_GB-alba-medium"},
         "/api/profile": {
             "listener": "preview-listener", "played": 34, "finished": 21,
             "searched": 12, "open_threads": 2,

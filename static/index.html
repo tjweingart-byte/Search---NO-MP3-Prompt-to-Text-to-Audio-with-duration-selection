@@ -780,6 +780,18 @@
   .sheet-card{
     background:var(--surface); border-radius:20px 20px 0 0; padding:10px 0 22px; width:100%;
     border-top:1px solid var(--border-strong);
+    /* A sheet with more items than fit grew off the top of the phone and could
+       not be scrolled, so the entries at the top were simply unreachable. The
+       length menu is ten entries and a Mac reports thirty-odd voices, so this
+       is not a rare shape. The list scrolls; Cancel stays put below it, so
+       there is always a way out without scrolling to find one. */
+    display:flex; flex-direction:column; max-height:82%; min-height:0;
+  }
+  .sheet-scroll{ overflow-y:auto; -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain; min-height:0; }
+  .sheet-group{
+    padding:14px 22px 6px; font-family:'JetBrains Mono', monospace; font-size:9.5px;
+    letter-spacing:0.12em; text-transform:uppercase; color:var(--text-faint);
   }
   .sheet-item{ padding:14px 22px; font-size:13.5px; font-weight:600; color:var(--text); cursor:pointer; }
   .sheet-item.danger{ color:var(--coral); }
@@ -1631,6 +1643,22 @@
     activeGenOverlay = null;
   }
 
+  // Show the loading screen with a given line. The three Play All callers used
+  // to reach for per-screen overlays by id; two of those ids stopped existing
+  // when the single loading screen replaced them, and those two were unguarded,
+  // so "skip topic" and "regenerate topic" threw on a null element. Going
+  // through one function means a caller cannot name a screen that is not there.
+  function showLoading(status){
+    clearGenOverlay();
+    var el = famLoadingEl();
+    if(!el) return;
+    activeGenOverlay = el;
+    el.classList.add("active");
+    genShownAt = Date.now();
+    var node = document.getElementById("famLoadingStatus");
+    if(node && status) node.textContent = status;
+  }
+
   function finishGenOverlay(){
     // Audio has started. Hide the loading screen, but never so fast that it
     // reads as a flash - see GEN_MIN_VISIBLE_MS.
@@ -2291,12 +2319,17 @@
   });
 
   // ---------------- Action sheet (album menu) ----------------
+  // An item may be {label, action, danger} or {group:"HEADING"} - a heading is
+  // not selectable and exists so a long list (the voice picker) reads as
+  // sections rather than one undifferentiated column.
   function showActionSheet(items){
     var card = document.getElementById("sheetCard");
-    var html = "";
+    var html = '<div class="sheet-scroll">';
     items.forEach(function(it, i){
+      if(it.group){ html += '<div class="sheet-group">'+it.group+'</div>'; return; }
       html += '<div class="sheet-item'+(it.danger ? ' danger' : '')+'" data-idx="'+i+'">'+it.label+'</div>';
     });
+    html += '</div>';
     html += '<div class="sheet-cancel" onclick="closeSheet()">Cancel</div>';
     card.innerHTML = html;
     card.querySelectorAll(".sheet-item").forEach(function(el){
@@ -2306,6 +2339,10 @@
         items[idx].action();
       };
     });
+    // Open at the top. Without this a re-opened sheet keeps the previous
+    // scroll position, which looks exactly like the bug this replaced.
+    var scroller = card.querySelector(".sheet-scroll");
+    if(scroller) scroller.scrollTop = 0;
     document.getElementById("sheetOverlay").classList.add("active");
   }
   function closeSheet(){
@@ -2390,29 +2427,53 @@
     updateSpeedLenPillText();
   }).catch(function(){});
 
+  // Grouped by engine. A flat list of every voice on the machine is thirty-odd
+  // entries on a Mac, and the one you want is findable only by scrolling.
+  var VOICE_GROUPS = {
+    piper:  "Built in",
+    say:    "macOS system voices",
+    espeak: "espeak",
+    debug:  "No speech engine"
+  };
+
   function openVoiceMenu(){
     if(!AVAILABLE_VOICES.length){ toast("No voices reported by the server"); return; }
-    var items = AVAILABLE_VOICES.map(function(v){
-      return {
-        label: v.label + (v.detail ? "  ·  " + v.detail : "") + (v.id === selectedVoice ? "  ✓" : ""),
-        action: function(){
-          if(v.id === selectedVoice) return;
-          selectedVoice = v.id;
-          var el = document.getElementById("voiceModalVal");
-          if(el) el.textContent = v.label;
-          updateSpeedLenPillText();
-          // The voice changes the audio but not the script, so re-generating
-          // reuses the cached script: no model call, no cost, near-instant.
-          var onPlayer = document.querySelector(".screen.active")
-                      && document.querySelector(".screen.active").id === "screen-player";
-          if(onPlayer && currentPlayingTopicKey){
-            toast("Switching to " + v.label);
-            generate(currentPlayingTopicKey);
-          }
-        }
-      };
+    var order = ["piper", "say", "espeak", "debug"];
+    var items = [], seen = {};
+    order.forEach(function(engine){
+      var group = AVAILABLE_VOICES.filter(function(v){ return v.engine === engine; });
+      if(!group.length) return;
+      items.push({ group: VOICE_GROUPS[engine] || engine });
+      group.forEach(function(v){ seen[v.id] = 1; items.push(voiceItem(v)); });
     });
+    // Anything from an engine this list does not know about still appears.
+    var rest = AVAILABLE_VOICES.filter(function(v){ return !seen[v.id]; });
+    if(rest.length){
+      items.push({ group: "Other" });
+      rest.forEach(function(v){ items.push(voiceItem(v)); });
+    }
     showActionSheet(items);
+  }
+
+  function voiceItem(v){
+    return {
+      label: v.label + (v.detail ? "  ·  " + v.detail : "") + (v.id === selectedVoice ? "  ✓" : ""),
+      action: function(){
+        if(v.id === selectedVoice) return;
+        selectedVoice = v.id;
+        var el = document.getElementById("voiceModalVal");
+        if(el) el.textContent = v.label;
+        updateSpeedLenPillText();
+        // The voice changes the audio but not the script, so re-generating
+        // reuses the cached script: no model call, no cost, near-instant.
+        var onPlayer = document.querySelector(".screen.active")
+                    && document.querySelector(".screen.active").id === "screen-player";
+        if(onPlayer && currentPlayingTopicKey){
+          toast("Switching to " + v.label);
+          generate(currentPlayingTopicKey);
+        }
+      }
+    };
   }
 
   function openSpeedLengthModal(){
@@ -2635,10 +2696,9 @@
   function confirmGenerateConfig(){
     var albumKey = pendingPlayAllAlbum;
     closeGenerateConfig();
-    var overlay = document.getElementById("gen-detail");
-    if(overlay) overlay.classList.add("active");
+    showLoading("Writing your episodes…");
     setTimeout(function(){
-      if(overlay) overlay.classList.remove("active");
+      clearGenOverlay();
       startPlayAll(albumKey);
     }, 900);
   }
@@ -3458,19 +3518,17 @@
       return;
     }
     paIndex++;
-    var overlay = document.getElementById("gen-playall");
-    overlay.classList.add("active");
+    showLoading("Writing the next one…");
     setTimeout(function(){
-      overlay.classList.remove("active");
+      clearGenOverlay();
       populatePlayAllTopic();
     }, 700);
   }
 
   function paRegenerate(){
-    var overlay = document.getElementById("gen-playall");
-    overlay.classList.add("active");
+    showLoading("Writing that again…");
     setTimeout(function(){
-      overlay.classList.remove("active");
+      clearGenOverlay();
       populatePlayAllTopic();
       toast("Regenerated ✓");
     }, 700);
