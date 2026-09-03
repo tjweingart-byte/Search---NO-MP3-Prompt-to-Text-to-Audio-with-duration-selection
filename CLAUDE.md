@@ -183,7 +183,17 @@ another rule.
 
 ## Open problems, in the order they hurt
 
-1. ~~**Voice quality**~~ — *addressed, needs verifying on a real machine.* Piper
+1. **Voice quality — reopened.** Piper works and sounds flat, which is the
+   complaint. The first attempt to replace it (WellSaid Labs) was removed after
+   **two episodes exhausted a month's quota** — a seat product used as an API,
+   not a voice that was too expensive (PROBLEMS.md §61). `VOICE_OPTIONS.md` has
+   the arithmetic and the shortlist; the short version is that a 3-minute
+   episode is ~2,610 characters, so the best-sounding hosted voices cost more
+   per episode than Claude does, which breaks the "audio is nearly free"
+   premise the prefetch plan rests on. **Kokoro-82M is the candidate to try
+   first** — open weights, ships with the app like Piper, no quota — and nobody
+   has heard it on a FAM script yet. That listening test is the next move.
+   What is settled about the current setup: Piper
    is now a pip dependency (`piper-tts`) with voice models in a **shared
    per-user folder** (`~/.fam/voices`, see `voice_store.py`) installed by
    `python setup_voices.py`. They deliberately live outside the project so a new

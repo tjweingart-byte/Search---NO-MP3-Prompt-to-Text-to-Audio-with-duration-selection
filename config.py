@@ -217,8 +217,7 @@ class Settings:
     sample_width: int = 2  # 16-bit signed little-endian PCM
 
     # --- TTS --------------------------------------------------------------
-    # auto | piper | espeak | debug | wellsaid.  `auto` never picks
-    # wellsaid - a paid hosted voice must be asked for.
+    # auto | piper | espeak | debug
     tts_engine: str = field(default_factory=lambda: os.environ.get("TTS_ENGINE", "auto"))
     # Voice models live in one shared per-user folder (~/.fam/voices by
     # default), NOT inside the project, so a new version of the app finds the
@@ -234,41 +233,6 @@ class Settings:
     # macOS `say`: present on every Mac, so nothing needs installing there.
     say_binary: str = field(default_factory=lambda: os.environ.get("SAY_BIN", "say"))
     say_voice: str = field(default_factory=lambda: os.environ.get("SAY_VOICE", ""))
-
-    # --- WellSaid Labs (optional, for voice testing) -----------------------
-    # A hosted neural voice, added so two specific voices can be compared
-    # against Piper inside the real product. It is never selected
-    # automatically: it costs money per character and needs a key, so it
-    # speaks only when a listener picks one of its voices by name. Claude
-    # still writes every word - this changes nothing but the speaker.
-    #
-    # The key lives in ~/.fam/env like the Anthropic one, for the same reason:
-    # outside the project, so it is never committed and survives a new copy of
-    # the app. Written by `python setup_wellsaid.py`.
-    wellsaid_api_key: str = field(
-        default_factory=lambda: os.environ.get("WELLSAID_API_KEY", "")
-    )
-    wellsaid_api_url: str = field(
-        default_factory=lambda: os.environ.get(
-            "WELLSAID_API_URL", "https://api.wellsaidlabs.com/v1/tts/stream")
-    )
-    # Empty means "do not send one", so WellSaid applies its own default and
-    # this does not break when their model names change.
-    wellsaid_model: str = field(default_factory=lambda: os.environ.get("WELLSAID_MODEL", ""))
-    #: The two voices under test, by WellSaid speaker id.
-    wellsaid_chase_j_id: str = field(
-        default_factory=lambda: os.environ.get("WELLSAID_CHASE_J_ID", "35")
-    )
-    wellsaid_kai_m_id: str = field(
-        default_factory=lambda: os.environ.get("WELLSAID_KAI_M_ID", "32")
-    )
-    # Their documented ceiling per request. The pipeline already synthesises a
-    # sentence at a time, so this is reached only by an unusually long one.
-    wellsaid_max_chars: int = _env_int("WELLSAID_MAX_CHARS", 1000)
-    wellsaid_timeout: float = _env_float("WELLSAID_TIMEOUT", 60.0)
-    # Only needed if WellSaid serves MP3 rather than WAV; used to decode it in
-    # memory. No file is ever written.
-    ffmpeg_binary: str = field(default_factory=lambda: os.environ.get("FFMPEG_BIN", "ffmpeg"))
 
     # --- Server -----------------------------------------------------------
     host: str = field(default_factory=lambda: os.environ.get("HOST", "0.0.0.0"))

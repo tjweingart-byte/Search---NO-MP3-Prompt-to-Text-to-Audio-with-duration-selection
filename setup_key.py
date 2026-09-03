@@ -59,24 +59,20 @@ def read_file() -> list[str]:
         return []
 
 
-def write_key(key: str, var: str = VAR) -> None:
+def write_key(key: str) -> None:
     """Replace the key line, never append one.
 
     Two ANTHROPIC_API_KEY lines in one file means "which key is actually being
     sent" depends on who reads it, which has already cost this project a
     session of debugging a perfectly valid key.
-
-    `var` is a parameter so a second provider's key can be stored the same way,
-    in the same file, with the same permissions - rather than growing a second
-    copy of this function that gets one of those details wrong.
     """
     path = shared_env_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     kept = [
         line for line in read_file()
-        if not line.strip().lstrip("export ").startswith(f"{var}=")
+        if not line.strip().lstrip("export ").startswith(f"{VAR}=")
     ]
-    path.write_text("\n".join(kept + [f"{var}={key}", ""]))
+    path.write_text("\n".join(kept + [f"{VAR}={key}", ""]))
     try:
         path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 600: nobody else on this machine
     except OSError:

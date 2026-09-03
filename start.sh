@@ -70,30 +70,6 @@ else
   "$PY" setup_key.py || die "No Anthropic key was stored, so there is nothing to listen to yet. Run ./start.sh again."
 fi
 
-if "$PY" -c 'import sys; from config import settings; sys.exit(0 if settings.wellsaid_api_key else 1)'; then
-  ok "WellSaid key found (Chase J and Kai M will be in the voice list)"
-else
-  printf '\n  %sWellSaid is optional.%s Without it the app works exactly as before,\n' "$bold" "$off"
-  printf '  with Piper as the voice. With it you also get Chase J and Kai M.\n'
-  printf '  Get a key from studio.wellsaidlabs.com under Settings -> API.\n'
-  printf '  %s(looked for it in %s)%s\n\n' "$dim" "${FAM_ENV_FILE:-$HOME/.fam/env}" "$off"
-
-  # No "would you like to?" gate. There used to be one, and `read` answers
-  # itself the instant stdin is not an interactive terminal - so the question
-  # appeared and was declined in the same breath, which reads exactly like
-  # never being asked at all. setup_wellsaid.py does its own asking and
-  # already treats an empty line as "nothing changed", so it can simply be
-  # run: pasting a key is the answer, and pressing Return is the other one.
-  if [ -t 0 ]; then
-    "$PY" setup_wellsaid.py || warn "No WellSaid key stored. Piper still works; run ./start.sh again to retry."
-  else
-    # Being honest about it beats a prompt that cannot be answered.
-    warn "Not running in an interactive terminal, so the key cannot be typed here."
-    printf '  Open Terminal, cd to this folder, and run:  ./start.sh\n'
-    printf '  Or, to add just the key:  %s setup_wellsaid.py\n' "$PY"
-  fi
-fi
-
 # --- Voice ------------------------------------------------------------------
 say "Checking the voice"
 if "$PY" -c 'import sys; from tts import PiperEngine; sys.exit(0 if PiperEngine.available() else 1)' 2>/dev/null; then
@@ -101,7 +77,7 @@ if "$PY" -c 'import sys; from tts import PiperEngine; sys.exit(0 if PiperEngine.
 else
   warn "No Piper voice yet - without one you would hear a placeholder tone."
   printf '  Downloading one now (about 60 MB, once)…\n\n'
-  "$PY" setup_voices.py || warn "The voice download did not finish. WellSaid will still work if its key is set."
+  "$PY" setup_voices.py || warn "The voice download did not finish - you would hear a placeholder tone. Run ./start.sh again to retry."
 fi
 
 # --- What you are about to hear ---------------------------------------------
@@ -110,15 +86,11 @@ say "Ready"
 from config import settings
 from tts import default_voice, list_voices
 
-voices = list_voices()
 print(f"  Episodes written by : {settings.model}")
 print(f"  Default voice       : {default_voice()}")
 print( "  Voices you can pick :")
-for v in voices:
-    mark = "  <- WellSaid" if v.engine == "wellsaid" else ""
-    print(f"      {v.label}{mark}")
-if not any(v.engine == "wellsaid" for v in voices):
-    print("      (no WellSaid voices - its key is not set)")
+for v in list_voices():
+    print(f"      {v.label}")
 PYEOF
 
 cat <<EOM
@@ -127,12 +99,8 @@ cat <<EOM
 
   To hear the same episode in a different voice:
     search for something, wait for it to play, then tap the pill under
-    the play button -> Voice -> Chase J (WellSaid) or Kai M (WellSaid).
-    The words are identical - only the speaker changes, and it costs
-    no extra Claude call.
-
-  ${dim}Watch this window: every sentence WellSaid speaks prints a line
-  starting "provider=wellsaid". No such lines means you are hearing Piper.${off}
+    the play button -> Voice. The words are identical - only the speaker
+    changes, and it costs no extra Claude call.
 
   Press Control-C to stop.
 

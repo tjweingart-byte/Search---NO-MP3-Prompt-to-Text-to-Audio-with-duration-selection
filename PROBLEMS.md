@@ -2683,3 +2683,49 @@ tested `if "ffmpeg" in message`, which is the same trap one level down: the
 wording changes and the meaning silently flips.
 
 Piper is untouched throughout, and a test says so.
+
+## 61. WellSaid removed: two episodes exhausted a month's quota
+
+Not a quality verdict. **Two episodes spent a month's allowance.** A 3-minute
+FAM episode is about 2,610 characters, so the whole trial cost roughly 5,200
+characters - which says the product was sold per seat with a monthly ceiling,
+and was being used as if it were an API billed per character.
+
+That is a category error rather than a vendor one, and it generalises: the
+first question about any hosted voice is now "is it billed per character with
+no monthly ceiling", asked before anyone listens to it. `VOICE_OPTIONS.md`
+carries the shortlist and the arithmetic.
+
+**Deleted, not switched off**, the same as the cold open in §55 and for the
+same reason: a knob left behind is an invitation to turn it back on, and this
+project has had exactly that happen before via an example file. Gone:
+`wellsaid.py`, `setup_wellsaid.py`, its two test files, `WELLSAID_TESTING.md`,
+the settings block, the `ffmpeg_binary` setting that only it used, the second
+key prompt in `start.sh`, and the `var` parameter added to `write_key()` for a
+second provider that no longer exists. 329 tests pass, down from 358 - the
+difference is the WellSaid tests and nothing else.
+
+**Two guards went with it, deliberately, and are worth re-adding by hand
+rather than inheriting.** Both were real bugs found during the experiment, and
+both are properties of *any* hosted engine:
+
+* `default_voice()` returns the first offered voice, so merely registering a
+  paid engine made it the default on any machine without Piper installed -
+  every listener billed per character, nobody having chosen it.
+* `engine_for_voice()` falls back to the best available engine, which is right
+  for an uninstalled local voice and wrong for a hosted one: substituting
+  Piper means judging one engine by another's output.
+
+Leaving them as dead code with an empty set of paid engines would be worse
+than writing them down, so they are written down in `VOICE_OPTIONS.md`.
+
+**What the experiment did establish, and is worth keeping:** the `TTSEngine`
+interface is the right shape. A new voice was a new class plus a `voice:` id
+prefix, and touched nothing in `pipeline.py`, `script_generator.py`, the
+cache, search or the player. Whatever replaces Piper plugs in the same way.
+
+**And the process lesson.** Integration came first and listening came second,
+so a week of plumbing was spent before the thing that killed it - the billing
+model - was visible at all. It would have been visible in five minutes on the
+pricing page. Next time: synthesise the same script through each candidate
+offline, listen, decide, and only then write code.

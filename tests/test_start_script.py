@@ -1,18 +1,21 @@
-"""The launcher must actually stop and ask.
+"""The launcher must actually stop and ask for the key.
 
-It did not. `read -r answer` returns immediately when stdin is not an
-interactive terminal, so the question printed and was declined in the same
+It once did not. `read -r answer` returns immediately when stdin is not an
+interactive terminal, so a question printed and was declined in the same
 breath - which from the outside is indistinguishable from never being asked,
 and is exactly how it was reported: "FAM starts without prompting me".
 
-These read the script rather than running it, because running it installs a
-virtual environment and downloads a voice. What they pin is the shape of the
-decision, which is where the bug was.
+The lesson outlived the feature it was learned on (a hosted voice, since
+removed): **never gate a key prompt behind a yes/no `read`**, and if the key
+cannot be typed here, say so rather than staging a conversation that answers
+itself.
+
+These read the script rather than running it, because running it builds a
+virtual environment and downloads a voice model.
 """
 from __future__ import annotations
 
 import pathlib
-import re
 
 import pytest
 
@@ -31,29 +34,26 @@ def test_the_launcher_exists_and_is_executable():
 
 
 def test_a_missing_key_reaches_the_setup_script_without_a_gate(script):
-    """No "would you like to?" in front of it. The gate added a way to fail
-    and nothing else: setup_wellsaid.py already treats an empty line as
-    "nothing changed", so it can simply be run."""
-    assert "setup_wellsaid.py" in script
-    assert "[y/N]" not in script, "a yes/no gate is back in front of the prompt"
+    """setup_key.py already asks, and already treats an empty line as
+    "nothing changed". A y/N gate in front of it adds a way to fail and
+    nothing else."""
+    assert "setup_key.py" in script
+    assert "[y/N]" not in script, "a yes/no gate is back in front of a key prompt"
     assert "read -r answer" not in script, "the self-answering read is back"
 
 
-def test_a_non_interactive_run_says_so_instead_of_pretending_to_ask(script):
-    """The honest version of the bug: if the key cannot be typed here, say
-    that and give the command, rather than printing a question and answering
-    it."""
-    assert "[ -t 0 ]" in script, "stdin is not checked for being a terminal"
-    assert "interactive terminal" in script
-
-
-def test_it_says_where_it_looked_for_the_key(script):
-    """"The key is not set" is not much help when you cannot tell which file
-    was read - the same lesson as key_source() in config.py."""
-    assert "looked for it in" in script
-
-
-def test_piper_is_untouched_by_any_of_this(script):
-    """The brief was explicit: do not change existing Piper behaviour."""
+def test_piper_is_what_the_launcher_sets_up(script):
+    """The voice runs on the listener's machine. No key, no quota, no
+    per-word cost - which is the property the hosted experiment failed on."""
     assert "setup_voices.py" in script
     assert "PiperEngine.available()" in script
+
+
+def test_nothing_hosted_survived_the_removal(script):
+    """A knob left behind is an invitation to turn it back on."""
+    assert "wellsaid" not in script.lower()
+
+
+def test_it_reports_what_you_will_hear_before_serving(script):
+    """Starting quietly broken is the failure this project has paid for most."""
+    assert "default_voice" in script and "list_voices" in script
