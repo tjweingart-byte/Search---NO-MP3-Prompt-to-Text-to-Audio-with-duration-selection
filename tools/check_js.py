@@ -15,7 +15,7 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-TARGETS = [ROOT / "static" / "index.html"]
+TARGETS = [ROOT / "static" / "index.html", ROOT / "static" / "bench.html"]
 PLAIN_JS = [ROOT / "static" / "fam-audio.js"]
 
 INLINE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S)
