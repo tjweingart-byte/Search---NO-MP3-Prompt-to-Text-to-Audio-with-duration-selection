@@ -130,18 +130,62 @@ re-explained, which is the exact opposite of what retrieved sources are for.
 The first replicates the manual run ten times instead of once, so the number
 has a spread. Run it before trusting anything else the engine says.
 
-## Connecting Chatterbox
+## Chatterbox
 
-Start a GPU pod yourself — this tool will not — then:
+Two arms, ported from `test_chatterbox.py`. They run the *same* code; they
+differ only in where it runs.
+
+**`chatterbox_local` — in-process, no GPU rental.** Exactly what the manual
+test did: `ChatterboxTTS.from_pretrained(device=...)`, then `model.generate()`,
+with the sample rate taken from `model.sr`. On the Mac the test was run on
+that is `device="mps"`; on a card it is `"cuda"`.
+
+    pip install -r experiments/requirements-chatterbox.txt
+
+**`chatterbox` — remote, over HTTP.** For a pod that is already running. This
+tool never starts, stops or pays for one; without an endpoint it stops and
+says so.
 
     export CHATTERBOX_ENDPOINT=https://<host>/synthesise
 
-The endpoint must honour:
+### The endpoint contract
 
-    POST {endpoint}  {"text": str, "sample_rate": int}
-    ->  {"pcm_base64": str, "sample_rate": int, "gpu_seconds": float}
+    POST {endpoint}
+    {"text": str, "sample_rate": int}          # rate is a hint only
+    -> {"pcm_base64": str,                     # 16-bit LE mono PCM, no header
+        "sample_rate": int,                    # the MODEL's rate (model.sr)
+        "gpu_seconds": float,                  # optional -> the "remote" column
+        "device": str,                         # optional, e.g. "cuda"
+        "cold": bool}                          # optional, first generate?
 
-`gpu_seconds` is optional; when present it becomes the "remote" column above.
+**The response's `sample_rate` wins.** The manual test takes it from
+`model.sr`, so the model decides it; a caller imposing its own would be
+resampling or mislabelling.
+
+A working endpoint is in `experiments/adapters/chatterbox_server_example.py` —
+copy it to the pod and run it. It wraps the same `synthesise()` the local arm
+calls, so the two arms stay comparable. Nothing in this repo imports or starts
+it, and a test enforces that.
+
+### Two things the engine measures that one manual run could not
+
+**Model loading is not synthesis.** `from_pretrained` costs seconds and happens
+once per sweep; folding it into trial one would make that trial look
+catastrophic and the rest look fast. It is timed separately and reported as
+`model_load_seconds`.
+
+**The first generate is cold.** Lazy kernel compilation makes it slower.
+Every trial records `cold`, and `params={"warmup": true}` absorbs it with a
+throwaway generate first. The default is `false`, which is what the manual test
+did.
+
+**CPU is never chosen silently.** Chatterbox on CPU is slower than realtime, so
+an unasked fallback would report a disastrous number for a model that never got
+a chance. The adapter refuses unless you ask for `device: "cpu"` by name.
+
+### Ready-made spec
+
+    python tools/experiment.py run experiments/specs/piper_vs_chatterbox_local.json
 
 ## Statistics, and why they are cautious
 

@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import pathlib
+import sys
 
 import pytest
 
@@ -976,3 +977,234 @@ def test_the_report_flags_a_cost_it_could_not_measure():
     analysis = report.analyse(spec, results)
     assert analysis["arms"][0]["cost_unknown"] == 3
     assert "unknown, not zero" in report.render(spec, analysis)
+
+
+# --------------------------------------------------------------------------
+# Chatterbox, ported from test_chatterbox.py
+# --------------------------------------------------------------------------
+class _FakeWav:
+    """Stands in for the torch tensor `model.generate()` returns."""
+
+    def __init__(self, frames, value=0.5):
+        self._data = [value] * frames
+        self.shape = (1, frames)
+
+    def __len__(self):
+        return len(self._data)
+
+    def __getitem__(self, index):
+        return self._data[index]
+
+
+class _FakeChatterboxModel:
+    """`ChatterboxTTS` as the manual test uses it: `.generate()` and `.sr`."""
+
+    sr = 24000
+
+    def __init__(self, frames_per_char=200):
+        self.frames_per_char = frames_per_char
+        self.calls = []
+
+    def generate(self, text):
+        self.calls.append(text)
+        return _FakeWav(self.frames_per_char * max(1, len(text)))
+
+
+@pytest.fixture
+def chatterbox_stub(monkeypatch):
+    """The real adapter code, with only the model load replaced."""
+    from experiments.adapters import chatterbox_impl
+
+    chatterbox_impl.reset()
+    model = _FakeChatterboxModel()
+    monkeypatch.setattr(chatterbox_impl, "load_model", lambda device: (model, 1.75))
+    monkeypatch.setattr(chatterbox_impl, "resolve_device",
+                        lambda requested=None: (requested or "mps", bool(requested)))
+    yield model
+    chatterbox_impl.reset()
+
+
+def test_the_sample_rate_comes_from_the_model_not_from_us(chatterbox_stub):
+    """`test_chatterbox.py` takes the rate from `model.sr`; imposing our own
+    would mislabel or resample the audio."""
+    from experiments.adapters import chatterbox_impl
+
+    out = chatterbox_impl.synthesise("Welcome to FAM.", device="mps")
+    assert out["sample_rate"] == 24000
+    assert out["sample_rate"] != 22050, "must not fall back to FAM's own rate"
+
+
+def test_audio_duration_is_derived_from_the_waveform(chatterbox_stub):
+    from experiments.adapters import chatterbox_impl
+
+    text = "Welcome to FAM."
+    out = chatterbox_impl.synthesise(text, device="mps")
+    expected = (200 * len(text)) / 24000
+    assert out["audio_seconds"] == pytest.approx(expected)
+    # 16-bit mono: two bytes per frame.
+    assert len(out["pcm"]) == 2 * 200 * len(text)
+
+
+def test_realtime_factor_is_audio_over_wall_time(chatterbox_stub):
+    from experiments.adapters import chatterbox_impl
+
+    out = chatterbox_impl.synthesise("Welcome to FAM.", device="mps")
+    assert out["realtime_factor"] == pytest.approx(
+        out["audio_seconds"] / out["generate_seconds"], rel=1e-6)
+    assert out["realtime_factor"] > 1
+
+
+def test_model_loading_is_not_counted_as_synthesis(chatterbox_stub):
+    """`from_pretrained` costs seconds and happens once. Folding it into the
+    first trial would make trial one look catastrophic."""
+    from experiments.adapters import chatterbox_impl
+
+    out = chatterbox_impl.synthesise("Welcome to FAM.", device="mps")
+    assert out["model_load_seconds"] == 1.75
+    assert out["generate_seconds"] < 1.0, "load time leaked into the measurement"
+
+
+def test_the_first_generate_is_recorded_as_cold(chatterbox_stub):
+    """Averaging a cold first run in silently is how a voice gets judged on
+    its worst trial."""
+    from experiments.adapters import chatterbox_impl
+
+    first = chatterbox_impl.synthesise("one", device="mps")
+    second = chatterbox_impl.synthesise("two", device="mps")
+    assert first["cold"] is True
+    assert second["cold"] is False
+
+
+def test_warmup_absorbs_the_cold_run_when_asked(chatterbox_stub):
+    from experiments.adapters import chatterbox_impl
+
+    out = chatterbox_impl.synthesise("one", device="mps", warmup=True)
+    assert out["cold"] is False
+    assert chatterbox_stub.calls[0] == "Warming up."
+    assert chatterbox_stub.calls[1] == "one"
+
+
+def test_cpu_is_never_chosen_silently():
+    """Chatterbox on CPU is slower than realtime; a silent fallback would
+    report a disastrous number for a model that never got a chance."""
+    from experiments.adapters import chatterbox_impl
+
+    devices = {"cpu": True, "cuda": False, "mps": False}
+    original = chatterbox_impl.available_devices
+    try:
+        chatterbox_impl.available_devices = lambda: devices
+        assert chatterbox_impl.resolve_device(None) == ("cpu", False)
+        assert chatterbox_impl.resolve_device("cpu") == ("cpu", True)
+        devices["cuda"] = True
+        assert chatterbox_impl.resolve_device(None) == ("cuda", False)
+        devices["cuda"], devices["mps"] = False, True
+        assert chatterbox_impl.resolve_device(None) == ("mps", False)
+    finally:
+        chatterbox_impl.available_devices = original
+
+
+def test_the_local_adapter_refuses_an_unasked_cpu_run(monkeypatch):
+    from experiments.adapters import chatterbox_impl
+    from experiments.adapters.tts import ChatterboxLocal
+
+    monkeypatch.setitem(sys.modules, "chatterbox", type(sys)("chatterbox"))
+    monkeypatch.setitem(sys.modules, "chatterbox.tts", type(sys)("chatterbox.tts"))
+    monkeypatch.setattr(chatterbox_impl, "resolve_device",
+                        lambda requested=None: ("cpu", bool(requested)))
+    state = ChatterboxLocal().available()
+    assert state.ok is False
+    assert "CPU" in state.reason and "realtime" in state.reason
+    assert ChatterboxLocal(device="cpu").available().ok is True
+
+
+def test_pcm_conversion_clamps_rather_than_wrapping():
+    """A model overshooting [-1, 1] must clip, not wrap into loud noise."""
+    from experiments.adapters.chatterbox_impl import to_pcm16
+
+    assert to_pcm16([0.0, 1.0, -1.0]) == b"\x00\x00\xff\x7f\x01\x80"
+    assert to_pcm16([2.0, -2.0]) == b"\xff\x7f\x01\x80"
+
+
+def test_the_local_adapter_reports_device_and_coldness(chatterbox_stub):
+    from experiments.adapters.tts import ChatterboxLocal
+
+    timeline = Timeline()
+    result = asyncio.run(ChatterboxLocal(device="mps").synth("Welcome to FAM.", timeline))
+    stage = timeline.stages[0]
+    assert stage.name == "synthesis" and stage.host == "local"
+    assert stage.detail["device"] == "mps" and stage.detail["cold"] is True
+    assert result.sample_rate == 24000
+    assert result.audio_seconds > 0
+    assert result.realtime_factor and result.realtime_factor > 1
+    assert result.cost == 0.0, "a machine you already own bills nothing per character"
+
+
+def test_the_remote_adapter_still_needs_approval_and_starts_nothing(monkeypatch):
+    monkeypatch.delenv(CHATTERBOX_ENDPOINT_ENV, raising=False)
+    state = ChatterboxTTS().available()
+    assert state.ok is False and state.needs_approval is True
+    # The local arm is a real alternative that needs no rental.
+    from experiments.adapters.tts import ChatterboxLocal
+
+    assert ChatterboxLocal().available().needs_approval is False
+
+
+def test_the_reference_server_is_not_imported_by_the_engine():
+    """It runs on the pod. Importing it here would pull in fastapi and a model."""
+    import ast
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "experiments"
+    for path in root.rglob("*.py"):
+        if path.name == "chatterbox_server_example.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""] + [a.name for a in node.names]
+            assert not any("chatterbox_server_example" in n for n in names), path.name
+
+
+def test_the_reference_server_speaks_the_documented_contract():
+    """The endpoint contract must be executable, not just described."""
+    source = (pathlib.Path(__file__).resolve().parent.parent / "experiments"
+              / "adapters" / "chatterbox_server_example.py").read_text()
+    for key in ("pcm_base64", "sample_rate", "gpu_seconds", "device", "cold"):
+        assert f'"{key}"' in source, f"the reference endpoint never returns {key}"
+    # It must wrap the same code the local arm runs, or the arms are not comparable.
+    assert "chatterbox_impl.synthesise" in source
+
+
+# --------------------------------------------------------------------------
+# The bug the fakes were hiding
+# --------------------------------------------------------------------------
+def test_real_tts_adapters_measure_duration_from_a_byte_count():
+    """`pcm_duration` takes a count, not a buffer.
+
+    Both real adapters passed the bytes object itself, which raises TypeError.
+    Every test used a fake engine, so nothing caught it and the first real
+    Piper or Chatterbox run would have died. Checked on the source because
+    exercising it needs a model this machine does not have.
+    """
+    import ast
+
+    source = (pathlib.Path(__file__).resolve().parent.parent / "experiments"
+              / "adapters" / "tts.py").read_text()
+    calls = [node for node in ast.walk(ast.parse(source))
+             if isinstance(node, ast.Call)
+             and getattr(node.func, "id", "") == "pcm_duration"]
+    assert calls, "no pcm_duration call found; has the adapter changed?"
+    for call in calls:
+        first = call.args[0]
+        assert isinstance(first, ast.Call) and getattr(first.func, "id", "") == "len", (
+            f"pcm_duration got {ast.unparse(first)}; it takes a byte count")
+
+
+def test_pcm_duration_really_does_reject_a_buffer():
+    """Pins the reason the test above exists, against the real function."""
+    from audio_utils import pcm_duration
+
+    assert pcm_duration(44100, sample_rate=22050) == pytest.approx(1.0)
+    with pytest.raises(TypeError):
+        pcm_duration(b"\x00" * 44100, sample_rate=22050)

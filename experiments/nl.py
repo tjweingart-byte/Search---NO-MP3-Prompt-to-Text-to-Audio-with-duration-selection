@@ -27,6 +27,9 @@ _ALIASES = {
     "existing search": ("search", "anthropic_web_search"),
     "web search": ("search", "anthropic_web_search"),
     "no search": ("search", "none"),
+    # Longest alias first: "chatterbox local" must not match plain "chatterbox".
+    "chatterbox local": ("tts", "chatterbox_local"),
+    "local chatterbox": ("tts", "chatterbox_local"),
     "chatterbox": ("tts", "chatterbox"),
     "piper": ("tts", "piper"),
 }
@@ -64,10 +67,16 @@ def compile_request(text: str) -> Parsed:
     # produces arms in that order rather than in whatever order this file
     # happens to list its aliases.
     hits: dict[str, list[tuple[int, str]]] = {"search": [], "tts": []}
-    for alias, (kind, value) in _ALIASES.items():
-        at = low.find(alias)
+    # Longest alias first, and each match blanks out the span it consumed, so
+    # "chatterbox local" cannot also register a plain "chatterbox" arm inside
+    # itself. Without the masking, one phrase produced two contradictory arms.
+    scratch = low
+    for alias in sorted(_ALIASES, key=len, reverse=True):
+        kind, value = _ALIASES[alias]
+        at = scratch.find(alias)
         if at >= 0 and all(v != value for _, v in hits[kind]):
             hits[kind].append((at, value))
+            scratch = scratch[:at] + (" " * len(alias)) + scratch[at + len(alias):]
     named = {kind: [v for _, v in sorted(items)] for kind, items in hits.items()}
 
     full = any(w in low for w in ("pipeline", "end to end", "end-to-end", "full stack"))

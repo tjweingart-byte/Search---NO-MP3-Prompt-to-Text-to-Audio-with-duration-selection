@@ -1,0 +1,29 @@
+{
+  "name": "Piper vs Chatterbox (local)",
+  "kind": "component",
+  "arms": [
+    {
+      "name": "piper",
+      "search": "none",
+      "tts": "piper",
+      "params": {"first_chunk_words": 25}
+    },
+    {
+      "name": "chatterbox-local",
+      "search": "none",
+      "tts": "chatterbox_local",
+      "params": {"first_chunk_words": 25, "warmup": true}
+    }
+  ],
+  "queries": [
+    "Why are founder CEOs becoming harder for boards to remove?",
+    "why do tides happen",
+    "how does a heat pump work"
+  ],
+  "trials": 10,
+  "minutes": 3,
+  "stages": ["generate", "first_chunk", "synthesis", "first_audio"],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "The voice comparison that costs no GPU rental: Chatterbox in-process on whatever device this machine has, against Piper as it ships. warmup=true absorbs the cold first generate so the ten trials measure steady state; drop it to reproduce test_chatterbox.py's cold single run. Watch the realtime factor as much as the latency - Piper runs about 330x, and a voice below about 1x cannot ship at any quality."
+}

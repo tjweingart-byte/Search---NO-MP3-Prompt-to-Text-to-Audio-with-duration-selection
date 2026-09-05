@@ -1,0 +1,17 @@
+# Chatterbox, kept separate on purpose.
+#
+# This pulls in torch and torchaudio - gigabytes, and platform-specific. It is
+# not in experiments/requirements.txt because installing the Exa adapter must
+# not drag a deep-learning stack onto a machine that only wants to measure
+# search, and it is not in the app's requirements.txt because production FAM
+# does not know this package exists.
+#
+#   pip install -r experiments/requirements-chatterbox.txt
+#
+# On the Mac the manual test ran on, torch provides the "mps" backend; on a
+# Runpod card it provides "cuda". The adapter refuses to run on CPU unless
+# asked, because CPU is slower than realtime and would measure the machine.
+
+chatterbox-tts
+torch
+torchaudio

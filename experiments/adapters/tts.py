@@ -97,7 +97,7 @@ class LocalTTS:
             stage.detail["bytes"] = len(pcm)
         wall = time.perf_counter() - started
         rate = engine.sample_rate
-        seconds = pcm_duration(pcm, sample_rate=rate)
+        seconds = pcm_duration(len(pcm), sample_rate=rate)
         return SynthResult(
             pcm=pcm,
             sample_rate=rate,
@@ -119,12 +119,25 @@ class ChatterboxTTS:
     Expected contract, so the endpoint can be anything that honours it::
 
         POST {endpoint}
-        {"text": str, "sample_rate": int}
-        -> {"pcm_base64": str, "sample_rate": int, "gpu_seconds": float}
+        {"text": str, "sample_rate": int}          # rate is a hint only
+        -> {"pcm_base64": str,                     # 16-bit LE mono PCM, no header
+            "sample_rate": int,                    # the MODEL's rate (model.sr)
+            "gpu_seconds": float,                  # optional
+            "device": str,                         # optional, e.g. "cuda"
+            "cold": bool}                          # optional, first generate?
+
+    The response's `sample_rate` wins. `test_chatterbox.py` takes the rate from
+    `model.sr`, so the model decides it and a caller that imposed its own would
+    be resampling or mislabelling. The request's value is a hint the endpoint
+    may ignore.
 
     `gpu_seconds` is optional and is recorded as the remote's own view of its
     time. It never replaces the wall time measured here, because the difference
     between them is the cost of the GPU being on another machine.
+
+    A reference endpoint honouring this contract is in
+    `experiments/adapters/chatterbox_server_example.py`; it wraps the same
+    `synthesise()` this repo uses locally, so both arms run identical code.
     """
 
     id = "chatterbox"
@@ -183,13 +196,16 @@ class ChatterboxTTS:
                 body = json.loads(reply.read().decode())
             stage.remote_seconds = body.get("gpu_seconds")
             stage.detail["bytes"] = len(body.get("pcm_base64", "")) * 3 // 4
+            for key in ("device", "cold"):
+                if key in body:
+                    stage.detail[key] = body[key]
         wall = time.perf_counter() - started
 
         pcm = base64.b64decode(body.get("pcm_base64", ""))
         rate = int(body.get("sample_rate", rate))
         from audio_utils import pcm_duration
 
-        seconds = pcm_duration(pcm, sample_rate=rate)
+        seconds = pcm_duration(len(pcm), sample_rate=rate)
         gpu_seconds = body.get("gpu_seconds")
         return SynthResult(
             pcm=pcm,
@@ -197,7 +213,96 @@ class ChatterboxTTS:
             audio_seconds=seconds,
             cost=(gpu_seconds or wall) / 3600.0 * GPU_DOLLARS_PER_HOUR,
             remote_seconds=gpu_seconds,
-            detail={"wall_seconds": wall, "endpoint_configured": True},
+            detail={
+                "wall_seconds": wall,
+                "endpoint_configured": True,
+                "device": body.get("device"),
+                "cold": body.get("cold"),
+            },
+        )
+
+
+class ChatterboxLocal:
+    """Chatterbox in this process, exactly as `test_chatterbox.py` ran it.
+
+    This is the arm that needs no GPU rental: on the Mac the manual test was
+    run on, `device="mps"` reproduces it. On a machine with a card it is
+    `device="cuda"`, which is the same code path the Runpod endpoint runs
+    behind HTTP - so local and remote arms differ in where they run, not in
+    what they do.
+
+    Nothing here provisions anything. It loads a model already on the machine.
+    """
+
+    id = "chatterbox_local"
+    label = "Chatterbox (in-process)"
+    host = "local"
+
+    def __init__(self, device: str | None = None) -> None:
+        self.device = device
+
+    def available(self) -> Availability:
+        from experiments.adapters import chatterbox_impl
+
+        try:
+            import chatterbox.tts  # noqa: F401
+        except ImportError:
+            return Availability(
+                ok=False,
+                reason="The chatterbox-tts package is not installed.",
+                remedy="pip install -r experiments/requirements-chatterbox.txt",
+            )
+        resolved, explicit = chatterbox_impl.resolve_device(self.device)
+        if resolved == "cpu" and not explicit:
+            return Availability(
+                ok=False,
+                reason=(
+                    "No GPU or Metal device is available, so this would run on "
+                    "CPU - slower than realtime, which measures the machine "
+                    "rather than the model."
+                ),
+                remedy=(
+                    'Run on a machine with "mps" (Apple Silicon) or "cuda", or '
+                    'ask for CPU deliberately with params={"device": "cpu"}.'
+                ),
+            )
+        return Availability(ok=True, reason=f"device: {resolved}")
+
+    async def synth(self, text: str, timeline: Timeline, **params) -> SynthResult:
+        import asyncio
+
+        from experiments.adapters import chatterbox_impl
+
+        device = params.get("device") or self.device
+        warmup = bool(params.get("warmup", False))
+
+        with timeline.span("synthesis", host=self.host, adapter=self.id) as stage:
+            # Off the event loop: inference is blocking work, and blocking the
+            # loop here would distort nothing today but would the moment
+            # anything else needs to run alongside it.
+            out = await asyncio.to_thread(
+                chatterbox_impl.synthesise, text, device, warmup
+            )
+            stage.detail.update({
+                "device": out["device"],
+                "cold": out["cold"],
+                "bytes": len(out["pcm"]),
+                "model_load_seconds": round(out["model_load_seconds"], 3),
+            })
+
+        return SynthResult(
+            pcm=out["pcm"],
+            sample_rate=out["sample_rate"],
+            audio_seconds=out["audio_seconds"],
+            cost=0.0,  # a machine you already have; no per-character billing
+            detail={
+                "wall_seconds": out["generate_seconds"],
+                "device": out["device"],
+                "cold": out["cold"],
+                "model_load_seconds": out["model_load_seconds"],
+                "realtime_factor": out["realtime_factor"],
+                "chars": out["chars"],
+            },
         )
 
 
@@ -215,4 +320,6 @@ class NoTTS:
         return SynthResult(pcm=b"", audio_seconds=0.0)
 
 
-TTS_ADAPTERS = {a.id: a for a in (NoTTS(), LocalTTS(), ChatterboxTTS())}
+TTS_ADAPTERS = {
+    a.id: a for a in (NoTTS(), LocalTTS(), ChatterboxTTS(), ChatterboxLocal())
+}
