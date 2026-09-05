@@ -94,6 +94,12 @@ def estimate(spec) -> Estimate:
         elif arm.search == "exa":
             # Exa context is pasted in, so it also inflates input tokens.
             input_tokens = int(input_tokens * SEARCH_INPUT_TOKEN_MULTIPLIER)
+        elif arm.search == "fixed_packet":
+            # A saved packet costs nothing to fetch, but its text is still
+            # input tokens. Measured from the packet on disk when there is one,
+            # rather than assumed - this is the arm where the estimate can
+            # actually be right.
+            input_tokens = _packet_input_tokens(arm) or input_tokens
         output_tokens = int(ASSUMED_OUTPUT_TOKENS_PER_MINUTE * spec.minutes)
         if arm.params.get("generator") == "benchmark":
             # The manual benchmark writes only an opening, hard-capped at 220
@@ -126,6 +132,27 @@ def estimate(spec) -> Estimate:
             "recorded from the API response once the adapter is connected."
         )
     return est
+
+
+#: Rough chars-per-token for English prose. Only used to size a saved packet
+#: for the estimate; the recorded cost comes from real usage numbers.
+CHARS_PER_TOKEN = 3.6
+
+#: The system prompt, the question and the request scaffolding around a packet.
+PACKET_OVERHEAD_TOKENS = 150
+
+
+def _packet_input_tokens(arm) -> int:
+    """Input tokens for an arm replaying a saved packet, if it is on disk."""
+    try:
+        from experiments.adapters.packet import describe
+
+        info = describe(arm.params.get("packet") or "founder_ceos")
+    except Exception:
+        return 0
+    if not info:
+        return 0
+    return int(info["chars"] / CHARS_PER_TOKEN) + PACKET_OVERHEAD_TOKENS
 
 
 def _default_model() -> str:

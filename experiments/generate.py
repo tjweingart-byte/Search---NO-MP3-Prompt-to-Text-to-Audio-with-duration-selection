@@ -13,6 +13,7 @@ is how this repository has always been able to check itself.
 from __future__ import annotations
 
 import dataclasses
+import time
 from typing import AsyncIterator, Optional, Protocol
 
 
@@ -91,6 +92,7 @@ class ClaudeGenerator:
             plan = plan_episode(with_packet(query, context), minutes, search=search)
             generator = ScriptGenerator()
             generator.client = build_async_client()
+            started = time.perf_counter()
             kwargs = generator._request_kwargs(plan)
             kwargs["model"] = model or patched.model
 
@@ -106,8 +108,9 @@ class ClaudeGenerator:
                         # Drain first: see `_drain`. Doing it here also means
                         # the usage snapshot below covers the whole response,
                         # which is what was billed.
-                        await _drain(text_stream)
+                        elapsed = await _drain_timed(text_stream, started)
                         self._usage = _usage_from(final, stream, kwargs["model"])
+                        self._usage["stream_seconds"] = elapsed
             finally:
                 # The client owns an httpx connection pool. One is built per
                 # trial, so leaving them to the garbage collector leaks a pool
@@ -115,6 +118,18 @@ class ClaudeGenerator:
                 await generator.client.close()
         finally:
             script_generator.settings = original
+
+
+async def _drain_timed(iterator, started: float) -> float:
+    """Drain, and report when the response actually ended.
+
+    The consumer stops at the first speakable chunk, so nobody else is in a
+    position to see the end of the stream. Teardown is, and it costs nothing
+    extra to note the time - which is the only way a total generation time can
+    be reported for a run that deliberately stops reading early.
+    """
+    await _drain(iterator)
+    return time.perf_counter() - started
 
 
 async def _drain(iterator) -> None:
@@ -246,6 +261,7 @@ class BenchmarkOpeningGenerator:
         client = build_async_client()
         chosen = model or BENCHMARK_MODEL
         final = None
+        started = time.perf_counter()
         try:
             async with client.messages.stream(
                 model=chosen,
@@ -266,9 +282,123 @@ class BenchmarkOpeningGenerator:
                         yield delta
                     final = await stream.get_final_message()
                 finally:
-                    await _drain(text_stream)
+                    elapsed = await _drain_timed(text_stream, started)
                     self._usage = _usage_from(final, stream, chosen)
                     self._usage["generator"] = "benchmark"
+                    self._usage["stream_seconds"] = elapsed
+        finally:
+            await client.close()
+
+
+#: Added to the system prompt by the `first_chunk` arm. It asks for a *fuller*
+#: opening sentence, not a shorter one: the failure mode to avoid is buying
+#: latency by degrading the writing, so this shapes the first sentence rather
+#: than truncating it. Everything about FAM's voice and the
+#: evidence-only rule is inherited from BENCHMARK_SYSTEM unchanged.
+FIRST_SENTENCE_DIRECTIVE = (
+    " Your first sentence must be a complete, concrete, self-contained "
+    "declarative statement drawn from the evidence - a fact with a subject and "
+    "a consequence, not a scene-setter and not a question. Write it in full "
+    "before you write anything else; do not open with a fragment, a clause you "
+    "intend to finish later, or a phrase that only makes sense once the second "
+    "sentence arrives."
+)
+
+
+class TunedOpeningGenerator:
+    """The benchmark's call, with the request settings under experiment.
+
+    Same model, same evidence, same 220-token ceiling and the same system
+    prompt as the control - what changes is only what an arm asks for:
+
+    ``thinking``      "adaptive" (the control's effective behaviour) or
+                      "disabled". Sonnet 5 runs adaptive when `thinking` is
+                      omitted, so the control is thinking on every call with
+                      `display` defaulting to omitted - which is why it can
+                      look like a pause before any text arrives.
+    ``effort``        `output_config.effort`; the API default is "high".
+    ``first_sentence_directive``
+                      appends FIRST_SENTENCE_DIRECTIVE to the system prompt.
+
+    Nothing here changes the model, the packet, the chunk rule or max_tokens,
+    so a difference it produces is a difference in request settings and
+    prompting alone.
+    """
+
+    def __init__(self, thinking: str = "disabled", effort: str | None = "low",
+                 first_sentence_directive: bool = False, **_ignored) -> None:
+        self.thinking = thinking
+        self.effort = effort
+        self.first_sentence_directive = first_sentence_directive
+        self._usage: dict = {}
+
+    def usage(self) -> dict:
+        return dict(self._usage)
+
+    def system_prompt(self) -> str:
+        if self.first_sentence_directive:
+            return BENCHMARK_SYSTEM + FIRST_SENTENCE_DIRECTIVE
+        return BENCHMARK_SYSTEM
+
+    def request_kwargs(self, model: str, query: str, context: str) -> dict:
+        kwargs: dict = {
+            "model": model,
+            "max_tokens": BENCHMARK_MAX_TOKENS,
+            "system": self.system_prompt(),
+            "messages": [{
+                "role": "user",
+                "content": (
+                    f"USER SEARCH:\n{query}\n\n"
+                    f"EVIDENCE PACKET:\n{context}\n\n"
+                    f"Begin the episode now."
+                ),
+            }],
+        }
+        # Omitting `thinking` is not the same as disabling it: on Sonnet 5 an
+        # omitted `thinking` runs adaptive. "adaptive" here is therefore the
+        # control's behaviour stated explicitly, not an extra setting.
+        if self.thinking == "disabled":
+            kwargs["thinking"] = {"type": "disabled"}
+        elif self.thinking == "adaptive":
+            kwargs["thinking"] = {"type": "adaptive"}
+        if self.effort:
+            kwargs["output_config"] = {"effort": self.effort}
+        return kwargs
+
+    async def stream(
+        self,
+        query: str,
+        minutes: float,
+        context: str = "",
+        model: Optional[str] = None,
+        search: bool = False,
+        max_searches: int = 3,
+    ) -> AsyncIterator[str]:
+        from anthropic_client import build_async_client
+
+        client = build_async_client()
+        chosen = model or BENCHMARK_MODEL
+        final = None
+        started = time.perf_counter()
+        try:
+            async with client.messages.stream(
+                **self.request_kwargs(chosen, query, context)
+            ) as stream:
+                text_stream = stream.text_stream
+                try:
+                    async for delta in text_stream:
+                        yield delta
+                    final = await stream.get_final_message()
+                finally:
+                    elapsed = await _drain_timed(text_stream, started)
+                    self._usage = _usage_from(final, stream, chosen)
+                    self._usage["stream_seconds"] = elapsed
+                    self._usage.update({
+                        "generator": "tuned",
+                        "thinking": self.thinking,
+                        "effort": self.effort,
+                        "first_sentence_directive": self.first_sentence_directive,
+                    })
         finally:
             await client.close()
 
@@ -276,13 +406,23 @@ class BenchmarkOpeningGenerator:
 GENERATORS = {
     "production": ClaudeGenerator,
     "benchmark": BenchmarkOpeningGenerator,
+    "tuned": TunedOpeningGenerator,
 }
 
 
-def build_generator(name: str = "production"):
-    """Pick a generator by name, failing loudly on an unknown one."""
+def build_generator(name: str = "production", **options):
+    """Pick a generator by name, failing loudly on an unknown one.
+
+    `options` come from the arm's params, so an arm can say
+    `{"generator": "tuned", "thinking": "disabled", "effort": "low"}`.
+    Generators that take no options ignore them.
+    """
     if name not in GENERATORS:
         raise KeyError(
             f"Unknown generator {name!r}. Known: {', '.join(sorted(GENERATORS))}"
         )
-    return GENERATORS[name]()
+    factory = GENERATORS[name]
+    try:
+        return factory(**options)
+    except TypeError:
+        return factory()

@@ -1,0 +1,54 @@
+{
+  "name": "Claude generation latency (fixed packet)",
+  "kind": "component",
+  "arms": [
+    {
+      "name": "control-verified",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "benchmark",
+        "first_chunk_words": 25,
+        "packet": "founder_ceos"
+      }
+    },
+    {
+      "name": "thinking-off",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "tuned",
+        "thinking": "disabled",
+        "effort": "low",
+        "first_sentence_directive": false,
+        "first_chunk_words": 25,
+        "packet": "founder_ceos"
+      }
+    },
+    {
+      "name": "first-chunk-optimised",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "tuned",
+        "thinking": "disabled",
+        "effort": "low",
+        "first_sentence_directive": true,
+        "first_chunk_words": 25,
+        "packet": "founder_ceos"
+      }
+    }
+  ],
+  "queries": [
+    "Why are founder CEOs becoming harder for boards to remove?"
+  ],
+  "trials": 10,
+  "minutes": 3,
+  "stages": ["generate", "first_chunk"],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "Isolates Claude generation by replaying one saved Exa packet on every trial of every arm - no Exa call, no search latency, identical evidence everywhere. Same query, packet shape, system prompt, 25-word sentence-boundary chunk rule, model and 220-token ceiling as the verified replication. Arm 1 is that replication byte for byte. Arm 2 changes only request settings. Arm 3 adds a first-sentence directive that asks for a fuller opening sentence, never a shorter one. Every first chunk is saved so the arms can be read side by side: a latency win that costs quality is not a win."
+}

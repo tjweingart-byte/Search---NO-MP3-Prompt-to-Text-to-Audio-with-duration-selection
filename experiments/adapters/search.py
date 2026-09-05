@@ -163,4 +163,12 @@ class ExaSearch:
         )
 
 
-SEARCH_ADAPTERS = {a.id: a for a in (NoSearch(), AnthropicWebSearch(), ExaSearch())}
+def _fixed_packet():
+    from experiments.adapters.packet import FixedPacket
+
+    return FixedPacket()
+
+
+SEARCH_ADAPTERS = {
+    a.id: a for a in (NoSearch(), AnthropicWebSearch(), ExaSearch(), _fixed_packet())
+}

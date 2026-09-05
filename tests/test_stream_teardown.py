@@ -230,25 +230,27 @@ def test_drain_survives_a_stream_that_errors_midway():
     asyncio.run(main())
 
 
-def test_generate_drains_both_generators():
-    """Both the production and benchmark generators must drain."""
+def test_every_generator_drains_in_a_finally():
+    """Each generator must drain, and do it where a break cannot skip it."""
     import ast
     import pathlib
 
+    from experiments.generate import GENERATORS
+
     source = (pathlib.Path(__file__).resolve().parent.parent
               / "experiments" / "generate.py").read_text()
-    assert source.count("await _drain(text_stream)") == 2
-
     tree = ast.parse(source)
+
     drained_in_finally = 0
     for node in ast.walk(tree):
         if isinstance(node, ast.Try):
             for statement in node.finalbody:
                 for inner in ast.walk(statement):
                     if (isinstance(inner, ast.Call)
-                            and getattr(inner.func, "id", "") == "_drain"):
+                            and getattr(inner.func, "id", "") in ("_drain", "_drain_timed")):
                         drained_in_finally += 1
-    assert drained_in_finally == 2, "a drain outside a finally would be skipped on break"
+    assert drained_in_finally == len(GENERATORS), (
+        "a drain outside a finally would be skipped when the consumer breaks")
 
 
 def test_the_harness_tears_down_after_the_timeline_is_snapshotted():

@@ -35,15 +35,21 @@ from experiments.timeline import Timeline
 _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s")
 
 
+#: Arm params the generators understand. Everything else in `params` belongs
+#: to an adapter, so it is not forwarded and cannot be silently misread.
+GENERATOR_OPTIONS = ("thinking", "effort", "first_sentence_directive")
+
+
 def _generator_for(arm: Arm):
-    """Which model call this arm makes.
+    """Which model call this arm makes, and how it is configured.
 
     `production` (the default) uses the app's own request shape, so the result
     says something about what ships. `benchmark` reproduces the manual Exa
-    benchmark's short opening call, so a run can be checked against the numbers
-    measured by hand.
+    benchmark's short opening call byte for byte. `tuned` is that same call
+    with the request settings under experiment.
     """
-    return build_generator(arm.params.get("generator", "production"))
+    options = {k: arm.params[k] for k in GENERATOR_OPTIONS if k in arm.params}
+    return build_generator(arm.params.get("generator", "production"), **options)
 
 
 #: The manual Exa benchmark's chunk rule: the first sentence that leaves at
@@ -93,6 +99,10 @@ class TrialResult:
     ok: bool = True
     error: Optional[str] = None
     simulated: bool = False
+    #: The opening the model actually wrote. Saved so arms can be compared on
+    #: what they said, not only on how fast they said it - a latency win that
+    #: costs quality is not a win.
+    first_chunk_text: str = ""
     timeline: dict = field(default_factory=dict)
     metrics: dict = field(default_factory=dict)
     usage: dict = field(default_factory=dict)
@@ -112,6 +122,7 @@ class TrialResult:
             "usage": self.usage,
             "cost": round(self.cost, 6),
             "artifacts": list(self.artifacts),
+            "first_chunk_text": self.first_chunk_text,
             "timeline": self.timeline,
             "recorded_at": time.time(),
         }
@@ -142,6 +153,7 @@ class Harness:
         result = TrialResult(arm=arm.name, query=query, index=index)
         timeline = Timeline()
         token_stream = None
+        generator = None
         search = self.search_factory(arm.search)
         tts = self.tts_factory(arm.tts, arm.params.get("voice"))
         generator = self.generator_factory(arm)
@@ -181,6 +193,11 @@ class Harness:
                         stage.detail["first_token_at"] = timeline.at("first_token")
                     buffer += delta
                     full.append(delta)
+                    # The word count crosses 25 before the sentence that
+                    # contains it closes, so these are two different moments
+                    # and the gap between them is what the chunk rule costs.
+                    if timeline.at("words_25") is None and len(buffer.split()) >= 25:
+                        timeline.mark("words_25")
                     if first_chunk is None:
                         candidate = first_chunk_ready(buffer, chunk_words)
                         if candidate:
@@ -219,8 +236,10 @@ class Harness:
                     usage.get("input_tokens", 0),
                     usage.get("output_tokens", 0),
                 )
+            result.first_chunk_text = first_chunk or ""
             result.metrics = {
                 "first_token": timeline.at("first_token"),
+                "words_25": timeline.at("words_25"),
                 "first_chunk": timeline.at("first_chunk"),
                 "first_audio": timeline.at("first_audio"),
                 "search_seconds": _stage_duration(timeline, "search"),
@@ -229,6 +248,13 @@ class Harness:
                 "audio_seconds": audio.audio_seconds if audio else 0.0,
                 "realtime_factor": audio.realtime_factor if audio else None,
                 "first_chunk_words": len(first_chunk.split()) if first_chunk else 0,
+                "first_chunk_chars": len(first_chunk) if first_chunk else 0,
+                # How long the 25-word mark waited for its sentence to close.
+                "boundary_wait": (
+                    timeline.at("first_chunk") - timeline.at("words_25")
+                    if timeline.at("first_chunk") is not None
+                    and timeline.at("words_25") is not None else None
+                ),
                 "sources": len(retrieved.sources),
                 "searches": retrieved.searches or usage.get("searches", 0),
                 "server_side_search": server_side,
@@ -243,6 +269,15 @@ class Harness:
             # influence a measurement.
             result.timeline = timeline.to_dict()
             await _aclose(token_stream)
+            # Draining the stream is what makes a total generation time
+            # knowable at all: the trial stops reading at the first chunk, so
+            # only teardown sees the response end. Read after the close.
+            if generator is not None and hasattr(generator, "usage"):
+                complete = generator.usage()
+                if complete:
+                    result.usage = {**result.usage, **complete}
+                    if complete.get("stream_seconds") is not None:
+                        result.metrics["total_generation_seconds"] = complete["stream_seconds"]
 
         return result
 

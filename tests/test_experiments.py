@@ -675,7 +675,7 @@ def test_the_benchmark_generator_is_available_but_not_the_default():
     from experiments.generate import BENCHMARK_SYSTEM, GENERATORS, build_generator
     from experiments.harness import _generator_for
 
-    assert set(GENERATORS) == {"production", "benchmark"}
+    assert set(GENERATORS) == {"production", "benchmark", "tuned"}
     assert type(_generator_for(Arm("a"))).__name__ == "ClaudeGenerator"
     assert type(_generator_for(Arm("a", params={"generator": "benchmark"}))).__name__ \
         == "BenchmarkOpeningGenerator"
@@ -902,13 +902,15 @@ def test_a_generator_that_finishes_normally_still_closes_cleanly():
     assert not [entry for entry in log if entry.startswith("wrong-task")]
 
 
-def test_the_anthropic_client_is_closed_by_both_generators():
+def test_the_anthropic_client_is_closed_by_every_generator():
     """The client owns an httpx pool; one is built per trial.
 
     Checked on the source rather than by calling the API: both generators must
     close the client they build, in a `finally` so an early break still does it.
     """
     import ast
+
+    from experiments.generate import GENERATORS
 
     source = (pathlib.Path(__file__).resolve().parent.parent
               / "experiments" / "generate.py").read_text()
@@ -933,7 +935,8 @@ def test_the_anthropic_client_is_closed_by_both_generators():
     anywhere = closes_in([tree])
 
     client_closes = [c for c in anywhere if "client.close()" in c]
-    assert len(client_closes) == 2, f"expected both generators to close a client: {anywhere}"
+    assert len(client_closes) == len(GENERATORS), (
+        f"every generator must close its client: {anywhere}")
     for call in client_closes:
         assert call in in_finally, f"{call} is not inside a finally block"
 
@@ -1345,3 +1348,177 @@ def test_the_reference_server_is_not_imported_by_the_engine():
             elif isinstance(node, ast.ImportFrom):
                 names = [node.module or ""] + [a.name for a in node.names]
             assert not any("chatterbox_server_example" in n for n in names), path.name
+
+
+# --------------------------------------------------------------------------
+# Isolating Claude: a replayed packet and the tuned generator
+# --------------------------------------------------------------------------
+def test_a_saved_packet_is_replayed_with_no_network(tmp_path, monkeypatch):
+    from experiments.adapters import packet as packet_mod
+
+    monkeypatch.setattr(packet_mod, "PACKETS_DIR", tmp_path)
+    (tmp_path / "p.json").write_text(json.dumps({
+        "query": "q", "context": "SOURCE 1\nTitle: X\nKey evidence:\nfact",
+        "sources": ["a.com", "b.com"], "captured_at": 1.0}))
+
+    adapter = packet_mod.FixedPacket("p")
+    assert adapter.available().ok is True
+
+    timeline = Timeline()
+    result = asyncio.run(adapter.search("q", timeline))
+    assert result.context.startswith("SOURCE 1")
+    assert result.sources == ["a.com", "b.com"]
+    assert result.cost == 0.0 and result.searches == 0
+    # No span: replay takes no time worth reporting, so it invents none.
+    assert timeline.stages == []
+    assert adapter.separable is False
+
+
+def test_a_missing_packet_refuses_with_the_command_to_make_one(tmp_path, monkeypatch):
+    from experiments.adapters import packet as packet_mod
+
+    monkeypatch.setattr(packet_mod, "PACKETS_DIR", tmp_path)
+    state = packet_mod.FixedPacket("absent").available()
+    assert state.ok is False
+    assert "capture_packet" in state.remedy
+
+
+def test_every_arm_sees_byte_identical_evidence(tmp_path, monkeypatch):
+    """The whole point of replay: evidence cannot vary between arms."""
+    from experiments.adapters import packet as packet_mod
+
+    monkeypatch.setattr(packet_mod, "PACKETS_DIR", tmp_path)
+    (tmp_path / "p.json").write_text(json.dumps({"context": "FIXED", "sources": []}))
+    adapter = packet_mod.FixedPacket("p")
+    seen = {asyncio.run(adapter.search("q", Timeline())).context for _ in range(5)}
+    assert seen == {"FIXED"}
+
+
+def test_the_control_arm_is_the_verified_path_untouched():
+    """Arm 1 must be the replication byte for byte, or it is not a control."""
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "claude_generation_latency.json").read_text())
+    control = spec.arms[0]
+    assert control.params["generator"] == "benchmark"
+    assert control.params["first_chunk_words"] == 25
+    assert control.model == "claude-sonnet-5"
+    assert "thinking" not in control.params and "effort" not in control.params
+
+
+def test_omitting_thinking_is_not_the_same_as_disabling_it():
+    """Sonnet 5 runs adaptive thinking when `thinking` is omitted.
+
+    That is why the control can be slow to its first token without asking for
+    anything: it is thinking on every call, with the reasoning not displayed.
+    """
+    from experiments.generate import BenchmarkOpeningGenerator, build_generator
+
+    source = pathlib.Path(
+        pathlib.Path(__file__).resolve().parent.parent / "experiments" / "generate.py"
+    ).read_text()
+    benchmark_block = source[source.index("class BenchmarkOpeningGenerator"):
+                             source.index("class TunedOpeningGenerator")]
+    assert "thinking" not in benchmark_block.split('"""')[2], \
+        "the control must keep omitting thinking - that is what it did when verified"
+
+    off = build_generator("tuned", thinking="disabled").request_kwargs("m", "q", "c")
+    assert off["thinking"] == {"type": "disabled"}
+    adaptive = build_generator("tuned", thinking="adaptive").request_kwargs("m", "q", "c")
+    assert adaptive["thinking"] == {"type": "adaptive"}
+
+
+def test_the_tuned_arm_changes_settings_and_nothing_else():
+    from experiments.generate import (BENCHMARK_MAX_TOKENS, BENCHMARK_SYSTEM,
+                                      build_generator)
+
+    kwargs = build_generator("tuned", thinking="disabled", effort="low").request_kwargs(
+        "claude-sonnet-5", "why", "PACKET")
+    assert kwargs["max_tokens"] == BENCHMARK_MAX_TOKENS
+    assert kwargs["system"] == BENCHMARK_SYSTEM
+    assert kwargs["output_config"] == {"effort": "low"}
+    assert "EVIDENCE PACKET:\nPACKET" in kwargs["messages"][0]["content"]
+
+
+def test_the_first_sentence_directive_asks_for_more_not_less():
+    """The forbidden optimisation is a shorter or worse opening."""
+    from experiments.generate import (BENCHMARK_SYSTEM, FIRST_SENTENCE_DIRECTIVE,
+                                      build_generator)
+
+    tuned = build_generator("tuned", first_sentence_directive=True)
+    prompt = tuned.system_prompt()
+    assert prompt.startswith(BENCHMARK_SYSTEM), "FAM's voice rules must survive intact"
+    assert len(prompt) > len(BENCHMARK_SYSTEM)
+    lowered = FIRST_SENTENCE_DIRECTIVE.lower()
+    assert "complete" in lowered and "concrete" in lowered
+    for forbidden in ("short", "brief", "concise", "fewer words", "terse"):
+        assert forbidden not in lowered, f"the directive must not ask for {forbidden!r}"
+
+
+def test_generator_options_reach_the_generator_from_the_arm():
+    from experiments.harness import _generator_for
+
+    arm = Arm("a", params={"generator": "tuned", "thinking": "disabled",
+                           "effort": "low", "first_sentence_directive": True,
+                           "first_chunk_words": 25, "packet": "p"})
+    generator = _generator_for(arm)
+    assert generator.thinking == "disabled"
+    assert generator.effort == "low"
+    assert generator.first_sentence_directive is True
+    # Adapter params must not leak into the generator's constructor.
+    assert not hasattr(generator, "first_chunk_words")
+
+
+def test_the_twenty_five_word_mark_and_the_boundary_are_separate_moments():
+    """They are different events, and the gap is what the chunk rule costs."""
+    async def slow_after_25():
+        for word in ["word"] * 30:
+            await asyncio.sleep(0.001)
+            yield word + " "
+        await asyncio.sleep(0.05)          # the sentence takes a while to close
+        yield "and then it ends."
+
+    class Gen:
+        def usage(self):
+            return {}
+
+        async def stream(self, *a, **k):
+            async for chunk in slow_after_25():
+                yield chunk
+
+    spec = ExperimentSpec(name="marks", trials=1, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none",
+                                    params={"first_chunk_words": 25})])
+    harness = Harness(spec, generator_factory=lambda arm: Gen(),
+                      search_factory=lambda n: FakeSearch(0.0, adapter_id="none"),
+                      tts_factory=lambda n, v=None: FakeTTS(0.0, adapter_id="none"))
+    result = asyncio.run(harness.run_all())[0]
+
+    assert result.metrics["words_25"] is not None
+    assert result.metrics["first_chunk"] > result.metrics["words_25"]
+    assert result.metrics["boundary_wait"] > 0
+    assert result.metrics["first_chunk_words"] >= 25
+
+
+def test_every_trial_keeps_the_opening_it_wrote():
+    """Quality has to be comparable afterwards, not taken on trust."""
+    spec = ExperimentSpec(name="chunks", trials=2, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none")])
+    results = asyncio.run(_fake_harness(spec).run_all())
+    for result in results:
+        assert result.first_chunk_text
+        assert result.to_dict()["first_chunk_text"] == result.first_chunk_text
+
+
+def test_a_saved_packet_makes_the_cost_estimate_measurable(tmp_path, monkeypatch):
+    from experiments.adapters import packet as packet_mod
+
+    monkeypatch.setattr(packet_mod, "PACKETS_DIR", tmp_path)
+    (tmp_path / "big.json").write_text(json.dumps({"context": "x" * 7200, "sources": []}))
+    spec = ExperimentSpec(name="c", trials=10, minutes=3, queries=["q"],
+                          arms=[Arm("a", search="fixed_packet", tts="none",
+                                    params={"generator": "benchmark", "packet": "big"})])
+    est = cost_mod.estimate(spec)
+    assert est.exa == 0.0, "a replayed packet calls nobody"
+    assert est.gpu == 0.0
+    assert est.anthropic > 0

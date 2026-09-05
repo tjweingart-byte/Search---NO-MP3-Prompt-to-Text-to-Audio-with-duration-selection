@@ -26,3 +26,8 @@ attachments.db
 # Experiment results: raw trials, reports and generated audio. Kept out of
 # git by default so a sweep does not commit itself; promote a run deliberately.
 experiments/runs/
+
+# Captured evidence packets: data, not source. Capture your own with
+# tools/capture_packet.py so a benchmark is never run against someone
+# else's stale evidence.
+experiments/packets/*.json
