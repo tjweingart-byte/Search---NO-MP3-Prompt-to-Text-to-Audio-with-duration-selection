@@ -95,20 +95,57 @@ class ClaudeGenerator:
             kwargs["model"] = model or patched.model
 
             final = None
-            async with generator.client.messages.stream(**kwargs) as stream:
-                async for delta in stream.text_stream:
-                    yield delta
-                final = await stream.get_final_message()
-            usage = getattr(final, "usage", None)
-            self._usage = {
-                "model": kwargs["model"],
-                "input_tokens": getattr(usage, "input_tokens", 0) or 0,
-                "output_tokens": getattr(usage, "output_tokens", 0) or 0,
-                "searches": _search_count(final),
-                "sources": _domains(final),
-            }
+            try:
+                async with generator.client.messages.stream(**kwargs) as stream:
+                    try:
+                        async for delta in stream.text_stream:
+                            yield delta
+                        final = await stream.get_final_message()
+                    finally:
+                        # The consumer breaks at the first speakable chunk, so
+                        # `get_final_message` usually never runs. The tokens are
+                        # billed either way, so read what the stream already
+                        # knows rather than reporting a cost of zero. No extra
+                        # request, and nothing is consumed to get it.
+                        self._usage = _usage_from(final, stream, kwargs["model"])
+            finally:
+                # The client owns an httpx connection pool. One is built per
+                # trial, so leaving them to the garbage collector leaks a pool
+                # per trial and produces teardown noise at interpreter exit.
+                await generator.client.close()
         finally:
             script_generator.settings = original
+
+
+def _usage_from(final, stream, model: str) -> dict:
+    """Token usage for a call, whether or not the stream was read to the end.
+
+    On an early break `get_final_message()` never runs, so `final` is None. The
+    SDK still holds a partial message whose usage is what has been billed so
+    far; reading it keeps the recorded cost honest instead of silently zero.
+    Every access is guarded, because a stream torn down before its first event
+    may have no snapshot at all - in which case the usage is genuinely unknown
+    and is recorded as such rather than as free.
+    """
+    message = final
+    if message is None:
+        try:
+            message = getattr(stream, "current_message_snapshot", None)
+        except Exception:
+            message = None
+
+    usage = getattr(message, "usage", None)
+    input_tokens = getattr(usage, "input_tokens", 0) or 0
+    output_tokens = getattr(usage, "output_tokens", 0) or 0
+    return {
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "searches": _search_count(message),
+        "sources": _domains(message),
+        "complete": final is not None,
+        "usage_known": bool(input_tokens or output_tokens),
+    }
 
 
 def _search_count(message) -> int:
@@ -179,31 +216,29 @@ class BenchmarkOpeningGenerator:
         client = build_async_client()
         chosen = model or BENCHMARK_MODEL
         final = None
-        async with client.messages.stream(
-            model=chosen,
-            max_tokens=BENCHMARK_MAX_TOKENS,
-            system=BENCHMARK_SYSTEM,
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"USER SEARCH:\n{query}\n\n"
-                    f"EVIDENCE PACKET:\n{context}\n\n"
-                    f"Begin the episode now."
-                ),
-            }],
-        ) as stream:
-            async for delta in stream.text_stream:
-                yield delta
-            final = await stream.get_final_message()
-        usage = getattr(final, "usage", None)
-        self._usage = {
-            "model": chosen,
-            "input_tokens": getattr(usage, "input_tokens", 0) or 0,
-            "output_tokens": getattr(usage, "output_tokens", 0) or 0,
-            "searches": 0,
-            "sources": [],
-            "generator": "benchmark",
-        }
+        try:
+            async with client.messages.stream(
+                model=chosen,
+                max_tokens=BENCHMARK_MAX_TOKENS,
+                system=BENCHMARK_SYSTEM,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"USER SEARCH:\n{query}\n\n"
+                        f"EVIDENCE PACKET:\n{context}\n\n"
+                        f"Begin the episode now."
+                    ),
+                }],
+            ) as stream:
+                try:
+                    async for delta in stream.text_stream:
+                        yield delta
+                    final = await stream.get_final_message()
+                finally:
+                    self._usage = _usage_from(final, stream, chosen)
+                    self._usage["generator"] = "benchmark"
+        finally:
+            await client.close()
 
 
 GENERATORS = {

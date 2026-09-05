@@ -60,6 +60,9 @@ class ArmReport:
     stages: dict = field(default_factory=dict)          # stage -> Summary
     stage_hosts: dict = field(default_factory=dict)     # stage -> host
     cost: float = 0.0
+    #: Trials whose token usage the stream could not report. Their cost is
+    #: unknown, not zero, and the report must not quietly average it as free.
+    cost_unknown: int = 0
     errors: list[str] = field(default_factory=list)
 
     def bottleneck(self) -> Optional[tuple[str, stats_mod.Summary]]:
@@ -79,6 +82,7 @@ class ArmReport:
             "stages": {k: (v.to_dict() if v else None) for k, v in self.stages.items()},
             "stage_hosts": self.stage_hosts,
             "cost": round(self.cost, 6),
+            "cost_unknown": self.cost_unknown,
             "errors": self.errors[:5],
         }
 
@@ -115,6 +119,10 @@ def analyse(spec: ExperimentSpec, results) -> dict:
             stages=stage_stats,
             stage_hosts=hosts,
             cost=sum(d.get("cost", 0.0) for d in mine),
+            cost_unknown=sum(
+                1 for d in good
+                if d.get("usage") and d["usage"].get("usage_known") is False
+            ),
             errors=[d["error"] for d in failed if d.get("error")],
         ))
 
@@ -248,7 +256,11 @@ def render(spec: ExperimentSpec, analysis: dict, previous: Optional[dict] = None
              if analysis["simulated"] else "Actual, from recorded usage")
     out += ["## Cost", "", f"{label}: **${analysis['total_cost']:.4f}**", ""]
     for arm in arms:
-        out.append(f"- {arm.name}: ${arm.cost:.4f}")
+        line = f"- {arm.name}: ${arm.cost:.4f}"
+        if arm.cost_unknown:
+            line += (f"  — **incomplete**: {arm.cost_unknown} trial(s) reported no "
+                     f"token usage, so their model cost is unknown, not zero")
+        out.append(line)
     out.append("")
 
     # -- recommendation -------------------------------------------------

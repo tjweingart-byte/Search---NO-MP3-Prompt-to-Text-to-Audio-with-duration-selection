@@ -155,29 +155,45 @@ class Harness:
             buffer = ""
             first_chunk: Optional[str] = None
             full: list[str] = []
-            with timeline.span("generate", host="anthropic-api", adapter="claude") as stage:
-                async for delta in generator.stream(
-                    query,
-                    self.spec.minutes,
-                    context=retrieved.context,
-                    model=arm.model,
-                    search=(arm.search == "anthropic_web_search"),
-                    max_searches=int(arm.params.get("max_searches", 3) or 3),
-                ):
-                    if timeline.at("first_token") is None:
-                        timeline.mark("first_token")
-                        stage.detail["first_token_at"] = timeline.at("first_token")
-                    buffer += delta
-                    full.append(delta)
-                    if first_chunk is None:
-                        candidate = first_chunk_ready(buffer, chunk_words)
-                        if candidate:
-                            first_chunk = candidate
-                            timeline.mark("first_chunk")
-                            # Sound could start here, so stop timing the model
-                            # for the purposes of first audio and go speak.
-                            break
-                stage.detail["streamed_chars"] = len(buffer)
+            # The stream is held by name so it can be closed deterministically
+            # below. Breaking out of an `async for` does NOT close an async
+            # generator: it is left suspended at its `yield`, inside the
+            # `async with` that holds the HTTP response open. Python finalises
+            # it later, from the event loop's async-generator finaliser - a
+            # different task from this one - and httpx/httpcore bind their
+            # anyio cancel scopes to the entering task, so that teardown raises
+            # "Attempted to exit cancel scope in a different task" and prints a
+            # GeneratorExit traceback after the sweep has already finished.
+            token_stream = generator.stream(
+                query,
+                self.spec.minutes,
+                context=retrieved.context,
+                model=arm.model,
+                search=(arm.search == "anthropic_web_search"),
+                max_searches=int(arm.params.get("max_searches", 3) or 3),
+            )
+            try:
+                with timeline.span("generate", host="anthropic-api", adapter="claude") as stage:
+                    async for delta in token_stream:
+                        if timeline.at("first_token") is None:
+                            timeline.mark("first_token")
+                            stage.detail["first_token_at"] = timeline.at("first_token")
+                        buffer += delta
+                        full.append(delta)
+                        if first_chunk is None:
+                            candidate = first_chunk_ready(buffer, chunk_words)
+                            if candidate:
+                                first_chunk = candidate
+                                timeline.mark("first_chunk")
+                                # Sound could start here, so stop timing the model
+                                # for the purposes of first audio and go speak.
+                                break
+                    stage.detail["streamed_chars"] = len(buffer)
+            finally:
+                # Outside the span on purpose: teardown is not model latency, so
+                # closing here cannot inflate `generate_seconds`. Inside this
+                # task on purpose: it is the task that opened the connection.
+                await _aclose(token_stream)
 
             if first_chunk is None:
                 first_chunk = buffer.strip()
@@ -245,6 +261,19 @@ class Harness:
                     if progress:
                         progress(result)
         return self.results
+
+
+async def _aclose(stream) -> None:
+    """Close an async generator, tolerating one that is already finished.
+
+    A generator that ran to completion is already closed and `aclose()` on it
+    is a no-op; one broken out of early is closed here rather than whenever the
+    garbage collector gets to it.
+    """
+    aclose = getattr(stream, "aclose", None)
+    if aclose is None:
+        return
+    await aclose()
 
 
 def _stage_duration(timeline: Timeline, name: str) -> Optional[float]:

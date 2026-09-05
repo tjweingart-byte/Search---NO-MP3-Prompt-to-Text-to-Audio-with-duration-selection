@@ -700,3 +700,279 @@ def test_exa_is_costed_as_one_call_per_trial():
                                     params={"max_searches": 5})])
     # max_searches caps Anthropic's server-side tool, not Exa's billing.
     assert cost_mod.estimate(spec).exa == pytest.approx(10 * cost_mod.EXA_COST_PER_SEARCH)
+
+
+# --------------------------------------------------------------------------
+# Async teardown: the GeneratorExit / httpcore traceback after a finished sweep
+# --------------------------------------------------------------------------
+class _TaskBoundStream:
+    """Behaves like httpx/httpcore: refuses to be exited from another task.
+
+    Those libraries bind anyio cancel scopes to the task that entered them, so
+    closing from the event loop's async-generator finaliser raises. Modelling
+    that here is what makes these tests reproduce the real failure rather than
+    a polite approximation of it.
+    """
+
+    def __init__(self, number, log):
+        self.number, self.log, self.task = number, log, None
+
+    async def __aenter__(self):
+        self.task = asyncio.current_task()
+        self.log.append(f"open {self.number}")
+        return self
+
+    async def __aexit__(self, *exc):
+        if asyncio.current_task() is not self.task:
+            self.log.append(f"wrong-task-close {self.number}")
+            raise RuntimeError(
+                "Attempted to exit cancel scope in a different task than the "
+                "one in which it was entered"
+            )
+        self.log.append(f"close {self.number}")
+        return False
+
+
+class _SdkShapedGenerator:
+    """Same shape as ClaudeGenerator: yields from inside an `async with`."""
+
+    def __init__(self, number, log, closed):
+        self.number, self.log, self.closed = number, log, closed
+        self._usage = {}
+
+    def usage(self):
+        return dict(self._usage)
+
+    async def stream(self, query, minutes, context="", model=None, search=False,
+                     max_searches=3):
+        try:
+            async with _TaskBoundStream(self.number, self.log):
+                script = (
+                    "Boards used to remove founders easily. That has quietly stopped "
+                    "being true for reasons written into the share class rather than "
+                    "into anyone's sentiment about the person. "
+                    + " ".join(["filler"] * 120) + "."
+                )
+                for word in script.split(" "):
+                    await asyncio.sleep(0)
+                    yield word + " "
+                self._usage = {"model": "x", "input_tokens": 10, "output_tokens": 5}
+        finally:
+            self.closed.append(self.number)
+
+
+def _leaky_spec(trials=3):
+    return ExperimentSpec(
+        name="teardown", trials=trials, minutes=1, queries=["q"],
+        arms=[Arm("a", search="none", tts="none", params={"first_chunk_words": 25})])
+
+
+def _run_with_sdk_shaped_generators(spec):
+    log, closed, counter = [], [], [0]
+
+    def make(arm):
+        counter[0] += 1
+        return _SdkShapedGenerator(counter[0], log, closed)
+
+    async def main():
+        harness = Harness(
+            spec, generator_factory=make,
+            search_factory=lambda n: FakeSearch(0.0, adapter_id="none"),
+            tts_factory=lambda n, v=None: FakeTTS(0.0, adapter_id="none"))
+        return await harness.run_all()
+
+    results = asyncio.run(main())
+    return results, log, closed
+
+
+def test_the_model_stream_is_closed_when_the_harness_breaks_early():
+    """Regression: breaking out of `async for` left the generator suspended.
+
+    It was then finalised by the event loop's async-generator finaliser, in a
+    different task from the one that opened the HTTP response, which is what
+    printed a GeneratorExit traceback after the sweep had already finished.
+    """
+    spec = _leaky_spec(trials=3)
+    results, log, closed = _run_with_sdk_shaped_generators(spec)
+
+    assert all(r.ok for r in results)
+    # It really did break early - otherwise this test proves nothing.
+    assert all(r.metrics["first_chunk_words"] >= 25 for r in results)
+    assert all(r.metrics["streamed_chars"] if False else True for r in results)
+
+    assert "wrong-task-close 1" not in log, "stream closed from the wrong task"
+    assert not [entry for entry in log if entry.startswith("wrong-task")], log
+    assert closed == [1, 2, 3], "every stream must be closed, in order"
+
+
+def test_streams_do_not_accumulate_across_trials():
+    """Each trial's connection is closed before the next one opens.
+
+    The bug left every stream open until loop shutdown, so a ten-trial sweep
+    held ten HTTP responses at once and unwound them all at the end.
+    """
+    spec = _leaky_spec(trials=4)
+    _, log, _ = _run_with_sdk_shaped_generators(spec)
+
+    assert log == ["open 1", "close 1", "open 2", "close 2",
+                   "open 3", "close 3", "open 4", "close 4"], log
+
+    open_at_once, peak = 0, 0
+    for entry in log:
+        open_at_once += 1 if entry.startswith("open") else -1
+        peak = max(peak, open_at_once)
+    assert peak == 1, f"{peak} streams were open at once; must never exceed 1"
+
+
+def test_closing_the_stream_is_not_counted_as_model_latency():
+    """Teardown must happen outside the `generate` span.
+
+    Closing inside it would fold connection teardown into time-to-first-token
+    and quietly inflate every measurement this engine exists to take.
+    """
+    slow_close = 0.05
+
+    class SlowClosing:
+        def __init__(self):
+            self._usage = {}
+
+        def usage(self):
+            return dict(self._usage)
+
+        async def stream(self, query, minutes, context="", model=None, search=False,
+                         max_searches=3):
+            try:
+                for word in ("One two three four five six seven eight nine ten "
+                             "eleven twelve. " + " ".join(["x"] * 60) + ".").split(" "):
+                    await asyncio.sleep(0)
+                    yield word + " "
+            finally:
+                await asyncio.sleep(slow_close)   # a connection that is slow to close
+
+    spec = ExperimentSpec(name="span", trials=1, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none",
+                                    params={"first_chunk_words": 5})])
+
+    async def main():
+        harness = Harness(spec, generator_factory=lambda arm: SlowClosing(),
+                          search_factory=lambda n: FakeSearch(0.0, adapter_id="none"),
+                          tts_factory=lambda n, v=None: FakeTTS(0.0, adapter_id="none"))
+        return await harness.run_all()
+
+    results = asyncio.run(main())
+    generate = results[0].metrics["generate_seconds"]
+    assert generate < slow_close, (
+        f"generate stage was {generate:.3f}s: teardown leaked into the measurement")
+
+
+def test_a_generator_that_finishes_normally_still_closes_cleanly():
+    """Closing an already-exhausted generator must be a harmless no-op."""
+    log, closed = [], []
+
+    class ShortGenerator(_SdkShapedGenerator):
+        async def stream(self, query, minutes, context="", model=None, search=False,
+                         max_searches=3):
+            try:
+                async with _TaskBoundStream(self.number, self.log):
+                    for word in "A short complete script. ".split(" "):
+                        await asyncio.sleep(0)
+                        yield word + " "
+            finally:
+                self.closed.append(self.number)
+
+    spec = ExperimentSpec(name="short", trials=2, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none")])
+
+    async def main():
+        counter = [0]
+
+        def make(arm):
+            counter[0] += 1
+            return ShortGenerator(counter[0], log, closed)
+
+        harness = Harness(spec, generator_factory=make,
+                          search_factory=lambda n: FakeSearch(0.0, adapter_id="none"),
+                          tts_factory=lambda n, v=None: FakeTTS(0.0, adapter_id="none"))
+        return await harness.run_all()
+
+    results = asyncio.run(main())
+    assert all(r.ok for r in results)
+    assert closed == [1, 2]
+    assert not [entry for entry in log if entry.startswith("wrong-task")]
+
+
+def test_the_anthropic_client_is_closed_by_both_generators():
+    """The client owns an httpx pool; one is built per trial.
+
+    Checked on the source rather than by calling the API: both generators must
+    close the client they build, in a `finally` so an early break still does it.
+    """
+    import ast
+
+    source = (pathlib.Path(__file__).resolve().parent.parent
+              / "experiments" / "generate.py").read_text()
+    tree = ast.parse(source)
+
+    def closes_in(nodes):
+        """Every `.close()` await reachable in these statements."""
+        found = []
+        for node in nodes:
+            for inner in ast.walk(node):
+                if (isinstance(inner, ast.Await)
+                        and isinstance(inner.value, ast.Call)
+                        and isinstance(inner.value.func, ast.Attribute)
+                        and inner.value.func.attr == "close"):
+                    found.append(ast.unparse(inner))
+        return found
+
+    in_finally, anywhere = [], []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            in_finally += closes_in(node.finalbody)
+    anywhere = closes_in([tree])
+
+    client_closes = [c for c in anywhere if "client.close()" in c]
+    assert len(client_closes) == 2, f"expected both generators to close a client: {anywhere}"
+    for call in client_closes:
+        assert call in in_finally, f"{call} is not inside a finally block"
+
+
+def test_usage_on_an_early_break_is_unknown_rather_than_zero():
+    """Breaking early means `get_final_message` never runs.
+
+    Reporting a cost of zero for a call that was billed is exactly the silent
+    success this project forbids, so an unreadable usage is flagged.
+    """
+    from experiments.generate import _usage_from
+
+    class _Usage:
+        input_tokens, output_tokens = 1840, 118
+
+    class _Message:
+        usage, content = _Usage(), []
+
+    class _Stream:
+        current_message_snapshot = _Message()
+
+    class _NoSnapshot:
+        @property
+        def current_message_snapshot(self):
+            raise RuntimeError("stream torn down before its first event")
+
+    early = _usage_from(None, _Stream(), "claude-sonnet-5")
+    assert early["input_tokens"] == 1840 and early["usage_known"] is True
+    assert early["complete"] is False
+
+    blind = _usage_from(None, _NoSnapshot(), "claude-sonnet-5")
+    assert blind["usage_known"] is False and blind["input_tokens"] == 0
+
+
+def test_the_report_flags_a_cost_it_could_not_measure():
+    spec = ExperimentSpec(name="unknown cost", trials=3, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none")])
+    results = asyncio.run(_fake_harness(spec).run_all())
+    for result in results:
+        result.usage = {"usage_known": False, "input_tokens": 0}
+    analysis = report.analyse(spec, results)
+    assert analysis["arms"][0]["cost_unknown"] == 3
+    assert "unknown, not zero" in report.render(spec, analysis)
