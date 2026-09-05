@@ -97,16 +97,16 @@ class ClaudeGenerator:
             final = None
             try:
                 async with generator.client.messages.stream(**kwargs) as stream:
+                    text_stream = stream.text_stream
                     try:
-                        async for delta in stream.text_stream:
+                        async for delta in text_stream:
                             yield delta
                         final = await stream.get_final_message()
                     finally:
-                        # The consumer breaks at the first speakable chunk, so
-                        # `get_final_message` usually never runs. The tokens are
-                        # billed either way, so read what the stream already
-                        # knows rather than reporting a cost of zero. No extra
-                        # request, and nothing is consumed to get it.
+                        # Drain first: see `_drain`. Doing it here also means
+                        # the usage snapshot below covers the whole response,
+                        # which is what was billed.
+                        await _drain(text_stream)
                         self._usage = _usage_from(final, stream, kwargs["model"])
             finally:
                 # The client owns an httpx connection pool. One is built per
@@ -115,6 +115,36 @@ class ClaudeGenerator:
                 await generator.client.close()
         finally:
             script_generator.settings = original
+
+
+async def _drain(iterator) -> None:
+    """Read whatever is left of a stream we stopped consuming early.
+
+    This is the only teardown that leaves httpcore clean, and it took
+    measuring to establish. The SDK nests async generators - `text_stream` ->
+    `__aiter__` -> `__stream__` -> the raw SSE stream -> httpcore's
+    `PoolByteStream.__aiter__` - and closing an async generator does **not**
+    cascade to the ones it was iterating. So `aclose()` on the outermost, or
+    `stream.close()`, or `response.aclose()`, all leave httpcore's generator
+    suspended; it is then finalised at loop shutdown from another task and
+    raises "generator didn't stop after athrow()".
+
+    Every combination of those closes was tried against a real SDK client over
+    a real socket, six runs each: all of them still produced the traceback on
+    two to five runs out of six. Draining produced none, twice over. A single
+    clean run proves nothing here, because the failure depends on when the
+    garbage collector happens to run.
+
+    This costs the wall time of reading a response the API is generating
+    anyway. It is called after every measurement has been taken, so no timing
+    this engine reports is affected by it.
+    """
+    try:
+        async for _ in iterator:
+            pass
+    except Exception:
+        # Teardown must not turn a completed trial into a failed one.
+        pass
 
 
 def _usage_from(final, stream, model: str) -> dict:
@@ -230,11 +260,13 @@ class BenchmarkOpeningGenerator:
                     ),
                 }],
             ) as stream:
+                text_stream = stream.text_stream
                 try:
-                    async for delta in stream.text_stream:
+                    async for delta in text_stream:
                         yield delta
                     final = await stream.get_final_message()
                 finally:
+                    await _drain(text_stream)
                     self._usage = _usage_from(final, stream, chosen)
                     self._usage["generator"] = "benchmark"
         finally:

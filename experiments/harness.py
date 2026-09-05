@@ -141,6 +141,7 @@ class Harness:
     async def run_trial(self, arm: Arm, query: str, index: int) -> TrialResult:
         result = TrialResult(arm=arm.name, query=query, index=index)
         timeline = Timeline()
+        token_stream = None
         search = self.search_factory(arm.search)
         tts = self.tts_factory(arm.tts, arm.params.get("voice"))
         generator = self.generator_factory(arm)
@@ -155,15 +156,16 @@ class Harness:
             buffer = ""
             first_chunk: Optional[str] = None
             full: list[str] = []
-            # The stream is held by name so it can be closed deterministically
-            # below. Breaking out of an `async for` does NOT close an async
-            # generator: it is left suspended at its `yield`, inside the
-            # `async with` that holds the HTTP response open. Python finalises
-            # it later, from the event loop's async-generator finaliser - a
-            # different task from this one - and httpx/httpcore bind their
-            # anyio cancel scopes to the entering task, so that teardown raises
-            # "Attempted to exit cancel scope in a different task" and prints a
-            # GeneratorExit traceback after the sweep has already finished.
+            # Held by name so the outer `finally` can close it. Breaking out
+            # of an `async for` does NOT close an async generator: it is left
+            # suspended at its `yield`, inside the `async with` holding the
+            # HTTP response. Finalised later from the loop's async-generator
+            # finaliser - a different task - it raises out of httpcore and
+            # prints a traceback after the sweep has already reported success.
+            #
+            # It is closed after every checkpoint has been marked and after the
+            # timeline has been snapshotted, so teardown cannot appear in any
+            # reported number - `generate`, `synthesis` or `first_audio`.
             token_stream = generator.stream(
                 query,
                 self.spec.minutes,
@@ -172,29 +174,22 @@ class Harness:
                 search=(arm.search == "anthropic_web_search"),
                 max_searches=int(arm.params.get("max_searches", 3) or 3),
             )
-            try:
-                with timeline.span("generate", host="anthropic-api", adapter="claude") as stage:
-                    async for delta in token_stream:
-                        if timeline.at("first_token") is None:
-                            timeline.mark("first_token")
-                            stage.detail["first_token_at"] = timeline.at("first_token")
-                        buffer += delta
-                        full.append(delta)
-                        if first_chunk is None:
-                            candidate = first_chunk_ready(buffer, chunk_words)
-                            if candidate:
-                                first_chunk = candidate
-                                timeline.mark("first_chunk")
-                                # Sound could start here, so stop timing the model
-                                # for the purposes of first audio and go speak.
-                                break
-                    stage.detail["streamed_chars"] = len(buffer)
-            finally:
-                # Outside the span on purpose: teardown is not model latency, so
-                # closing here cannot inflate `generate_seconds`. Inside this
-                # task on purpose: it is the task that opened the connection.
-                await _aclose(token_stream)
-
+            with timeline.span("generate", host="anthropic-api", adapter="claude") as stage:
+                async for delta in token_stream:
+                    if timeline.at("first_token") is None:
+                        timeline.mark("first_token")
+                        stage.detail["first_token_at"] = timeline.at("first_token")
+                    buffer += delta
+                    full.append(delta)
+                    if first_chunk is None:
+                        candidate = first_chunk_ready(buffer, chunk_words)
+                        if candidate:
+                            first_chunk = candidate
+                            timeline.mark("first_chunk")
+                            # Sound could start here, so stop timing the model
+                            # for the purposes of first audio and go speak.
+                            break
+                stage.detail["streamed_chars"] = len(buffer)
             if first_chunk is None:
                 first_chunk = buffer.strip()
                 if first_chunk:
@@ -244,7 +239,10 @@ class Harness:
             result.ok = False
             result.error = f"{type(exc).__name__}: {str(exc)[:200]}"
         finally:
+            # Snapshot first, then tear down: nothing below this line may
+            # influence a measurement.
             result.timeline = timeline.to_dict()
+            await _aclose(token_stream)
 
         return result
 
@@ -264,12 +262,15 @@ class Harness:
 
 
 async def _aclose(stream) -> None:
-    """Close an async generator, tolerating one that is already finished.
+    """Close an async generator, tolerating one never created or already done.
 
-    A generator that ran to completion is already closed and `aclose()` on it
-    is a no-op; one broken out of early is closed here rather than whenever the
-    garbage collector gets to it.
+    `aclose()` here triggers the generator's own `finally`, which is where
+    `generate._drain` reads out whatever is left of the HTTP response - the
+    only teardown that leaves httpcore's stream clean. A generator that ran to
+    completion is already closed and this is a no-op.
     """
+    if stream is None:
+        return
     aclose = getattr(stream, "aclose", None)
     if aclose is None:
         return
