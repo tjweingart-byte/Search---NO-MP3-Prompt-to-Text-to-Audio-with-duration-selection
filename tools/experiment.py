@@ -147,7 +147,7 @@ def cmd_run(args) -> int:
                            host="runpod-gpu" if name == "chatterbox" else "local")
 
         harness = Harness(spec, run=run,
-                          generator_factory=lambda: FakeGenerator(first_token_delay=0.6),
+                          generator_factory=lambda arm: FakeGenerator(first_token_delay=0.6),
                           search_factory=fake_search, tts_factory=fake_tts,
                           save_audio=args.save_audio)
     else:

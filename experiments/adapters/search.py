@@ -125,6 +125,14 @@ class ExaSearch:
                     "ported from exa_claude_benchmark.py."
                 ),
             )
+        try:
+            import exa_py  # noqa: F401
+        except ImportError:
+            return Availability(
+                ok=False,
+                reason="The exa-py package is not installed.",
+                remedy="pip install -r experiments/requirements.txt",
+            )
         if not os.environ.get("EXA_API_KEY"):
             return Availability(
                 ok=False,

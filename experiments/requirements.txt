@@ -1,0 +1,10 @@
+# Experiment-only dependencies.
+#
+# Kept out of the app's requirements.txt on purpose: production FAM does not
+# import anything in experiments/, and installing the app must not pull in a
+# retrieval SDK it never calls.
+#
+#   pip install -r experiments/requirements.txt
+
+# The Exa adapter (experiments/adapters/exa_impl.py).
+exa-py>=1.0

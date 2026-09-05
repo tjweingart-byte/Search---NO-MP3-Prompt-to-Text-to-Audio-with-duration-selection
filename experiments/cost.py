@@ -95,11 +95,19 @@ def estimate(spec) -> Estimate:
             # Exa context is pasted in, so it also inflates input tokens.
             input_tokens = int(input_tokens * SEARCH_INPUT_TOKEN_MULTIPLIER)
         output_tokens = int(ASSUMED_OUTPUT_TOKENS_PER_MINUTE * spec.minutes)
+        if arm.params.get("generator") == "benchmark":
+            # The manual benchmark writes only an opening, hard-capped at 220
+            # tokens. Estimating a full episode for it overstates the cost by
+            # roughly four times, and an estimate that cries wolf gets ignored.
+            from experiments.generate import BENCHMARK_MAX_TOKENS
+
+            output_tokens = min(output_tokens, BENCHMARK_MAX_TOKENS)
         est.anthropic += model_cost(model, input_tokens, output_tokens) * per_arm_trials
 
         if arm.search == "exa":
-            caps = int(arm.params.get("max_searches", 3) or 3)
-            est.exa += EXA_COST_PER_SEARCH * caps * per_arm_trials
+            # Exa is one call per trial. `max_searches` caps Anthropic's
+            # server-side tool, which is a different thing and not billed here.
+            est.exa += EXA_COST_PER_SEARCH * per_arm_trials
 
         if arm.tts == "chatterbox":
             # Assume synthesis runs comfortably faster than realtime; the pod

@@ -118,9 +118,12 @@ def test_preflight_separates_approval_from_misconfiguration(monkeypatch):
 # Nothing is measured that cannot honestly be measured
 # --------------------------------------------------------------------------
 def test_exa_adapter_refuses_rather_than_inventing_results():
+    """Unavailable for a stated reason, and never a plausible fake result."""
     state = ExaSearch().available()
-    assert state.ok is False
-    assert "exa_claude_benchmark" in state.reason or "implementation" in state.reason
+    if state.ok:
+        pytest.skip("this machine has exa-py and a key")
+    assert any(word in state.reason for word in ("exa-py", "EXA_API_KEY", "implementation"))
+    assert state.remedy
     with pytest.raises(RuntimeError):
         asyncio.run(ExaSearch().search("q", Timeline()))
 
@@ -192,19 +195,45 @@ def test_first_chunk_by_sentence():
 
 
 def test_first_chunk_by_word_budget():
-    assert first_chunk_ready("a b c d e f", 3) == "a b c"
+    """The benchmark rule: the first sentence *end* leaving >= N words."""
+    assert first_chunk_ready("a b c d e f. g h", 3) == "a b c d e f."
+    assert first_chunk_ready("a b c d e f", 3) is None, "no sentence end yet"
     assert first_chunk_ready("a b", 3) is None
 
 
-def test_a_word_budget_is_a_minimum_not_a_maximum():
-    """`first_chunk_words=N` means "at least N words, then the next sentence end".
+def test_a_short_opening_sentence_is_not_enough_on_its_own():
+    """Ported from `first_sentence_after_min_words` in exa_claude_benchmark.py.
 
-    A sentence that ends before the budget is *not* enough: a chunk-size
-    experiment that silently returned two words when asked for ten would be
-    measuring something other than the size it claims.
+    A two-word opening sentence does not satisfy a budget of six; the scan
+    continues to the next sentence end and returns everything up to it. The
+    boundary always wins over the count, because a chunk cut mid-clause sounds
+    wrong however many words it has.
     """
-    assert first_chunk_ready("Short one. then more words here", 10) is None
-    assert first_chunk_ready("Short one. then more words here now ok", 6) == "Short one."
+    assert first_chunk_ready("Short one. Then a longer continuation lands here.", 6) == \
+        "Short one. Then a longer continuation lands here."
+    assert first_chunk_ready("Short one. Then a bit", 25) is None
+
+
+def test_the_chunk_rule_matches_the_manual_benchmark_exactly():
+    """Differential check against the original function, kept verbatim."""
+    def original(text, min_words=25):
+        for i, ch in enumerate(text):
+            if ch in [".", "!", "?"]:
+                candidate = text[: i + 1].strip()
+                if len(candidate.split()) >= min_words:
+                    return candidate
+        return None
+
+    samples = [
+        "Boards used to fire founders. Now they mostly cannot, and the reason is "
+        "structural rather than sentimental in almost every case that matters.",
+        "Short. Also short. " + " ".join(["word"] * 40) + ".",
+        "No sentence ending here at all",
+        "",
+    ]
+    for text in samples:
+        for budget in (5, 25, 60):
+            assert first_chunk_ready(text, budget) == original(text, budget), (text[:30], budget)
 
 
 # --------------------------------------------------------------------------
@@ -302,7 +331,7 @@ def _fake_harness(spec, run=None, **kw):
     searches["anthropic_web_search"].separable = False
     ttss = {name: FakeTTS(0.0, adapter_id=name) for name in ("piper", "chatterbox", "none")}
     return Harness(spec, run=run,
-                   generator_factory=lambda: FakeGenerator(0.0, 0.0),
+                   generator_factory=lambda arm: FakeGenerator(0.0, 0.0),
                    search_factory=lambda n: searches[n],
                    tts_factory=lambda n, v=None: ttss[n], **kw)
 
@@ -386,7 +415,7 @@ def test_the_report_names_the_bottleneck_stage(tmp_path):
     spec = ExperimentSpec(name="bn", trials=3, minutes=1, queries=["q"],
                           arms=[Arm("slow_tts", search="none", tts="chatterbox")])
     searches = {"none": FakeSearch(0.0, adapter_id="none")}
-    harness = Harness(spec, generator_factory=lambda: FakeGenerator(0.0, 0.0),
+    harness = Harness(spec, generator_factory=lambda arm: FakeGenerator(0.0, 0.0),
                       search_factory=lambda n: searches["none"],
                       tts_factory=lambda n, v=None: FakeTTS(0.05, adapter_id="chatterbox"))
     results = asyncio.run(harness.run_all())
@@ -519,3 +548,155 @@ def test_speech_runs_are_still_judged_on_first_audio():
     analysis = report.analyse(spec, results)
     assert analysis["headline_metric"] == "first_audio"
     assert "Time to first audio" in report.render(spec, analysis)
+
+
+
+# --------------------------------------------------------------------------
+# The Exa adapter, ported from exa_claude_benchmark.py
+# --------------------------------------------------------------------------
+class _Result:
+    def __init__(self, title, highlights, url):
+        self.title, self.highlights, self.url = title, highlights, url
+
+
+class _Reply:
+    def __init__(self, results):
+        self.results = results
+
+
+def _sample_results(n=8):
+    return [_Result(f"Title {i}", [f"h{i}a", f"h{i}b", f"h{i}c"], f"https://site{i}.com/x")
+            for i in range(1, n + 1)]
+
+
+def test_packet_shape_is_the_benchmarks_verbatim():
+    from experiments.adapters.exa_impl import build_packet
+
+    packet = build_packet(_sample_results())
+    assert packet.startswith("SOURCE 1\nTitle: Title 1\nKey evidence:\nh1a\nh1b\n")
+    # Top three sources only, two highlights each - the benchmark's numbers.
+    assert "SOURCE 3" in packet and "SOURCE 4" not in packet
+    assert "h1c" not in packet
+
+
+def test_packet_size_is_a_parameter_so_it_can_be_swept():
+    from experiments.adapters.exa_impl import build_packet
+
+    wide = build_packet(_sample_results(), packet_sources=5, highlights_per_source=3)
+    assert "SOURCE 5" in wide and "h5c" in wide
+    narrow = build_packet(_sample_results(), packet_sources=1, highlights_per_source=1)
+    assert "SOURCE 2" not in narrow and "h1b" not in narrow
+    assert len(narrow) < len(wide)
+
+
+def test_run_search_uses_the_benchmarks_call_and_returns_no_credential(monkeypatch):
+    from experiments.adapters import exa_impl
+
+    seen = {}
+
+    class FakeExa:
+        def __init__(self, key):
+            seen["key"] = key
+
+        def search_and_contents(self, query, **kwargs):
+            seen["query"] = query
+            seen["kwargs"] = kwargs
+            return _Reply(_sample_results())
+
+    monkeypatch.setenv("EXA_API_KEY", "test-key-not-a-real-credential")
+    monkeypatch.setattr(exa_impl, "_client", lambda: FakeExa("test-key-not-a-real-credential"))
+
+    out = asyncio.run(exa_impl.run_search("why do boards keep founders"))
+
+    # The benchmark's exact call.
+    assert seen["kwargs"] == {"type": "fast", "num_results": 8, "highlights": True}
+    assert seen["query"] == "why do boards keep founders"
+
+    assert out["searches"] == 1
+    assert out["results_returned"] == 8
+    assert out["packet_chars"] == len(out["context"])
+    assert out["sources"][:2] == ["site1.com", "site2.com"]
+    assert out["remote_seconds"] >= 0
+    # The key must not travel back in the result under any name.
+    assert "test-key-not-a-real-credential" not in json.dumps(out)
+
+
+def test_run_search_passes_sweep_parameters_through(monkeypatch):
+    from experiments.adapters import exa_impl
+
+    seen = {}
+
+    class FakeExa:
+        def search_and_contents(self, query, **kwargs):
+            seen.update(kwargs)
+            return _Reply(_sample_results())
+
+    monkeypatch.setattr(exa_impl, "_client", lambda: FakeExa())
+    out = asyncio.run(exa_impl.run_search("q", num_results=4, search_type="neural",
+                                          packet_sources=2, highlights_per_source=1))
+    assert seen["num_results"] == 4 and seen["type"] == "neural"
+    assert "SOURCE 3" not in out["context"]
+    assert out["packet_sources"] == 2
+
+
+def test_the_adapter_times_the_call_and_records_the_host(monkeypatch):
+    from experiments.adapters import exa_impl
+    from experiments.adapters.search import ExaSearch
+
+    class FakeExa:
+        def search_and_contents(self, query, **kwargs):
+            return _Reply(_sample_results())
+
+    monkeypatch.setattr(exa_impl, "_client", lambda: FakeExa())
+    timeline = Timeline()
+    result = asyncio.run(ExaSearch().search("q", timeline))
+    stage = timeline.stages[0]
+    assert stage.name == "search" and stage.host == "exa-api"
+    assert stage.remote_seconds is not None
+    assert result.context and result.sources
+
+
+def test_the_evidence_packet_does_not_go_through_already_heard():
+    """`EpisodePlan.context` renders as <already_heard>: "do not re-explain".
+
+    Routing retrieved sources through it would instruct the model to skip the
+    very material it was given, so the packet goes in the question instead.
+    """
+    from experiments.generate import with_packet
+
+    combined = with_packet("why do tides happen", "SOURCE 1\nTitle: Moon")
+    assert "EVIDENCE PACKET" in combined
+    assert combined.startswith("why do tides happen")
+    assert with_packet("q", "") == "q"
+
+
+def test_the_benchmark_generator_is_available_but_not_the_default():
+    from experiments.generate import BENCHMARK_SYSTEM, GENERATORS, build_generator
+    from experiments.harness import _generator_for
+
+    assert set(GENERATORS) == {"production", "benchmark"}
+    assert type(_generator_for(Arm("a"))).__name__ == "ClaudeGenerator"
+    assert type(_generator_for(Arm("a", params={"generator": "benchmark"}))).__name__ \
+        == "BenchmarkOpeningGenerator"
+    with pytest.raises(KeyError):
+        build_generator("nonsense")
+    # Kept verbatim from the manual benchmark.
+    assert BENCHMARK_SYSTEM.startswith("You are writing the opening of a FAM audio episode.")
+
+
+def test_the_benchmark_generator_is_not_costed_as_a_full_episode():
+    """It writes a 220-token opening; charging it for a 3-minute script cries wolf."""
+    full = ExperimentSpec(name="c", trials=10, minutes=3, queries=["q"],
+                          arms=[Arm("a", search="exa", tts="none")])
+    opening = ExperimentSpec(name="c", trials=10, minutes=3, queries=["q"],
+                             arms=[Arm("a", search="exa", tts="none",
+                                       params={"generator": "benchmark"})])
+    assert cost_mod.estimate(opening).anthropic < cost_mod.estimate(full).anthropic
+
+
+def test_exa_is_costed_as_one_call_per_trial():
+    spec = ExperimentSpec(name="c", trials=10, minutes=3, queries=["q"],
+                          arms=[Arm("a", search="exa", tts="none",
+                                    params={"max_searches": 5})])
+    # max_searches caps Anthropic's server-side tool, not Exa's billing.
+    assert cost_mod.estimate(spec).exa == pytest.approx(10 * cost_mod.EXA_COST_PER_SEARCH)

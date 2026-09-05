@@ -28,31 +28,59 @@ from experiments import cost as cost_mod
 from experiments import registry
 from experiments.adapters.base import InfrastructureRequired
 from experiments.fakes import SIMULATED
-from experiments.generate import ClaudeGenerator
+from experiments.generate import build_generator
 from experiments.spec import Arm, ExperimentSpec
 from experiments.timeline import Timeline
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s")
 
 
+def _generator_for(arm: Arm):
+    """Which model call this arm makes.
+
+    `production` (the default) uses the app's own request shape, so the result
+    says something about what ships. `benchmark` reproduces the manual Exa
+    benchmark's short opening call, so a run can be checked against the numbers
+    measured by hand.
+    """
+    return build_generator(arm.params.get("generator", "production"))
+
+
+#: The manual Exa benchmark's chunk rule: the first sentence that leaves at
+#: least this many words. Below about this length a chunk is too short to give
+#: the voice natural intonation; much above it and sound starts later than it
+#: needs to. Kept as the default for pipeline arms so the repeated-trial runs
+#: stay comparable with the hand-measured one.
+BENCHMARK_FIRST_CHUNK_WORDS = 25
+
+_SENTENCE_CHARS = ".!?"
+
+
 def first_chunk_ready(buffer: str, words: int = 0) -> Optional[str]:
     """The first speakable chunk, under whichever policy is in force.
 
-    `words=0` means "a complete sentence", which is what the pipeline does
-    today. A positive number means "this many words, then the next sentence
-    end", which is the knob a first-chunk-size experiment turns: a smaller
-    chunk starts sound sooner but gives the voice less to work with.
+    `words=0` is what the shipped pipeline does: speak the first complete
+    sentence, however short.
+
+    A positive number is the rule from `exa_claude_benchmark.py`: the first
+    sentence *ending* that leaves at least that many words. Note it is the
+    whole run up to that sentence end, not a truncation - a chunk handed to a
+    voice mid-clause sounds wrong, so the boundary always wins over the count.
+    A short opening sentence is therefore not enough on its own; the scan
+    continues to the next ending.
+
+    This is the knob a first-chunk-size experiment turns: a smaller chunk
+    starts sound sooner but gives the voice less to work with.
     """
     if words <= 0:
         match = _SENTENCE_END.search(buffer)
         return buffer[: match.end()].strip() if match else None
-    tokens = buffer.split()
-    if len(tokens) < words:
-        return None
-    match = _SENTENCE_END.search(buffer)
-    if match:
-        return buffer[: match.end()].strip()
-    return " ".join(tokens[:words])
+    for index, char in enumerate(buffer):
+        if char in _SENTENCE_CHARS:
+            candidate = buffer[: index + 1].strip()
+            if len(candidate.split()) >= words:
+                return candidate
+    return None
 
 
 @dataclass
@@ -96,14 +124,14 @@ class Harness:
         self,
         spec: ExperimentSpec,
         run=None,
-        generator_factory: Callable[[], object] = ClaudeGenerator,
+        generator_factory: Optional[Callable[[Arm], object]] = None,
         search_factory: Optional[Callable[[str], object]] = None,
         tts_factory: Optional[Callable[[str, Optional[str]], object]] = None,
         save_audio: bool = False,
     ) -> None:
         self.spec = spec
         self.run = run
-        self.generator_factory = generator_factory
+        self.generator_factory = generator_factory or _generator_for
         self.search_factory = search_factory or registry.search_adapter
         self.tts_factory = tts_factory or registry.tts_adapter
         self.save_audio = save_audio
@@ -115,7 +143,7 @@ class Harness:
         timeline = Timeline()
         search = self.search_factory(arm.search)
         tts = self.tts_factory(arm.tts, arm.params.get("voice"))
-        generator = self.generator_factory()
+        generator = self.generator_factory(arm)
 
         try:
             # 1. Retrieval, when it is a separable step at all.

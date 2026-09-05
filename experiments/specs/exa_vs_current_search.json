@@ -1,0 +1,29 @@
+{
+  "name": "Exa vs current search",
+  "kind": "component",
+  "arms": [
+    {
+      "name": "exa",
+      "search": "exa",
+      "tts": "none",
+      "params": {"first_chunk_words": 25}
+    },
+    {
+      "name": "current",
+      "search": "anthropic_web_search",
+      "tts": "none",
+      "params": {"first_chunk_words": 25, "max_searches": 3}
+    }
+  ],
+  "queries": [
+    "Why are founder CEOs becoming harder for boards to remove?",
+    "what changed in the news today",
+    "what happened in the markets this week"
+  ],
+  "trials": 10,
+  "minutes": 3,
+  "stages": ["search", "generate", "first_chunk"],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "The decision this engine was built for. Both arms use FAM's production request shape, so the answer is about what ships rather than about the benchmark's short opening prompt. One dimension varies - retrieval - so the result is attributable. Queries are deliberately research-shaped: an evergreen question would make both arms look identical."
+}

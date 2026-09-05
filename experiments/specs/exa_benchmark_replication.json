@@ -1,0 +1,29 @@
+{
+  "name": "Exa benchmark replication",
+  "kind": "component",
+  "arms": [
+    {
+      "name": "exa+benchmark-opening",
+      "search": "exa",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "benchmark",
+        "first_chunk_words": 25,
+        "search_type": "fast",
+        "num_results": 8,
+        "packet_sources": 3,
+        "highlights_per_source": 2
+      }
+    }
+  ],
+  "queries": [
+    "Why are founder CEOs becoming harder for boards to remove?"
+  ],
+  "trials": 10,
+  "minutes": 3,
+  "stages": ["search", "generate", "first_chunk"],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "Reproduces exa_claude_benchmark.py exactly - same query, same Exa call (fast/8/highlights), same 3-source 2-highlight packet, same 220-token opening prompt, same 25-word chunk rule - but ten times instead of once, so the number has a spread. Run this first to check the engine agrees with the manual measurement before trusting anything else it says."
+}

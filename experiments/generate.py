@@ -16,6 +16,27 @@ import dataclasses
 from typing import AsyncIterator, Optional, Protocol
 
 
+def with_packet(query: str, context: str) -> str:
+    """Attach retrieved source material to the question.
+
+    It goes in the *question*, matching how `exa_claude_benchmark.py` supplied
+    its evidence packet, and deliberately **not** through `EpisodePlan.context`
+    - that field renders as `<already_heard>` and tells the model the material
+    is known and must not be re-explained, which is the exact opposite of what
+    retrieved sources are for.
+
+    Production's prompt is not modified; this is an experiment input.
+    """
+    if not context:
+        return query
+    return (
+        f"{query}\n\n"
+        f"EVIDENCE PACKET:\n{context}\n"
+        f"Use only the supplied evidence. Do not mention sources, research, "
+        f"URLs, or that you were given a packet."
+    )
+
+
 class Generator(Protocol):
     """Streams a script, token by token, and reports what it used."""
 
@@ -67,14 +88,7 @@ class ClaudeGenerator:
         original = script_generator.settings
         script_generator.settings = patched
         try:
-            plan = plan_episode(query, minutes, search=search)
-            if context:
-                # Retrieved context is prepended as source material. The prompt
-                # itself is untouched; this is an experiment input, not a
-                # production prompt change.
-                plan = dataclasses.replace(
-                    plan, query=f"{query}\n\nSource material:\n{context}"
-                ) if dataclasses.is_dataclass(plan) else plan
+            plan = plan_episode(with_packet(query, context), minutes, search=search)
             generator = ScriptGenerator()
             generator.client = build_async_client()
             kwargs = generator._request_kwargs(plan)
@@ -119,3 +133,89 @@ def _domains(message) -> list[str]:
                 if host and host not in seen:
                     seen.append(host)
     return seen
+
+
+#: The system prompt from `exa_claude_benchmark.py`, kept verbatim.
+BENCHMARK_SYSTEM = (
+    "You are writing the opening of a FAM audio episode. "
+    "Use only the supplied evidence packet. "
+    "Write natural spoken narration. "
+    "Start immediately with substance. "
+    "Do not mention sources, research, URLs, or that you were given a packet."
+)
+BENCHMARK_MAX_TOKENS = 220
+BENCHMARK_MODEL = "claude-sonnet-5"
+
+
+class BenchmarkOpeningGenerator:
+    """The model call exactly as the manual Exa benchmark made it.
+
+    This exists so the repeated-trial engine can *reproduce* the hand-measured
+    numbers rather than merely resemble them. It is not what ships: it writes
+    only an opening, capped at 220 tokens, under its own short system prompt.
+
+    Use it to check that the engine agrees with the manual run; use
+    `ClaudeGenerator` - the production request shape - to decide anything about
+    the product. An arm picks one with `params={"generator": "benchmark"}`.
+    """
+
+    def __init__(self) -> None:
+        self._usage: dict = {}
+
+    def usage(self) -> dict:
+        return dict(self._usage)
+
+    async def stream(
+        self,
+        query: str,
+        minutes: float,
+        context: str = "",
+        model: Optional[str] = None,
+        search: bool = False,
+        max_searches: int = 3,
+    ) -> AsyncIterator[str]:
+        from anthropic_client import build_async_client
+
+        client = build_async_client()
+        chosen = model or BENCHMARK_MODEL
+        final = None
+        async with client.messages.stream(
+            model=chosen,
+            max_tokens=BENCHMARK_MAX_TOKENS,
+            system=BENCHMARK_SYSTEM,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"USER SEARCH:\n{query}\n\n"
+                    f"EVIDENCE PACKET:\n{context}\n\n"
+                    f"Begin the episode now."
+                ),
+            }],
+        ) as stream:
+            async for delta in stream.text_stream:
+                yield delta
+            final = await stream.get_final_message()
+        usage = getattr(final, "usage", None)
+        self._usage = {
+            "model": chosen,
+            "input_tokens": getattr(usage, "input_tokens", 0) or 0,
+            "output_tokens": getattr(usage, "output_tokens", 0) or 0,
+            "searches": 0,
+            "sources": [],
+            "generator": "benchmark",
+        }
+
+
+GENERATORS = {
+    "production": ClaudeGenerator,
+    "benchmark": BenchmarkOpeningGenerator,
+}
+
+
+def build_generator(name: str = "production"):
+    """Pick a generator by name, failing loudly on an unknown one."""
+    if name not in GENERATORS:
+        raise KeyError(
+            f"Unknown generator {name!r}. Known: {', '.join(sorted(GENERATORS))}"
+        )
+    return GENERATORS[name]()

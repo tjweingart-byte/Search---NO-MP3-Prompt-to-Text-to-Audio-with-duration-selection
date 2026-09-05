@@ -87,22 +87,48 @@ These are enforced by code and pinned by tests, not by remembering:
 - **It never reads or writes the script cache.** A cache hit returns in
   milliseconds and would look like a result.
 
-## Connecting Exa
+## Exa
 
-Not connected yet, and deliberately not guessed at. Drop the real call into
-`experiments/adapters/exa_impl.py` (there is a `.template` beside it):
+**Connected**, ported from `exa_claude_benchmark.py` rather than rewritten, so
+the numbers stay comparable with the ones measured by hand.
 
-```python
-async def run_search(query: str, **params) -> dict:
-    return {"context": str, "sources": [str], "searches": int,
-            "remote_seconds": float, "cost": float}   # last two optional
-```
+Two things still needed before it runs:
 
-The adapter finds it automatically. Until it exists, `available()` says so and
-no experiment naming `exa` will start.
+    pip install -r experiments/requirements.txt   # exa-py
+    export EXA_API_KEY=...                        # or add it to ~/.fam/env
 
-Port it from `exa_claude_benchmark.py` rather than rewriting it, so the numbers
-stay comparable with the ones already measured by hand.
+What was preserved verbatim from the manual benchmark:
+
+| | |
+|---|---|
+| the call | `search_and_contents(type="fast", num_results=8, highlights=True)` |
+| the packet | top **3** results, **2** highlights each, `SOURCE n / Title: / Key evidence:` |
+| the chunk rule | the first sentence *ending* leaving at least **25** words |
+
+The three hard-coded numbers are now parameters — `num_results`,
+`packet_sources`, `highlights_per_source` — because they are the packet-size
+knobs worth sweeping. Their defaults reproduce the manual run, and a
+differential test checks the chunk rule against the original function verbatim.
+
+**Two generators, and the difference matters.** `production` (the default) uses
+FAM's own request shape, so a result says something about what ships.
+`benchmark` reproduces the manual run's short 220-token opening call under its
+own system prompt — use it to check the engine agrees with the hand-measured
+number, not to decide anything about the product. An arm picks one with
+`params={"generator": "benchmark"}`.
+
+The evidence packet goes into the **question**, matching the benchmark, and
+deliberately not through `EpisodePlan.context` — that field renders as
+`<already_heard>` and tells the model the material is known and must not be
+re-explained, which is the exact opposite of what retrieved sources are for.
+
+### Ready-made specs
+
+    python tools/experiment.py run experiments/specs/exa_benchmark_replication.json
+    python tools/experiment.py run experiments/specs/exa_vs_current_search.json
+
+The first replicates the manual run ten times instead of once, so the number
+has a spread. Run it before trusting anything else the engine says.
 
 ## Connecting Chatterbox
 
