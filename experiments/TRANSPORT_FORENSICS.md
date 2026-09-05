@@ -70,5 +70,24 @@ same model, packet, prompt, ceiling and chunk rule - and phases 2, 3 and 4 are
 then direct measurements of connection and setup cost. Whatever remains in
 phase 5 is Anthropic's, bounded by the round trip.
 
-Optionally, and at no token cost, a handful of TLS handshakes to the same host
-before the run gives an independent distribution for phases 2 and 3.
+### The free connection baseline
+
+    python tools/tls_baseline.py --trials 20 --save
+
+Opens a TCP connection to `api.anthropic.com`, completes the TLS handshake and
+closes it. **No HTTP request, no credential, nothing billed** - a test asserts
+the tool imports no HTTP client and references no key.
+
+It earns its place by measuring something the traced run cannot: raw sockets
+time `getaddrinfo`, `connect` and the handshake separately, while httpcore
+resolves inside `connect_tcp` and emits no event between DNS and TCP. So this
+is the one place those two numbers come apart.
+
+Trial 1 is reported apart from the rest, because after it the OS resolver cache
+is warm and a single median over both would describe neither.
+
+Read the two together: if the baseline's warm total is close to the traced
+run's `phase_connect + phase_tls`, connection cost is understood and whatever
+remains in `wait_for_headers` is Anthropic's. If the traced run is much larger
+than the baseline, something in the client path - not the network - is adding
+it.

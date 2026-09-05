@@ -31,3 +31,6 @@ experiments/runs/
 # tools/capture_packet.py so a benchmark is never run against someone
 # else's stale evidence.
 experiments/packets/*.json
+
+# Measured connection baselines: data, not source.
+experiments/baselines/*.json
