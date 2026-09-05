@@ -43,6 +43,20 @@ def headline_key(spec: ExperimentSpec) -> str:
         return HEADLINE
     return HEADLINE_NO_SPEECH
 
+#: The forensic decomposition, in the order the time is actually spent.
+#: The first three sum to the fourth; the fourth is the number a listener feels.
+SEGMENT_KEYS = [
+    ("seg_dispatch_to_first_token", "dispatch -> first token"),
+    ("seg_first_token_to_25_words", "first token -> 25 words"),
+    ("seg_25_words_to_boundary", "25 words -> sentence boundary"),
+]
+TOTAL_SEGMENT = ("seg_dispatch_to_boundary", "dispatch -> first speakable chunk")
+EXTRA_SEGMENTS = [
+    ("dispatch_to_stream_open", "  of which: transport (dispatch -> response headers)"),
+    ("seg_dispatch_to_complete", "dispatch -> generation complete"),
+    ("harness_first_token_lag", "  harness overhead on the first token"),
+]
+
 STAGE_KEYS = [
     ("search_seconds", "search"),
     ("generate_seconds", "generate"),
@@ -146,6 +160,7 @@ def analyse(spec: ExperimentSpec, results) -> dict:
 
     return {
         "spec": spec.to_dict(),
+        "_trials": dicts,
         "headline_metric": key,
         "arms": [a.to_dict() for a in arms],
         "comparisons": comparisons,
@@ -251,6 +266,9 @@ def render(spec: ExperimentSpec, analysis: dict, previous: Optional[dict] = None
             out.append("- No arm from the previous run shares a name with this one.")
         out.append("")
 
+    # -- forensics -----------------------------------------------------
+    out += _segment_section(spec, analysis)
+
     # -- cost ----------------------------------------------------------
     label = ("Simulated, and therefore meaningless as a cost"
              if analysis["simulated"] else "Actual, from recorded usage")
@@ -266,6 +284,90 @@ def render(spec: ExperimentSpec, analysis: dict, previous: Optional[dict] = None
     # -- recommendation -------------------------------------------------
     out += ["## Recommendation", "", _recommend(spec, analysis, arms), ""]
     return "\n".join(out)
+
+
+def _segment_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
+    """Where the wait to the first speakable chunk actually goes.
+
+    Only rendered when a run carried the instrumentation, so ordinary
+    experiments are unaffected.
+    """
+    trials = [t for t in analysis.get("_trials", []) if t.get("ok")]
+    if not any(t["metrics"].get(TOTAL_SEGMENT[0]) is not None for t in trials):
+        return []
+
+    out = ["## Latency forensics: the wait to the first speakable chunk", ""]
+
+    for arm in spec.arms:
+        mine = [t for t in trials if t["arm"] == arm.name]
+        if not mine:
+            continue
+        totals = [t["metrics"].get(TOTAL_SEGMENT[0]) for t in mine
+                  if t["metrics"].get(TOTAL_SEGMENT[0]) is not None]
+        total_median = stats_mod.summarise(totals).median if totals else None
+
+        if len(spec.arms) > 1:
+            out += [f"### {arm.name}", ""]
+        out += ["| segment | median | p95 | min-max | IQR | share |",
+                "|---|---|---|---|---|---|"]
+
+        def row(key, label, share=True):
+            values = [t["metrics"].get(key) for t in mine
+                      if t["metrics"].get(key) is not None]
+            summary = stats_mod.summarise(values)
+            if not summary:
+                return f"| {label} | not recorded | | | | |"
+            portion = ""
+            if share and total_median:
+                portion = f"{summary.median / total_median * 100:.0f}%"
+            return (f"| {label} | **{summary.median:.3f}s** | {summary.p95:.3f}s "
+                    f"| {summary.minimum:.3f}-{summary.maximum:.3f}s "
+                    f"| {summary.iqr:.3f}s | {portion} |")
+
+        for key, label in SEGMENT_KEYS:
+            out.append(row(key, label))
+        out.append(row(*TOTAL_SEGMENT))
+        for key, label in EXTRA_SEGMENTS:
+            out.append(row(key, label, share=False))
+        out.append("")
+
+        # -- raw, every trial, so nothing rests on the summary alone --
+        out += ["<details><summary>Raw per-trial values</summary>", "",
+                "| # | dispatch->first token | ->25 words | ->boundary | total | complete | chunk words |",
+                "|---|---|---|---|---|---|---|"]
+        for trial in mine:
+            m = trial["metrics"]
+
+            def cell(key):
+                value = m.get(key)
+                return f"{value:.3f}" if isinstance(value, (int, float)) else "-"
+
+            out.append(
+                f"| {trial['index']} | {cell('seg_dispatch_to_first_token')} "
+                f"| {cell('seg_first_token_to_25_words')} "
+                f"| {cell('seg_25_words_to_boundary')} "
+                f"| {cell(TOTAL_SEGMENT[0])} | {cell('seg_dispatch_to_complete')} "
+                f"| {m.get('first_chunk_words', '-')} |")
+        out += ["", "</details>", ""]
+
+        # -- the reading, stated rather than left to be inferred --
+        first_token = [t["metrics"].get("seg_dispatch_to_first_token") for t in mine
+                       if t["metrics"].get("seg_dispatch_to_first_token") is not None]
+        transport = [t["metrics"].get("dispatch_to_stream_open") for t in mine
+                     if t["metrics"].get("dispatch_to_stream_open") is not None]
+        if first_token and total_median:
+            ft = stats_mod.summarise(first_token)
+            share = ft.median / total_median * 100
+            note = (f"**{share:.0f}% of the wait is over before the first token "
+                    f"arrives.**")
+            if transport:
+                tr = stats_mod.summarise(transport)
+                note += (f" Of that, {tr.median:.3f}s is transport - the request "
+                         f"reaching the server and its headers coming back - so "
+                         f"roughly {ft.median - tr.median:.3f}s is the model "
+                         f"before it writes anything.")
+            out += [note, ""]
+    return out
 
 
 def _recommend(spec: ExperimentSpec, analysis: dict, arms: list[ArmReport]) -> str:

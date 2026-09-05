@@ -1,0 +1,26 @@
+{
+  "name": "Control latency forensics",
+  "kind": "component",
+  "arms": [
+    {
+      "name": "control-verified",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "benchmark",
+        "first_chunk_words": 25,
+        "packet": "founder_ceos"
+      }
+    }
+  ],
+  "queries": [
+    "Why are founder CEOs becoming harder for boards to remove?"
+  ],
+  "trials": 20,
+  "minutes": 3,
+  "stages": ["generate", "first_chunk"],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "Forensics on the verified control only - no alternatives, nothing optimised. The arm is byte-identical to the replication: same Sonnet 5 model, same saved founder_ceos packet, same system prompt, same 220-token ceiling, same 25-word sentence-boundary rule, no thinking or output_config sent. Twenty trials so the segments have a usable spread. The instrumentation is observational: it records perf_counter checkpoints and reads response metadata that already exists, and a golden-request test asserts the request itself is unchanged. This run is the baseline every later generation experiment is compared against."
+}

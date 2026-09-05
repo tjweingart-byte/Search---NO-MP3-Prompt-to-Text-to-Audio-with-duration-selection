@@ -237,6 +237,7 @@ class Harness:
                     usage.get("output_tokens", 0),
                 )
             result.first_chunk_text = first_chunk or ""
+            timing = (generator.usage() or {}).get("timing") if hasattr(generator, "usage") else None
             result.metrics = {
                 "first_token": timeline.at("first_token"),
                 "words_25": timeline.at("words_25"),
@@ -259,6 +260,9 @@ class Harness:
                 "searches": retrieved.searches or usage.get("searches", 0),
                 "server_side_search": server_side,
             }
+            result.metrics.update(_segments(timeline, timing))
+            if timing:
+                result.usage = {**result.usage, "timing": timing}
         except InfrastructureRequired:
             raise  # never swallowed: this one needs a person, not a retry
         except Exception as exc:
@@ -278,6 +282,12 @@ class Harness:
                     result.usage = {**result.usage, **complete}
                     if complete.get("stream_seconds") is not None:
                         result.metrics["total_generation_seconds"] = complete["stream_seconds"]
+                    # The dispatch checkpoints only exist once the generator has
+                    # finished, because its `finally` is where they are written.
+                    # Computing the segments earlier read an empty dict and
+                    # silently produced a row of blanks.
+                    if complete.get("timing"):
+                        result.metrics.update(_segments(timeline, complete["timing"]))
 
         return result
 
@@ -294,6 +304,63 @@ class Harness:
                     if progress:
                         progress(result)
         return self.results
+
+
+def _segments(timeline: Timeline, timing: Optional[dict]) -> dict:
+    """The wait, cut into pieces that have different causes.
+
+    Five segments, all measured from the request's dispatch or between two
+    checkpoints on the same `perf_counter` clock:
+
+        dispatch -> first token          connection, queueing, prefill, thinking
+        first token -> 25 words          how fast tokens arrive
+        25 words -> sentence boundary    what the chunk rule costs
+        dispatch -> sentence boundary    the number a listener would feel
+        dispatch -> completion           the whole response
+
+    `dispatch_to_stream_open` splits the first segment again: everything before
+    the response headers came back is transport, not the model. That is the
+    line between a slow network and a slow model, and it is the reason this
+    exists.
+
+    Returns an empty-valued shape rather than nothing when the generator did
+    not report timing, so a missing segment reads as missing instead of being
+    quietly absent from the table.
+    """
+    out: dict = {
+        "seg_dispatch_to_first_token": None,
+        "seg_first_token_to_25_words": None,
+        "seg_25_words_to_boundary": None,
+        "seg_dispatch_to_boundary": None,
+        "seg_dispatch_to_complete": None,
+        "dispatch_to_stream_open": None,
+        "harness_first_token_lag": None,
+    }
+    words_25 = timeline.absolute("words_25")
+    boundary = timeline.absolute("first_chunk")
+    first_token_mark = timeline.absolute("first_token")
+
+    if first_token_mark is not None and words_25 is not None:
+        out["seg_first_token_to_25_words"] = words_25 - first_token_mark
+    if words_25 is not None and boundary is not None:
+        out["seg_25_words_to_boundary"] = boundary - words_25
+
+    if not timing:
+        return out
+
+    dispatch = timing.get("dispatch_perf")
+    first_text = timing.get("first_text_perf")
+    out["dispatch_to_stream_open"] = timing.get("dispatch_to_stream_open")
+    out["seg_dispatch_to_first_token"] = timing.get("dispatch_to_first_text")
+    out["seg_dispatch_to_complete"] = timing.get("dispatch_to_complete")
+    if dispatch is not None and boundary is not None:
+        out["seg_dispatch_to_boundary"] = boundary - dispatch
+    # The generator sees the first token as it leaves the SDK; the harness sees
+    # it one `yield` later. The difference is this engine's own overhead, and
+    # it is recorded so it can be subtracted rather than assumed to be zero.
+    if first_text is not None and first_token_mark is not None:
+        out["harness_first_token_lag"] = first_token_mark - first_text
+    return out
 
 
 async def _aclose(stream) -> None:

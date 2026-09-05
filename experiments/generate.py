@@ -120,7 +120,113 @@ class ClaudeGenerator:
             script_generator.settings = original
 
 
-async def _drain_timed(iterator, started: float) -> float:
+#: Response headers worth keeping. Everything Anthropic returns that bears on
+#: timing or identity; the store scrubs the values anyway, and an allow-list
+#: keeps a future header from silently becoming part of the record.
+INTERESTING_HEADERS = (
+    "request-id", "anthropic-request-id", "date", "via", "server",
+    "x-envoy-upstream-service-time", "cf-ray", "anthropic-organization-id",
+    "anthropic-ratelimit-requests-remaining", "anthropic-ratelimit-tokens-remaining",
+    "anthropic-ratelimit-input-tokens-remaining",
+    "anthropic-ratelimit-output-tokens-remaining",
+)
+
+
+class StreamTiming:
+    """Checkpoints around one streamed request, on one clock.
+
+    Purely observational: it records `perf_counter` readings and reads response
+    metadata that already exists. It never touches the request, so a generator
+    that carries one sends exactly what it sent without one.
+
+    The checkpoints split the wait into parts that have different causes:
+
+        dispatch      the moment before the request goes out
+        stream_open   response headers are back - the request reached the
+                      server and it accepted it, so everything up to here is
+                      connection and transport, not generation
+        first_text    the first text token - the gap from stream_open is the
+                      server thinking and prefilling
+        complete      the response ended, seen by the teardown drain
+    """
+
+    __slots__ = ("dispatch", "stream_open", "first_text", "complete",
+                 "request_id", "http_version", "headers", "drained_words",
+                 "drained_chars")
+
+    def __init__(self) -> None:
+        self.dispatch = None
+        self.stream_open = None
+        self.first_text = None
+        self.complete = None
+        self.request_id = None
+        self.http_version = None
+        self.headers = {}
+        self.drained_words = 0
+        self.drained_chars = 0
+
+    def mark_dispatch(self) -> None:
+        self.dispatch = time.perf_counter()
+
+    def mark_stream_open(self, stream) -> None:
+        self.stream_open = time.perf_counter()
+        # Everything below is best-effort: a checkpoint must never be able to
+        # fail a trial. `response` is a property that can raise before the
+        # response exists, which `getattr`'s default does not catch.
+        try:
+            self.request_id = getattr(stream, "request_id", None)
+        except Exception:
+            self.request_id = None
+        try:
+            response = stream.response
+        except Exception:
+            return
+        if response is None:
+            return
+        try:
+            self.http_version = getattr(response, "http_version", None)
+        except Exception:
+            self.http_version = None
+        try:
+            headers = dict(response.headers)
+        except Exception:
+            headers = {}
+        self.headers = {k: v for k, v in headers.items()
+                        if k.lower() in INTERESTING_HEADERS}
+
+    def mark_first_text(self) -> None:
+        if self.first_text is None:
+            self.first_text = time.perf_counter()
+
+    def mark_complete(self) -> None:
+        self.complete = time.perf_counter()
+
+    def _since_dispatch(self, at):
+        if at is None or self.dispatch is None:
+            return None
+        return at - self.dispatch
+
+    def to_dict(self) -> dict:
+        return {
+            # Absolute perf_counter readings, so the harness - which marks the
+            # 25-word and sentence-boundary checkpoints on the same clock - can
+            # express every segment relative to dispatch without guessing.
+            "dispatch_perf": self.dispatch,
+            "stream_open_perf": self.stream_open,
+            "first_text_perf": self.first_text,
+            "complete_perf": self.complete,
+            "dispatch_to_stream_open": self._since_dispatch(self.stream_open),
+            "dispatch_to_first_text": self._since_dispatch(self.first_text),
+            "dispatch_to_complete": self._since_dispatch(self.complete),
+            "request_id": self.request_id,
+            "http_version": self.http_version,
+            "headers": dict(self.headers),
+            "drained_words": self.drained_words,
+            "drained_chars": self.drained_chars,
+        }
+
+
+async def _drain_timed(iterator, started: float, timing: "StreamTiming | None" = None) -> float:
     """Drain, and report when the response actually ended.
 
     The consumer stops at the first speakable chunk, so nobody else is in a
@@ -128,7 +234,19 @@ async def _drain_timed(iterator, started: float) -> float:
     extra to note the time - which is the only way a total generation time can
     be reported for a run that deliberately stops reading early.
     """
-    await _drain(iterator)
+    if timing is None:
+        await _drain(iterator)
+    else:
+        # Counting while draining costs nothing that matters: every checkpoint
+        # has already been taken, and it is the only way to know how much the
+        # model wrote in total on a run that stops reading at the first chunk.
+        try:
+            async for chunk in iterator:
+                timing.drained_chars += len(chunk)
+                timing.drained_words += len(chunk.split())
+        except Exception:
+            pass
+        timing.mark_complete()
     return time.perf_counter() - started
 
 
@@ -243,6 +361,7 @@ class BenchmarkOpeningGenerator:
 
     def __init__(self) -> None:
         self._usage: dict = {}
+        self._timing: Optional[StreamTiming] = None
 
     def usage(self) -> dict:
         return dict(self._usage)
@@ -261,33 +380,53 @@ class BenchmarkOpeningGenerator:
         client = build_async_client()
         chosen = model or BENCHMARK_MODEL
         final = None
-        started = time.perf_counter()
+        timing = StreamTiming()
+        self._timing = timing
         try:
+            # Dispatch is the moment before the request goes out. Building the
+            # client happens above it, so client setup is not counted as
+            # latency the listener would feel.
+            timing.mark_dispatch()
+            started = timing.dispatch
             async with client.messages.stream(
-                model=chosen,
-                max_tokens=BENCHMARK_MAX_TOKENS,
-                system=BENCHMARK_SYSTEM,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"USER SEARCH:\n{query}\n\n"
-                        f"EVIDENCE PACKET:\n{context}\n\n"
-                        f"Begin the episode now."
-                    ),
-                }],
+                **self.request_kwargs(chosen, query, context)
             ) as stream:
+                timing.mark_stream_open(stream)
                 text_stream = stream.text_stream
                 try:
                     async for delta in text_stream:
+                        timing.mark_first_text()
                         yield delta
                     final = await stream.get_final_message()
                 finally:
-                    elapsed = await _drain_timed(text_stream, started)
+                    elapsed = await _drain_timed(text_stream, started, timing)
                     self._usage = _usage_from(final, stream, chosen)
                     self._usage["generator"] = "benchmark"
                     self._usage["stream_seconds"] = elapsed
+                    self._usage["timing"] = timing.to_dict()
         finally:
             await client.close()
+
+    def request_kwargs(self, model: str, query: str, context: str) -> dict:
+        """The verified request, unchanged.
+
+        Extracted so a test can assert it byte for byte against a golden
+        snapshot: instrumentation that altered the request would stop being
+        instrumentation and start being a different experiment.
+        """
+        return {
+            "model": model,
+            "max_tokens": BENCHMARK_MAX_TOKENS,
+            "system": BENCHMARK_SYSTEM,
+            "messages": [{
+                "role": "user",
+                "content": (
+                    f"USER SEARCH:\n{query}\n\n"
+                    f"EVIDENCE PACKET:\n{context}\n\n"
+                    f"Begin the episode now."
+                ),
+            }],
+        }
 
 
 #: Added to the system prompt by the `first_chunk` arm. It asks for a *fuller*

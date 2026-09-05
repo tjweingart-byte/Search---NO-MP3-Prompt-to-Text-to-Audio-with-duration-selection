@@ -1586,3 +1586,205 @@ def test_a_saved_packet_makes_the_cost_estimate_measurable(tmp_path, monkeypatch
     assert est.exa == 0.0, "a replayed packet calls nobody"
     assert est.gpu == 0.0
     assert est.anthropic > 0
+
+
+# --------------------------------------------------------------------------
+# Latency forensics: instrumentation that must not change what it measures
+# --------------------------------------------------------------------------
+#: The verified control's request, frozen. If instrumentation ever alters the
+#: call, this fails rather than the run quietly measuring something else.
+GOLDEN_CONTROL_REQUEST = {
+    "model": "claude-sonnet-5",
+    "max_tokens": 220,
+    "system": (
+        "You are writing the opening of a FAM audio episode. "
+        "Use only the supplied evidence packet. "
+        "Write natural spoken narration. "
+        "Start immediately with substance. "
+        "Do not mention sources, research, URLs, or that you were given a packet."
+    ),
+    "messages": [{
+        "role": "user",
+        "content": "USER SEARCH:\nWHY\n\nEVIDENCE PACKET:\nPACKET\n\nBegin the episode now.",
+    }],
+}
+
+
+def test_the_instrumented_control_sends_the_identical_request():
+    from experiments.generate import BenchmarkOpeningGenerator
+
+    sent = BenchmarkOpeningGenerator().request_kwargs("claude-sonnet-5", "WHY", "PACKET")
+    assert sent == GOLDEN_CONTROL_REQUEST
+    # Specifically: still no thinking and no effort, which is what makes it the
+    # control rather than a fourth variant.
+    assert "thinking" not in sent and "output_config" not in sent
+
+
+def test_stream_timing_is_observational_only():
+    """It reads clocks and response metadata; it never touches the request."""
+    import ast
+
+    source = (pathlib.Path(__file__).resolve().parent.parent / "experiments"
+              / "generate.py").read_text()
+    tree = ast.parse(source)
+    timing_class = next(n for n in ast.walk(tree)
+                        if isinstance(n, ast.ClassDef) and n.name == "StreamTiming")
+
+    # Strip docstrings: prose about the model is not the model being touched.
+    for node in ast.walk(timing_class):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (node.body and isinstance(node.body[0], ast.Expr)
+                    and isinstance(node.body[0].value, ast.Constant)
+                    and isinstance(node.body[0].value.value, str)):
+                node.body.pop(0)
+    body = ast.unparse(timing_class)
+
+    for forbidden in ("kwargs", "max_tokens", "system", "messages", "thinking",
+                      "output_config", "model"):
+        assert forbidden not in body, f"StreamTiming touches {forbidden!r}"
+
+
+def test_timing_checkpoints_are_ordered_and_relative_to_dispatch():
+    from experiments.generate import StreamTiming
+
+    timing = StreamTiming()
+    timing.mark_dispatch()
+    timing.mark_stream_open(object())
+    timing.mark_first_text()
+    timing.mark_first_text()          # idempotent: only the first one counts
+    timing.mark_complete()
+    out = timing.to_dict()
+
+    assert 0 <= out["dispatch_to_stream_open"] <= out["dispatch_to_first_text"]
+    assert out["dispatch_to_first_text"] <= out["dispatch_to_complete"]
+    assert out["dispatch_perf"] is not None
+
+
+def test_timing_survives_a_stream_with_no_response_metadata():
+    from experiments.generate import StreamTiming
+
+    class Bare:
+        @property
+        def response(self):
+            raise RuntimeError("no response yet")
+
+    timing = StreamTiming()
+    timing.mark_dispatch()
+    timing.mark_stream_open(Bare())          # must not raise
+    assert timing.headers == {}
+
+
+def test_response_headers_are_kept_but_only_the_useful_ones():
+    from experiments.generate import StreamTiming
+
+    class Response:
+        http_version = "HTTP/1.1"
+        headers = {"request-id": "req_1", "x-envoy-upstream-service-time": "812",
+                   "set-cookie": "should-not-be-kept", "content-type": "text/event-stream"}
+
+    class Stream:
+        request_id = "req_1"
+        response = Response()
+
+    timing = StreamTiming()
+    timing.mark_dispatch()
+    timing.mark_stream_open(Stream())
+    out = timing.to_dict()
+    assert out["request_id"] == "req_1"
+    assert out["http_version"] == "HTTP/1.1"
+    assert out["headers"]["x-envoy-upstream-service-time"] == "812"
+    assert "set-cookie" not in out["headers"]
+
+
+def test_the_five_segments_are_computed_and_add_up():
+    from experiments.harness import _segments
+
+    timeline = Timeline()
+    base = timeline.origin
+    timeline._marks.update({"first_token": 0.50, "words_25": 1.20, "first_chunk": 1.55})
+    timing = {
+        "dispatch_perf": base - 0.02,          # dispatch just before the trial mark
+        "first_text_perf": base + 0.49,
+        "dispatch_to_stream_open": 0.10,
+        "dispatch_to_first_text": 0.51,
+        "dispatch_to_complete": 3.40,
+    }
+    out = _segments(timeline, timing)
+
+    assert out["seg_dispatch_to_first_token"] == pytest.approx(0.51)
+    assert out["seg_first_token_to_25_words"] == pytest.approx(0.70)
+    assert out["seg_25_words_to_boundary"] == pytest.approx(0.35)
+    assert out["seg_dispatch_to_boundary"] == pytest.approx(1.57)
+    assert out["seg_dispatch_to_complete"] == pytest.approx(3.40)
+    assert out["dispatch_to_stream_open"] == pytest.approx(0.10)
+
+    # The three parts account for the whole, within the harness's own lag.
+    parts = (out["seg_dispatch_to_first_token"] + out["seg_first_token_to_25_words"]
+             + out["seg_25_words_to_boundary"])
+    assert parts == pytest.approx(out["seg_dispatch_to_boundary"], abs=0.02)
+    assert out["harness_first_token_lag"] == pytest.approx(0.01, abs=1e-6)
+
+
+def test_segments_report_as_missing_rather_than_vanishing():
+    from experiments.harness import _segments
+
+    out = _segments(Timeline(), None)
+    assert set(out) >= {"seg_dispatch_to_first_token", "seg_dispatch_to_boundary",
+                        "seg_dispatch_to_complete"}
+    assert all(v is None for v in out.values())
+
+
+def test_the_forensics_section_renders_stats_raw_trials_and_shares():
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "control_latency_forensics.json").read_text())
+    trials = []
+    for index in range(1, 6):
+        trials.append({
+            "arm": "control-verified", "query": "q", "index": index, "ok": True,
+            "simulated": False, "usage": {}, "cost": 0.0, "artifacts": [],
+            "first_chunk_text": "A complete opening sentence about boards.",
+            "timeline": {"stages": []},
+            "metrics": {
+                "first_audio": None, "first_chunk": 2.3,
+                "seg_dispatch_to_first_token": 1.90 + index * 0.01,
+                "seg_first_token_to_25_words": 0.30,
+                "seg_25_words_to_boundary": 0.12,
+                "seg_dispatch_to_boundary": 2.32 + index * 0.01,
+                "seg_dispatch_to_complete": 3.9,
+                "dispatch_to_stream_open": 0.18,
+                "harness_first_token_lag": 0.0004,
+                "first_chunk_words": 27,
+            },
+        })
+    analysis = report.analyse(spec, trials)
+    text = report.render(spec, analysis)
+
+    assert "Latency forensics" in text
+    assert "dispatch -> first token" in text
+    assert "Raw per-trial values" in text
+    assert "| 5 |" in text, "every trial must appear raw, not only in the summary"
+    assert "82%" in text or "83%" in text, "the first-token share must be stated"
+    assert "transport" in text
+
+
+def test_ordinary_runs_are_unaffected_by_the_forensics_section():
+    spec = ExperimentSpec(name="plain", trials=3, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none")])
+    results = asyncio.run(_fake_harness(spec).run_all())
+    text = report.render(spec, report.analyse(spec, results))
+    assert "Latency forensics" not in text
+
+
+def test_the_forensics_spec_is_the_control_alone():
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "control_latency_forensics.json").read_text())
+    assert len(spec.arms) == 1
+    arm = spec.arms[0]
+    assert arm.name == "control-verified"
+    assert arm.params == {"generator": "benchmark", "first_chunk_words": 25,
+                          "packet": "founder_ceos"}
+    assert arm.model == "claude-sonnet-5"
+    assert spec.trials == 20 and spec.total_trials == 20
+    assert spec.validate() == []

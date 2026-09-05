@@ -135,6 +135,22 @@ class Timeline:
         return self._marks.get(name)
 
     @property
+    def origin(self) -> float:
+        """The `perf_counter` reading this timeline calls zero.
+
+        Exposed so a mark can be converted back to an absolute reading and
+        compared against a checkpoint taken elsewhere in the same process -
+        which is how a segment measured from the request's dispatch is lined
+        up with one measured from the start of the trial.
+        """
+        return self._t0
+
+    def absolute(self, name: str) -> Optional[float]:
+        """A mark as an absolute `perf_counter` reading."""
+        at = self._marks.get(name)
+        return None if at is None else self._t0 + at
+
+    @property
     def elapsed(self) -> float:
         return self._now()
 
