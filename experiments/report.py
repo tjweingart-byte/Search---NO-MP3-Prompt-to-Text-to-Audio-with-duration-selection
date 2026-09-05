@@ -51,6 +51,17 @@ SEGMENT_KEYS = [
     ("seg_25_words_to_boundary", "25 words -> sentence boundary"),
 ]
 TOTAL_SEGMENT = ("seg_dispatch_to_boundary", "dispatch -> first speakable chunk")
+#: HTTP phases, when the run carried the tracer. Each is bounded by two
+#: httpcore events, so each is a measurement rather than a share of a bucket.
+PHASE_KEYS = [
+    ("phase_local_setup", "local setup + serialisation", True),
+    ("phase_connect", "DNS + TCP connect", True),
+    ("phase_tls", "TLS handshake", True),
+    ("phase_upload", "request upload", True),
+    ("phase_wait_for_headers", "wait for response headers", False),
+    ("phase_dispatch_to_headers", "dispatch -> response headers (sum)", True),
+]
+
 EXTRA_SEGMENTS = [
     ("dispatch_to_stream_open", "  of which: transport (dispatch -> response headers)"),
     ("seg_dispatch_to_complete", "dispatch -> generation complete"),
@@ -330,6 +341,35 @@ def _segment_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
         for key, label in EXTRA_SEGMENTS:
             out.append(row(key, label, share=False))
         out.append("")
+
+        # -- HTTP phases, when they were traced --
+        traced = [t for t in mine if t["metrics"].get("http_trace") == "ok"]
+        if traced:
+            out += ["", "**HTTP phases** (httpcore trace; each bounded by two "
+                    "real events)", "",
+                    "| phase | median | p95 | min-max | measured? |",
+                    "|---|---|---|---|---|"]
+            for key, label, direct in PHASE_KEYS:
+                values = [t["metrics"].get(key) for t in traced
+                          if t["metrics"].get(key) is not None]
+                summary = stats_mod.summarise(values)
+                if not summary:
+                    out.append(f"| {label} | not observed | | | |")
+                    continue
+                kind = "measured" if direct else "**bucket**"
+                out.append(f"| {label} | **{summary.median * 1000:.1f} ms** "
+                           f"| {summary.p95 * 1000:.1f} ms "
+                           f"| {summary.minimum * 1000:.1f}-{summary.maximum * 1000:.1f} ms "
+                           f"| {kind} |")
+            reused = [t["metrics"].get("connection_reused") for t in traced]
+            hits = sum(1 for r in reused if r is True)
+            out += ["", f"Connection reused on **{hits} of {len(reused)}** traced "
+                    f"trials." + ("" if hits else " Every trial paid a fresh DNS, "
+                    "TCP and TLS setup."), ""]
+            unavailable = [t for t in mine if t["metrics"].get("http_trace") == "unavailable"]
+            if unavailable:
+                out += [f"{len(unavailable)} trial(s) could not be traced; their "
+                        f"phases are absent rather than assumed.", ""]
 
         # -- raw, every trial, so nothing rests on the summary alone --
         out += ["<details><summary>Raw per-trial values</summary>", "",

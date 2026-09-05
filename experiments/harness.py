@@ -37,7 +37,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s")
 
 #: Arm params the generators understand. Everything else in `params` belongs
 #: to an adapter, so it is not forwarded and cannot be silently misread.
-GENERATOR_OPTIONS = ("thinking", "effort", "first_sentence_directive")
+GENERATOR_OPTIONS = ("thinking", "effort", "first_sentence_directive", "http_trace")
 
 
 def _generator_for(arm: Arm):
@@ -347,6 +347,13 @@ def _segments(timeline: Timeline, timing: Optional[dict]) -> dict:
 
     if not timing:
         return out
+
+    # Phase timings, when the run carried the HTTP tracer. Copied through
+    # verbatim: a phase that was not observed stays absent rather than zero.
+    for key, value in timing.items():
+        if key.startswith("phase_") or key in ("http_trace", "connection_reused",
+                                               "events_seen"):
+            out[key] = value
 
     dispatch = timing.get("dispatch_perf")
     first_text = timing.get("first_text_perf")

@@ -359,7 +359,11 @@ class BenchmarkOpeningGenerator:
     the product. An arm picks one with `params={"generator": "benchmark"}`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, http_trace: bool = False, **_ignored) -> None:
+        # Off by default, so the control stays exactly the call that was
+        # verified. When on it only subscribes to httpcore's trace events; the
+        # request is unchanged either way, which the golden-request test pins.
+        self.http_trace = bool(http_trace)
         self._usage: dict = {}
         self._timing: Optional[StreamTiming] = None
 
@@ -378,6 +382,11 @@ class BenchmarkOpeningGenerator:
         from anthropic_client import build_async_client
 
         client = build_async_client()
+        recorder = None
+        if self.http_trace:
+            from experiments import http_trace as trace_mod
+
+            recorder = trace_mod.attach(client)
         chosen = model or BENCHMARK_MODEL
         final = None
         timing = StreamTiming()
@@ -403,7 +412,16 @@ class BenchmarkOpeningGenerator:
                     self._usage = _usage_from(final, stream, chosen)
                     self._usage["generator"] = "benchmark"
                     self._usage["stream_seconds"] = elapsed
-                    self._usage["timing"] = timing.to_dict()
+                    detail = timing.to_dict()
+                    if self.http_trace:
+                        if recorder is None:
+                            # The transport could not be reached. Say so rather
+                            # than let a bucket pass as a measurement.
+                            detail["http_trace"] = "unavailable"
+                        else:
+                            detail.update(recorder.phases(timing.dispatch))
+                            detail["trace_events"] = recorder.event_log()
+                    self._usage["timing"] = detail
         finally:
             await client.close()
 

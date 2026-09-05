@@ -1788,3 +1788,162 @@ def test_the_forensics_spec_is_the_control_alone():
     assert arm.model == "claude-sonnet-5"
     assert spec.trials == 20 and spec.total_trials == 20
     assert spec.validate() == []
+
+
+# --------------------------------------------------------------------------
+# HTTP phase tracing: what "transport" was hiding
+# --------------------------------------------------------------------------
+def test_tracing_never_changes_the_request():
+    """The whole audit rests on this: tracing must be observation only."""
+    from experiments.generate import BenchmarkOpeningGenerator
+
+    plain = BenchmarkOpeningGenerator().request_kwargs("claude-sonnet-5", "WHY", "PACKET")
+    traced = BenchmarkOpeningGenerator(http_trace=True).request_kwargs(
+        "claude-sonnet-5", "WHY", "PACKET")
+    assert plain == traced == GOLDEN_CONTROL_REQUEST
+
+
+def test_tracing_is_off_unless_an_arm_asks_for_it():
+    from experiments.generate import BenchmarkOpeningGenerator
+    from experiments.harness import _generator_for
+
+    assert BenchmarkOpeningGenerator().http_trace is False
+    assert _generator_for(Arm("a", params={"generator": "benchmark"})).http_trace is False
+    assert _generator_for(
+        Arm("a", params={"generator": "benchmark", "http_trace": True})).http_trace is True
+
+
+def test_the_extension_is_client_side_and_delegates_everything():
+    from experiments.http_trace import TraceRecorder, _TracingTransport
+
+    seen = {}
+
+    class Inner:
+        async def handle_async_request(self, request):
+            seen["extensions"] = dict(request.extensions)
+            seen["content"] = request.content
+            return "response"
+
+        async def aclose(self):
+            seen["closed"] = True
+
+    class Request:
+        extensions = {"timeout": {"connect": 5}}
+        content = b'{"model":"claude-sonnet-5"}'
+
+    recorder = TraceRecorder()
+    transport = _TracingTransport(Inner(), recorder)
+    assert asyncio.run(transport.handle_async_request(Request())) == "response"
+
+    # The trace rides in extensions, which httpx never serialises.
+    assert seen["extensions"]["trace"] is recorder
+    assert seen["extensions"]["timeout"] == {"connect": 5}, "existing extensions kept"
+    assert seen["content"] == b'{"model":"claude-sonnet-5"}', "body untouched"
+    asyncio.run(transport.aclose())
+    assert seen["closed"] is True
+
+
+def test_phases_are_derived_from_real_event_pairs():
+    from experiments.http_trace import TraceRecorder
+
+    recorder = TraceRecorder()
+    base = 100.0
+    recorder.events = [
+        ("connection.connect_tcp.started", base + 0.010),
+        ("connection.connect_tcp.complete", base + 0.040),
+        ("connection.start_tls.started", base + 0.041),
+        ("connection.start_tls.complete", base + 0.101),
+        ("http11.send_request_headers.started", base + 0.102),
+        ("http11.send_request_body.complete", base + 0.115),
+        ("http11.receive_response_headers.complete", base + 0.415),
+    ]
+    phases = recorder.phases(dispatch=base)
+
+    assert phases["phase_local_setup"] == pytest.approx(0.010)
+    assert phases["phase_connect"] == pytest.approx(0.030)
+    assert phases["phase_tls"] == pytest.approx(0.060)
+    assert phases["phase_upload"] == pytest.approx(0.013)
+    assert phases["phase_wait_for_headers"] == pytest.approx(0.300)
+    assert phases["phase_dispatch_to_headers"] == pytest.approx(0.415)
+    assert phases["connection_reused"] is False
+    assert phases["http_trace"] == "ok"
+
+
+def test_a_reused_connection_is_detected_not_assumed():
+    from experiments.http_trace import TraceRecorder
+
+    pooled = TraceRecorder()
+    pooled.events = [("http11.send_request_headers.started", 5.0),
+                     ("http11.send_request_body.complete", 5.01),
+                     ("http11.receive_response_headers.complete", 5.30)]
+    phases = pooled.phases(dispatch=4.99)
+    assert phases["connection_reused"] is True
+    assert phases["phase_connect"] is None, "a reused connection connects to nothing"
+    assert phases["phase_wait_for_headers"] == pytest.approx(0.29)
+
+    # Nothing traced at all is "unknown", which is not the same as "reused".
+    blank = TraceRecorder()
+    assert blank.phases()["connection_reused"] is None
+    assert blank.phases()["http_trace"] == "unavailable"
+
+
+def test_an_unreachable_transport_degrades_instead_of_lying():
+    from experiments.http_trace import attach
+
+    class NoTransport:
+        _client = object()
+
+    assert attach(NoTransport()) is None
+    assert attach(object()) is None
+
+
+def test_the_phase_table_marks_which_rows_are_measured():
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "control_transport_forensics.json").read_text())
+    trials = [{
+        "arm": "control-verified", "query": "q", "index": i, "ok": True,
+        "simulated": False, "usage": {}, "cost": 0.0, "artifacts": [],
+        "first_chunk_text": "An opening.", "timeline": {"stages": []},
+        "metrics": {
+            "first_chunk": 2.3, "first_chunk_words": 27,
+            "seg_dispatch_to_first_token": 0.97, "seg_first_token_to_25_words": 0.85,
+            "seg_25_words_to_boundary": 0.004, "seg_dispatch_to_boundary": 1.82,
+            "seg_dispatch_to_complete": 3.9, "dispatch_to_stream_open": 0.30,
+            "http_trace": "ok", "connection_reused": False,
+            "phase_local_setup": 0.002, "phase_connect": 0.030,
+            "phase_tls": 0.060, "phase_upload": 0.013,
+            "phase_wait_for_headers": 0.195,
+            "phase_dispatch_to_headers": 0.300,
+        }} for i in range(1, 4)]
+    text = report.render(spec, report.analyse(spec, trials))
+
+    assert "HTTP phases" in text
+    assert "TLS handshake" in text and "60.0 ms" in text
+    assert "**bucket**" in text, "the round trip must be flagged, not passed off"
+    assert "measured" in text
+    assert "Every trial paid a fresh DNS, TCP and TLS setup." in text
+
+
+def test_untraced_runs_show_no_phase_table():
+    spec = ExperimentSpec(name="plain", trials=3, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none")])
+    results = asyncio.run(_fake_harness(spec).run_all())
+    assert "HTTP phases" not in report.render(spec, report.analyse(spec, results))
+
+
+def test_the_transport_spec_is_the_same_control_plus_tracing():
+    forensics = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "control_latency_forensics.json").read_text())
+    transport = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "control_transport_forensics.json").read_text())
+
+    before = dict(forensics.arms[0].params)
+    after = dict(transport.arms[0].params)
+    assert after.pop("http_trace") is True
+    assert after == before, "tracing must be the only difference"
+    assert transport.arms[0].model == forensics.arms[0].model
+    assert transport.queries == forensics.queries
+    assert transport.trials == 20
