@@ -1,0 +1,17 @@
+# The default query set. One per line; lines starting with # are ignored.
+#
+# Chosen to span the thing that most changes latency: whether the answer needs
+# research at all. A sweep over only evergreen questions will make search look
+# free, and a sweep over only breaking news will make it look ruinous.
+
+# Evergreen - answerable from what the model already knows.
+why do tides happen
+how does a heat pump work
+what actually causes jet lag
+
+# Moving targets - a searched arm should have to work for these.
+what changed in the news today
+what happened in the markets this week
+
+# Narrow and factual - short answers, where fixed overhead dominates.
+who wrote the first computer program

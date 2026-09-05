@@ -22,3 +22,7 @@ attachments.db
 
 # The launcher installs into here; it is per-machine, never committed.
 .fam-venv/
+
+# Experiment results: raw trials, reports and generated audio. Kept out of
+# git by default so a sweep does not commit itself; promote a run deliberately.
+experiments/runs/

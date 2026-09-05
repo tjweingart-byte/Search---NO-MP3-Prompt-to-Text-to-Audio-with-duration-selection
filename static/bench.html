@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FAM — voice bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,500&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#18151F; --paper:#F4EFE4; --page-bg:#1E1B27; --bg:#2A2733;
+    --surface:#38334A; --copper:#E0B563; --coral:#E2694F; --sage:#8FAE9A;
+    --text:#F4EFE4; --text-muted:#ABA3C4; --text-faint:#8A83A0;
+    --border:rgba(244,239,228,0.10); --border-strong:rgba(244,239,228,0.20);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; min-height:100vh; background:var(--page-bg); color:var(--paper);
+    font-family:'Space Grotesk',sans-serif; padding:34px 20px 70px;
+    display:flex; flex-direction:column; align-items:center; gap:20px;
+  }
+  .wrap{width:100%; max-width:660px}
+  h1{font-family:'Fraunces',serif; font-weight:500; font-size:27px; color:var(--copper); margin:0 0 6px}
+  .sub{font-size:12.5px; line-height:1.6; color:var(--text-muted); margin:0 0 4px}
+  .status{font-family:'JetBrains Mono',monospace; font-size:10.5px; margin:10px 0 0; color:var(--text-faint)}
+  .status b{color:var(--sage); font-weight:500}
+  .status.warn b{color:var(--coral)}
+
+  .card{background:var(--bg); border:1px solid var(--border); border-radius:16px; padding:16px; margin-top:18px}
+  .tabs{display:flex; gap:8px; margin-bottom:14px}
+  .tab{flex:1; padding:9px; border-radius:10px; border:1px solid var(--border-strong);
+       background:transparent; color:var(--text-muted); font-family:'Space Grotesk',sans-serif;
+       font-size:12.5px; font-weight:700; cursor:pointer}
+  .tab.on{background:var(--copper); color:var(--ink); border-color:var(--copper)}
+  .hint{font-size:11px; line-height:1.55; color:var(--text-faint); margin:0 0 12px}
+
+  textarea, input[type=text]{
+    width:100%; background:var(--surface); border:1px solid var(--border-strong);
+    border-radius:12px; padding:12px; color:var(--text);
+    font-family:'Space Grotesk',sans-serif; font-size:13.5px; outline:none; resize:vertical;
+  }
+  textarea{min-height:96px; line-height:1.5}
+  label{display:block; font-family:'JetBrains Mono',monospace; font-size:9.5px;
+        letter-spacing:.1em; text-transform:uppercase; color:var(--text-muted); margin:14px 0 6px}
+  select{
+    width:100%; background:var(--surface); border:1px solid var(--border-strong);
+    border-radius:10px; padding:10px; color:var(--text);
+    font-family:'Space Grotesk',sans-serif; font-size:13px; outline:none;
+  }
+  .row{display:flex; gap:10px}
+  .row > *{flex:1}
+  button.go{
+    width:100%; margin-top:16px; padding:13px; border:none; border-radius:12px;
+    background:var(--copper); color:var(--ink); font-family:'Space Grotesk',sans-serif;
+    font-size:14px; font-weight:700; cursor:pointer;
+  }
+  button.go:active{transform:scale(.99)}
+  button.go[disabled]{opacity:.5; cursor:default}
+  button.stop{background:var(--coral); color:var(--paper)}
+
+  .results{margin-top:20px}
+  .res{background:var(--bg); border:1px solid var(--border); border-left:3px solid var(--copper);
+       border-radius:12px; padding:12px 14px; margin-bottom:10px}
+  .res.bad{border-left-color:var(--coral)}
+  .res-top{display:flex; align-items:baseline; justify-content:space-between; gap:12px}
+  .res-voice{font-family:'Fraunces',serif; font-size:15px; color:var(--text)}
+  .res-num{font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--copper)}
+  .res-body{font-size:12px; line-height:1.55; color:var(--text-muted); margin-top:7px}
+  .res-body.err{color:var(--coral)}
+  .res-acts{display:flex; gap:8px; margin-top:10px}
+  .res-acts button{
+    padding:7px 13px; border-radius:18px; border:1px solid var(--border-strong);
+    background:var(--surface); color:var(--text);
+    font-family:'JetBrains Mono',monospace; font-size:10.5px; cursor:pointer;
+  }
+  .note{font-family:'JetBrains Mono',monospace; font-size:10px; line-height:1.7;
+        color:var(--text-faint); margin-top:22px; text-align:center}
+  .note b{color:var(--copper); font-weight:500}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Voice bench</h1>
+  <p class="sub">Search and playback only, so a candidate voice can be judged on
+  real FAM output without the rest of the app in the way.</p>
+  <p class="status" id="status">checking the server…</p>
+
+  <div class="card">
+    <div class="tabs">
+      <button class="tab on" id="tabSpeak" onclick="setMode('speak')">Speak text</button>
+      <button class="tab" id="tabAsk" onclick="setMode('ask')">Ask FAM</button>
+    </div>
+
+    <div id="paneSpeak">
+      <p class="hint">The same words through every voice, so the only thing that
+      differs is the voice. No model call, and no API key needed.</p>
+      <textarea id="text">The Strait of Hormuz is twenty-one miles wide at its narrowest point, and about a fifth of the world's oil passes through it. That is not a statistic about geography. It is a statistic about leverage: a single stretch of water where a decision made by one government reaches the price of everything, everywhere, within a day.</textarea>
+    </div>
+
+    <div id="paneAsk" hidden>
+      <p class="hint">The honest test — Claude writes a real FAM script and the
+      voice reads it. Asking the same question again in another voice reuses the
+      cached script, so the comparison is the same words and the second one is free.</p>
+      <input type="text" id="query" value="why the Strait of Hormuz moves the oil price">
+      <label for="minutes">Length</label>
+      <select id="minutes">
+        <option value="1">1 min</option>
+        <option value="2">2 min</option>
+        <option value="3" selected>3 min</option>
+        <option value="5">5 min</option>
+      </select>
+    </div>
+
+    <label for="voice">Voice</label>
+    <select id="voice"><option>loading…</option></select>
+
+    <button class="go" id="go" onclick="run()">Listen</button>
+  </div>
+
+  <div class="results" id="results"></div>
+
+  <p class="note">Every run also prints a line in the terminal, with the engine,
+  the time to the first sentence and how far ahead of playback it ran.<br>
+  <b>A voice that sounds right but runs slower than about 3x realtime cannot ship</b> —
+  the pipeline speaks while it writes, and it has to stay ahead.</p>
+</div>
+
+<script>
+var mode = "speak", ctx = null, source = null, VOICES = [];
+
+function $(id){ return document.getElementById(id); }
+
+function setMode(next){
+  mode = next;
+  $("tabSpeak").classList.toggle("on", next === "speak");
+  $("tabAsk").classList.toggle("on", next === "ask");
+  $("paneSpeak").hidden = next !== "speak";
+  $("paneAsk").hidden = next !== "ask";
+}
+
+fetch("/api/health").then(function(r){ return r.json(); }).then(function(h){
+  var el = $("status");
+  var demo = h.mode === "demo";
+  el.className = "status" + (demo || h.tts.selected === "debug" ? " warn" : "");
+  var bits = ["engine <b>" + h.tts.selected + "</b>", h.sample_rate + " Hz"];
+  if (demo) bits.push("<b>no API key — Ask FAM plays a canned script</b>");
+  else bits.push("writing with <b>" + h.model + "</b>");
+  if (h.tts.selected === "debug") bits.push("<b>no voice installed: you will hear a tone</b>");
+  el.innerHTML = bits.join(" · ");
+}).catch(function(){
+  $("status").className = "status warn";
+  $("status").innerHTML = "<b>server unreachable</b> — start it with ./bench.sh";
+});
+
+fetch("/api/voices").then(function(r){ return r.json(); }).then(function(v){
+  VOICES = v.voices || [];
+  var sel = $("voice");
+  sel.innerHTML = VOICES.map(function(x){
+    return '<option value="' + x.id + '"' + (x.id === v.default ? " selected" : "") + ">"
+         + x.label + (x.detail ? " — " + x.detail : "") + "</option>";
+  }).join("") || "<option>no voices</option>";
+}).catch(function(){});
+
+function voiceLabel(id){
+  for (var i = 0; i < VOICES.length; i++) if (VOICES[i].id === id) return VOICES[i].label;
+  return id || "default";
+}
+
+function stop(){
+  if (source) { try { source.stop(); } catch (e) {} source = null; }
+  if (ctx) { var c = ctx; ctx = null; c.close().catch(function(){}); }
+  $("go").textContent = "Listen";
+  $("go").classList.remove("stop");
+}
+
+function card(voice, cls){
+  var el = document.createElement("div");
+  el.className = "res" + (cls ? " " + cls : "");
+  el.innerHTML = '<div class="res-top"><span class="res-voice">' + voiceLabel(voice)
+    + '</span><span class="res-num"></span></div><div class="res-body"></div>';
+  $("results").prepend(el);
+  return el;
+}
+
+async function run(){
+  if (source || ctx) { stop(); return; }
+  var voice = $("voice").value;
+  var url = mode === "speak"
+    ? "/api/speak?voice=" + encodeURIComponent(voice)
+        + "&text=" + encodeURIComponent($("text").value)
+    : "/api/audio?voice=" + encodeURIComponent(voice)
+        + "&minutes=" + encodeURIComponent($("minutes").value)
+        + "&q=" + encodeURIComponent($("query").value);
+
+  var el = card(voice);
+  var body = el.querySelector(".res-body");
+  var num = el.querySelector(".res-num");
+  body.textContent = mode === "speak" ? "synthesising…" : "writing and speaking…";
+  $("go").textContent = "Stop";
+  $("go").classList.add("stop");
+
+  var began = performance.now();
+  try {
+    var res = await fetch(url);
+    if (!res.ok) {
+      var err = await res.json().catch(function(){ return {error: "Request failed (" + res.status + ")"}; });
+      throw new Error(err.error || "Request failed");
+    }
+    var rate = Number(res.headers.get("X-Sample-Rate")) || 22050;
+    var buf = await res.arrayBuffer();
+    var wait = Math.round(performance.now() - began);
+
+    // Whatever the endpoint sent, the browser plays raw samples. /api/speak
+    // prefixes a WAV header; /api/audio sends bare PCM.
+    var bytes = new Uint8Array(buf);
+    var offset = (bytes[0] === 0x52 && bytes[1] === 0x49) ? 44 : 0;
+    var pcm = new Int16Array(buf.slice(offset));
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    var audio = ctx.createBuffer(1, pcm.length, rate);
+    var out = audio.getChannelData(0);
+    for (var i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
+
+    source = ctx.createBufferSource();
+    source.buffer = audio;
+    source.connect(ctx.destination);
+    source.onended = function(){ stop(); };
+    source.start();
+
+    var seconds = pcm.length / rate;
+    var rtf = res.headers.get("X-Realtime-Factor");
+    num.textContent = seconds.toFixed(1) + "s audio";
+    var parts = [res.headers.get("X-Engine") || "?", "ready in " + wait + " ms"];
+    if (rtf) parts.push(rtf + "x realtime");
+    var first = res.headers.get("X-First-Audio-Ms");
+    if (first) parts.push("first sentence " + first + " ms");
+    body.textContent = parts.join(" · ");
+
+    el.querySelector(".res-top").insertAdjacentHTML("afterend", "");
+    var acts = document.createElement("div");
+    acts.className = "res-acts";
+    var again = document.createElement("button");
+    again.textContent = "▶ play again";
+    again.onclick = function(){ replay(audio, rate); };
+    acts.appendChild(again);
+    el.appendChild(acts);
+  } catch (err) {
+    el.classList.add("bad");
+    body.className = "res-body err";
+    // Never a fallback to another voice: the whole point is hearing this one.
+    body.textContent = err.message || String(err);
+    stop();
+  }
+}
+
+function replay(audio, rate){
+  stop();
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  var b = ctx.createBuffer(1, audio.length, rate);
+  b.getChannelData(0).set(audio.getChannelData(0));
+  source = ctx.createBufferSource();
+  source.buffer = b;
+  source.connect(ctx.destination);
+  source.onended = function(){ stop(); };
+  source.start();
+  $("go").textContent = "Stop";
+  $("go").classList.add("stop");
+}
+</script>
+</body>
+</html>

@@ -36,6 +36,11 @@ if [ "$MODE" != "preview" ]; then
 
   step "Interface is styled"
   $PY tools/check_css.py
+
+  # The experiment layer was approved as additive only. Checking it here turns
+  # that from a promise into a property.
+  step "Experiment layer has not touched production"
+  $PY tools/check_additive.py
 fi
 
 step "Phone preview"
