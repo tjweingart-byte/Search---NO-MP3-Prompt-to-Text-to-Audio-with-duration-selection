@@ -182,6 +182,12 @@ def cmd_run(args) -> int:
     storable = {k: v for k, v in analysis.items() if not k.startswith("_")}
     run.write_summary(storable)
     run.write_report(markdown)
+    # The openings, grouped for reading. Latency is in the report; this is the
+    # half that decides whether an earlier threshold is acceptable.
+    if any(t.get("threshold_texts") for t in analysis.get("_trials", [])):
+        run.write_artifact(
+            "candidates.md",
+            report.candidates_markdown(spec, analysis["_trials"]).encode("utf-8"))
 
     leaks = run.verify_clean()
     if leaks:

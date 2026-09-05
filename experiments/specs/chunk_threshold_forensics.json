@@ -1,0 +1,28 @@
+{
+  "name": "Chunk threshold forensics",
+  "kind": "component",
+  "arms": [
+    {
+      "name": "control-verified",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "benchmark",
+        "first_chunk_words": 25,
+        "packet": "founder_ceos",
+        "http_trace": true,
+        "chunk_thresholds": [5, 10, 15, 20, 25]
+      }
+    }
+  ],
+  "queries": [
+    "Why are founder CEOs becoming harder for boards to remove?"
+  ],
+  "trials": 20,
+  "minutes": 3,
+  "stages": ["generate", "first_chunk"],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "How fast does usable opening text accumulate, and what does the 25-word rule cost? The request is the verified control byte for byte - same Sonnet 5 model, saved founder_ceos packet, benchmark prompt, 220-token ceiling, no thinking and no output_config - and the trial still breaks at 25 words, which stays the production rule. The probe only watches: every threshold it records is reached at or before that break, so one stream answers all of them and nothing extra is requested. Each threshold goes through the same first_chunk_ready function the app uses, with a different number, and the candidate opening is saved at each so the tradeoff can be judged on the writing rather than the clock alone."
+}

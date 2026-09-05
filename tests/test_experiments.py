@@ -1947,3 +1947,208 @@ def test_the_transport_spec_is_the_same_control_plus_tracing():
     assert transport.arms[0].model == forensics.arms[0].model
     assert transport.queries == forensics.queries
     assert transport.trials == 20
+
+
+# --------------------------------------------------------------------------
+# Chunk thresholds: observation on the same stream, never a second experiment
+# --------------------------------------------------------------------------
+def _feed(probe, script, per_word=0.0):
+    import time as _t
+
+    probe.start()
+    buffer = ""
+    for word in script.split(" "):
+        buffer += word + " "
+        probe.observe(buffer)
+        if per_word:
+            _t.sleep(per_word)
+    return buffer
+
+
+SAMPLE_SCRIPT = (
+    "Boards used to remove founders easily. That stopped being true in November "
+    "2023, and one company is the reason for all of it. Everything since has "
+    "followed from that single week."
+)
+
+
+def test_the_probe_uses_the_production_rule_not_a_copy_of_it():
+    """Differential: each threshold must equal first_chunk_ready at that number."""
+    from experiments.chunk_probe import ChunkProbe
+    from experiments.harness import first_chunk_ready
+
+    probe = ChunkProbe()
+    buffer = _feed(probe, SAMPLE_SCRIPT)
+    for threshold in probe.thresholds:
+        assert probe.boundary_text[threshold] == first_chunk_ready(buffer, threshold)
+
+
+def test_thresholds_close_in_order():
+    """A boundary with 25 words is also one with 5, so it can never come first."""
+    from experiments.chunk_probe import ChunkProbe
+
+    probe = ChunkProbe()
+    _feed(probe, SAMPLE_SCRIPT, per_word=0.001)
+    times = [probe.boundary_at[t] for t in probe.thresholds]
+    assert times == sorted(times)
+    assert probe.monotonic() is True
+
+    broken = ChunkProbe()
+    broken.boundary_at = {5: 0.9, 10: 0.2, 15: 0.3, 20: 0.4, 25: 0.5}
+    assert broken.monotonic() is False
+
+
+def test_every_threshold_is_reached_before_the_production_break():
+    """This is why one stream can answer all of them without asking for more."""
+    from experiments.chunk_probe import ChunkProbe
+
+    probe = ChunkProbe()
+    _feed(probe, SAMPLE_SCRIPT, per_word=0.001)
+    production = probe.boundary_at[25]
+    for threshold in (5, 10, 15, 20):
+        assert probe.boundary_at[threshold] <= production
+
+
+def test_the_probe_records_the_text_and_its_word_count():
+    from experiments.chunk_probe import ChunkProbe
+
+    probe = ChunkProbe()
+    _feed(probe, SAMPLE_SCRIPT)
+    metrics = probe.metrics()
+    for threshold in probe.thresholds:
+        text = probe.boundary_text[threshold]
+        assert text.endswith((".", "!", "?"))
+        assert len(text.split()) >= threshold
+        assert metrics[f"boundary_{threshold}_words"] == len(text.split())
+    # 5 words really is a shorter opening than 25 - that is the tradeoff.
+    assert len(probe.boundary_text[5].split()) < len(probe.boundary_text[25].split())
+
+
+def test_the_probe_measures_its_own_cost():
+    from experiments.chunk_probe import ChunkProbe
+
+    probe = ChunkProbe()
+    _feed(probe, SAMPLE_SCRIPT)
+    metrics = probe.metrics()
+    assert metrics["probe_seconds"] > 0
+    assert metrics["probe_seconds"] < 0.05, "the probe must not move what it watches"
+
+
+def test_a_threshold_never_reached_is_null_not_zero():
+    from experiments.chunk_probe import ChunkProbe
+
+    probe = ChunkProbe()
+    _feed(probe, "Only a few words here with no ending")
+    metrics = probe.metrics()
+    assert metrics["boundary_5_at"] is None
+    assert metrics["boundary_25_words"] is None
+    assert metrics["boundary_wait_25"] is None
+    assert probe.complete is False
+
+
+def test_the_probe_does_not_change_where_the_trial_breaks():
+    """The run stays the control: it still speaks at 25, whatever it recorded."""
+    async def script():
+        for word in SAMPLE_SCRIPT.split(" ") + ["filler"] * 40:
+            await asyncio.sleep(0)
+            yield word + " "
+
+    class Gen:
+        def usage(self):
+            return {}
+
+        async def stream(self, *a, **k):
+            async for chunk in script():
+                yield chunk
+
+    def run(params):
+        spec = ExperimentSpec(name="probe", trials=1, minutes=1, queries=["q"],
+                              arms=[Arm("a", search="none", tts="none", params=params)])
+        harness = Harness(spec, generator_factory=lambda arm: Gen(),
+                          search_factory=lambda n: FakeSearch(0.0, adapter_id="none"),
+                          tts_factory=lambda n, v=None: FakeTTS(0.0, adapter_id="none"))
+        return asyncio.run(harness.run_all())[0]
+
+    without = run({"first_chunk_words": 25})
+    with_probe = run({"first_chunk_words": 25, "chunk_thresholds": [5, 10, 15, 20, 25]})
+
+    assert with_probe.first_chunk_text == without.first_chunk_text
+    assert with_probe.metrics["first_chunk_words"] == without.metrics["first_chunk_words"]
+    # And the probe's own 25 agrees with what the trial actually spoke.
+    assert with_probe.metrics["boundary_25_words"] == without.metrics["first_chunk_words"]
+
+
+def test_the_probe_is_off_unless_an_arm_asks():
+    spec = ExperimentSpec(name="off", trials=1, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none")])
+    result = asyncio.run(_fake_harness(spec).run_all())[0]
+    assert "probe_thresholds" not in result.metrics
+    assert result.threshold_texts == {}
+
+
+def test_the_threshold_spec_is_the_control_plus_observation():
+    transport = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "control_transport_forensics.json").read_text())
+    thresholds = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "chunk_threshold_forensics.json").read_text())
+
+    after = dict(thresholds.arms[0].params)
+    assert after.pop("chunk_thresholds") == [5, 10, 15, 20, 25]
+    assert after == dict(transport.arms[0].params), "only the probe may differ"
+    # The production rule is untouched.
+    assert thresholds.arms[0].params["first_chunk_words"] == 25
+    assert thresholds.arms[0].model == "claude-sonnet-5"
+    assert thresholds.arms[0].tts == "none"
+    assert thresholds.trials == 20 and thresholds.total_trials == 20
+    assert thresholds.validate() == []
+
+
+def test_the_threshold_report_shows_savings_and_flags_a_dead_threshold():
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "chunk_threshold_forensics.json").read_text())
+    trials = []
+    for index in range(1, 4):
+        trials.append({
+            "arm": "control-verified", "query": "q", "index": index, "ok": True,
+            "simulated": False, "usage": {}, "cost": 0.0, "artifacts": [],
+            "first_chunk_text": "x", "timeline": {"stages": []},
+            "threshold_texts": {"5": "Boards used to remove founders easily.",
+                                "10": "Boards used to remove founders easily. And then more.",
+                                "15": "Boards used to remove founders easily. And then more.",
+                                "20": "Boards used to remove founders easily. And then more.",
+                                "25": "Boards used to remove founders easily. And then more. Plus a third."},
+            "metrics": {
+                "first_chunk": 1.4, "first_chunk_words": 27,
+                "seg_dispatch_to_first_token": 0.97,
+                "probe_thresholds": [5, 10, 15, 20, 25], "probe_monotonic": True,
+                "probe_seconds": 0.0004,
+                "boundary_5_at": 0.12, "boundary_5_words": 6, "boundary_wait_5": 0.02,
+                "boundary_10_at": 0.54, "boundary_10_words": 23, "boundary_wait_10": 0.31,
+                "boundary_15_at": 0.54, "boundary_15_words": 23, "boundary_wait_15": 0.19,
+                "boundary_20_at": 0.54, "boundary_20_words": 23, "boundary_wait_20": 0.07,
+                "boundary_25_at": 0.80, "boundary_25_words": 34, "boundary_wait_25": 0.22,
+            }})
+    text = report.render(spec, report.analyse(spec, trials))
+
+    assert "Chunk thresholds" in text
+    assert "*(production)*" in text
+    assert "+0.680s earlier" in text, "the saving against the production rule"
+    assert "the same boundary" in text, "15 and 20 buy nothing over 10 and must say so"
+    assert "What each threshold would have said" in text
+    assert "Boards used to remove founders easily." in text
+
+
+def test_candidates_markdown_groups_every_trial_by_threshold():
+    spec = ExperimentSpec(name="c", trials=2, minutes=1, queries=["q"],
+                          arms=[Arm("a", search="none", tts="none")])
+    trials = [{"index": i, "ok": True,
+               "metrics": {"probe_thresholds": [5, 25]},
+               "threshold_texts": {"5": f"Short {i}.", "25": f"Much longer opening {i}."}}
+              for i in (1, 2)]
+    out = report.candidates_markdown(spec, trials)
+    assert "## 5 words" in out and "## 25 words" in out
+    assert "Short 1." in out and "Short 2." in out
+    assert "Much longer opening 2." in out

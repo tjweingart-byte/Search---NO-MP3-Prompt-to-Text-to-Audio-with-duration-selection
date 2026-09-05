@@ -99,6 +99,9 @@ class TrialResult:
     ok: bool = True
     error: Optional[str] = None
     simulated: bool = False
+    #: threshold -> the opening that threshold would have spoken. Saved so the
+    #: tradeoff can be judged on the writing, not only on the clock.
+    threshold_texts: dict = field(default_factory=dict)
     #: The opening the model actually wrote. Saved so arms can be compared on
     #: what they said, not only on how fast they said it - a latency win that
     #: costs quality is not a win.
@@ -123,6 +126,7 @@ class TrialResult:
             "cost": round(self.cost, 6),
             "artifacts": list(self.artifacts),
             "first_chunk_text": self.first_chunk_text,
+            "threshold_texts": dict(self.threshold_texts),
             "timeline": self.timeline,
             "recorded_at": time.time(),
         }
@@ -178,6 +182,16 @@ class Harness:
             # It is closed after every checkpoint has been marked and after the
             # timeline has been snapshotted, so teardown cannot appear in any
             # reported number - `generate`, `synthesis` or `first_audio`.
+            # Observation only: every threshold it watches is reached at or
+            # before the 25-word boundary this trial already breaks on, so it
+            # asks for nothing extra and changes nothing about the run.
+            probe = None
+            thresholds = arm.params.get("chunk_thresholds")
+            if thresholds:
+                from experiments.chunk_probe import ChunkProbe
+
+                probe = ChunkProbe(thresholds)
+
             token_stream = generator.stream(
                 query,
                 self.spec.minutes,
@@ -191,8 +205,14 @@ class Harness:
                     if timeline.at("first_token") is None:
                         timeline.mark("first_token")
                         stage.detail["first_token_at"] = timeline.at("first_token")
+                        if probe is not None:
+                            # Zeroed at the first token, so every threshold is
+                            # reported as a delay after text started arriving.
+                            probe.start()
                     buffer += delta
                     full.append(delta)
+                    if probe is not None:
+                        probe.observe(buffer)
                     # The word count crosses 25 before the sentence that
                     # contains it closes, so these are two different moments
                     # and the gap between them is what the chunk rule costs.
@@ -260,6 +280,9 @@ class Harness:
                 "searches": retrieved.searches or usage.get("searches", 0),
                 "server_side_search": server_side,
             }
+            if probe is not None:
+                result.metrics.update(probe.metrics())
+                result.threshold_texts = probe.texts()
             result.metrics.update(_segments(timeline, timing))
             if timing:
                 result.usage = {**result.usage, "timing": timing}

@@ -279,6 +279,7 @@ def render(spec: ExperimentSpec, analysis: dict, previous: Optional[dict] = None
 
     # -- forensics -----------------------------------------------------
     out += _segment_section(spec, analysis)
+    out += _threshold_section(spec, analysis)
 
     # -- cost ----------------------------------------------------------
     label = ("Simulated, and therefore meaningless as a cost"
@@ -408,6 +409,128 @@ def _segment_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
                          f"before it writes anything.")
             out += [note, ""]
     return out
+
+
+def _threshold_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
+    """What each word threshold would have cost, and what it would have said."""
+    trials = [t for t in analysis.get("_trials", []) if t.get("ok")]
+    thresholds = next((t["metrics"].get("probe_thresholds") for t in trials
+                       if t["metrics"].get("probe_thresholds")), None)
+    if not thresholds:
+        return []
+
+    out = ["## Chunk thresholds: when speech could have started", ""]
+
+    def summarise_key(key):
+        values = [t["metrics"].get(key) for t in trials
+                  if t["metrics"].get(key) is not None]
+        return stats_mod.summarise(values)
+
+    first_token = summarise_key("seg_dispatch_to_first_token")
+    out += ["| threshold | boundary, from first token | p95 | min-max | IQR "
+            "| from dispatch | chunk words | rule cost |",
+            "|---|---|---|---|---|---|---|---|"]
+    for threshold in thresholds:
+        boundary = summarise_key(f"boundary_{threshold}_at")
+        words = summarise_key(f"boundary_{threshold}_words")
+        wait = summarise_key(f"boundary_wait_{threshold}")
+        if not boundary:
+            out.append(f"| {threshold} words | never reached | | | | | | |")
+            continue
+        from_dispatch = ("—" if not first_token
+                         else f"{first_token.median + boundary.median:.3f}s")
+        mark = " *(production)*" if threshold == 25 else ""
+        out.append(
+            f"| **{threshold} words**{mark} | **{boundary.median:.3f}s** "
+            f"| {boundary.p95:.3f}s | {boundary.minimum:.3f}-{boundary.maximum:.3f}s "
+            f"| {boundary.iqr:.3f}s | {from_dispatch} "
+            f"| {words.median:.0f} | {wait.median:.3f}s |" if words and wait else
+            f"| **{threshold} words**{mark} | **{boundary.median:.3f}s** | "
+            f"{boundary.p95:.3f}s | {boundary.minimum:.3f}-{boundary.maximum:.3f}s "
+            f"| {boundary.iqr:.3f}s | {from_dispatch} | — | — |")
+    out.append("")
+
+    # What dropping to a lower threshold would actually buy.
+    production = summarise_key(f"boundary_{max(thresholds)}_at")
+    if production:
+        out += ["**What each threshold would save against the current rule:**", ""]
+        for threshold in thresholds:
+            if threshold == max(thresholds):
+                continue
+            boundary = summarise_key(f"boundary_{threshold}_at")
+            words = summarise_key(f"boundary_{threshold}_words")
+            if not boundary:
+                continue
+            saved = production.median - boundary.median
+            out.append(f"- **{threshold} words**: {saved:+.3f}s earlier, "
+                       f"{words.median:.0f} words in the chunk")
+        out.append("")
+
+        # Thresholds that land on the same sentence are the same decision.
+        # Saying so is the difference between five options and the two or
+        # three that actually exist.
+        groups: dict = {}
+        for threshold in thresholds:
+            boundary = summarise_key(f"boundary_{threshold}_at")
+            if not boundary:
+                continue
+            groups.setdefault(round(boundary.median, 2), []).append(threshold)
+        tied = [members for members in groups.values() if len(members) > 1]
+        if tied:
+            for members in tied:
+                joined = ", ".join(f"{m}" for m in members)
+                out.append(f"- Thresholds {joined} resolve to **the same boundary**, "
+                           f"so anything above {members[0]} buys nothing here: "
+                           f"the sentence they are all waiting for is the same one.")
+            out.append("")
+
+    broken = [t for t in trials if t["metrics"].get("probe_monotonic") is False]
+    if broken:
+        out += [f"⚠️ {len(broken)} trial(s) recorded a lower threshold closing "
+                f"*later* than a higher one. That is impossible under the rule, "
+                f"so treat these numbers as suspect until it is explained.", ""]
+
+    cost = summarise_key("probe_seconds")
+    if cost:
+        out += [f"*Probe overhead: {cost.median * 1000:.2f} ms median across the "
+                f"whole stream — small enough not to move what it watches.*", ""]
+
+    # -- the openings themselves --------------------------------------
+    out += ["### What each threshold would have said", "",
+            "*One trial shown per threshold; every trial's text is in "
+            "`trials.jsonl` and `artifacts/candidates.md`.*", ""]
+    sample = next((t for t in trials if t.get("threshold_texts")), None)
+    if sample:
+        for threshold in thresholds:
+            text = (sample.get("threshold_texts") or {}).get(str(threshold))
+            if not text:
+                continue
+            out += [f"**{threshold} words** ({len(text.split())} words):",
+                    "", f"> {text}", ""]
+    return out
+
+
+def candidates_markdown(spec: ExperimentSpec, trials: list[dict]) -> str:
+    """Every threshold's opening from every trial, grouped for reading.
+
+    Latency is in the tables; this is the half that decides whether an earlier
+    threshold is acceptable, and it is only judgeable by reading.
+    """
+    thresholds = next((t["metrics"].get("probe_thresholds") for t in trials
+                       if t["metrics"].get("probe_thresholds")), [])
+    lines = [f"# Candidate openings — {spec.name}", "",
+             "Grouped by threshold. Read down a section to see whether that "
+             "threshold's openings hold up as FAM writing, not only whether "
+             "they arrive sooner.", ""]
+    for threshold in thresholds:
+        lines += [f"## {threshold} words", ""]
+        for trial in trials:
+            text = (trial.get("threshold_texts") or {}).get(str(threshold))
+            if not text:
+                continue
+            lines.append(f"{trial['index']:>3}. ({len(text.split())}w) {text}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _recommend(spec: ExperimentSpec, analysis: dict, arms: list[ArmReport]) -> str:
