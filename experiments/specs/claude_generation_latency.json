@@ -21,6 +21,20 @@
       "params": {
         "generator": "tuned",
         "thinking": "disabled",
+        "effort": null,
+        "first_sentence_directive": false,
+        "first_chunk_words": 25,
+        "packet": "founder_ceos"
+      }
+    },
+    {
+      "name": "effort-low",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "tuned",
+        "thinking": "omit",
         "effort": "low",
         "first_sentence_directive": false,
         "first_chunk_words": 25,
@@ -50,5 +64,5 @@
   "stages": ["generate", "first_chunk"],
   "concurrency": 1,
   "seed": 1234,
-  "notes": "Isolates Claude generation by replaying one saved Exa packet on every trial of every arm - no Exa call, no search latency, identical evidence everywhere. Same query, packet shape, system prompt, 25-word sentence-boundary chunk rule, model and 220-token ceiling as the verified replication. Arm 1 is that replication byte for byte. Arm 2 changes only request settings. Arm 3 adds a first-sentence directive that asks for a fuller opening sentence, never a shorter one. Every first chunk is saved so the arms can be read side by side: a latency win that costs quality is not a win."
+  "notes": "Isolates Claude generation by replaying one saved Exa packet on every trial of every arm - no Exa call, no search latency, identical evidence everywhere. Same query, packet shape, system prompt, 25-word sentence-boundary chunk rule, model and 220-token ceiling as the verified replication. Arm 1 is that replication byte for byte. Arms 2 and 3 each change exactly ONE thing from it - thinking disabled, or effort low - so whichever wins, it is known which lever won. Arm 4 combines both plus a first-sentence directive that asks for a fuller opening sentence, never a shorter one. Every first chunk is saved so the arms can be read side by side: a latency win that costs quality is not a win."
 }

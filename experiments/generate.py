@@ -325,8 +325,26 @@ class TunedOpeningGenerator:
     prompting alone.
     """
 
-    def __init__(self, thinking: str = "disabled", effort: str | None = "low",
+    #: "omit" sends no `thinking` at all, which is what the control does and
+    #: what Sonnet 5 reads as adaptive. It exists so an arm can change *only*
+    #: effort and stay otherwise byte-identical to the control.
+    THINKING_MODES = ("omit", "adaptive", "disabled")
+    #: The documented effort levels. None sends no `output_config`, leaving the
+    #: API default (high) - again, so an arm can change only one thing.
+    EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+    def __init__(self, thinking: str | None = "disabled", effort: str | None = "low",
                  first_sentence_directive: bool = False, **_ignored) -> None:
+        thinking = "omit" if thinking is None else thinking
+        # Validated rather than tolerated: a typo like "disabed" would silently
+        # fall through to omitted, the arm would run adaptive thinking, and the
+        # comparison would be measuring nothing while looking fine.
+        if thinking not in self.THINKING_MODES:
+            raise ValueError(
+                f"thinking must be one of {self.THINKING_MODES}, not {thinking!r}")
+        if effort is not None and effort not in self.EFFORT_LEVELS:
+            raise ValueError(
+                f"effort must be one of {self.EFFORT_LEVELS} or null, not {effort!r}")
         self.thinking = thinking
         self.effort = effort
         self.first_sentence_directive = first_sentence_directive
@@ -355,8 +373,8 @@ class TunedOpeningGenerator:
             }],
         }
         # Omitting `thinking` is not the same as disabling it: on Sonnet 5 an
-        # omitted `thinking` runs adaptive. "adaptive" here is therefore the
-        # control's behaviour stated explicitly, not an extra setting.
+        # omitted `thinking` runs adaptive. "omit" therefore reproduces the
+        # control exactly; "adaptive" states the same behaviour explicitly.
         if self.thinking == "disabled":
             kwargs["thinking"] = {"type": "disabled"}
         elif self.thinking == "adaptive":

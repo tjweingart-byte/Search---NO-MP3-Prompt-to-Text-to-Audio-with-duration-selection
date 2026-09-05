@@ -1428,6 +1428,70 @@ def test_omitting_thinking_is_not_the_same_as_disabling_it():
     assert adaptive["thinking"] == {"type": "adaptive"}
 
 
+def test_each_single_lever_arm_differs_from_the_control_by_one_thing():
+    """Split arms only mean something if exactly one setting moves.
+
+    The control sends neither `thinking` nor `output_config`. So the
+    thinking arm must send `thinking` and no `output_config`, and the effort
+    arm must send `output_config` and no `thinking` - otherwise a win could
+    not be attributed to either lever.
+    """
+    from experiments.generate import build_generator
+
+    thinking_arm = build_generator("tuned", thinking="disabled", effort=None
+                                   ).request_kwargs("claude-sonnet-5", "q", "c")
+    assert thinking_arm["thinking"] == {"type": "disabled"}
+    assert "output_config" not in thinking_arm
+
+    effort_arm = build_generator("tuned", thinking="omit", effort="low"
+                                 ).request_kwargs("claude-sonnet-5", "q", "c")
+    assert effort_arm["output_config"] == {"effort": "low"}
+    assert "thinking" not in effort_arm, (
+        "the effort arm must omit thinking exactly as the control does")
+
+
+def test_a_mistyped_setting_fails_instead_of_silently_running_the_control():
+    """`thinking="disabed"` once fell through to omitted - which is adaptive.
+
+    The arm would have run the control's behaviour under another name and the
+    comparison would have measured nothing while looking perfectly healthy.
+    """
+    from experiments.generate import build_generator
+
+    for typo in ("disabed", "off", "none", "false"):
+        with pytest.raises(ValueError, match="thinking must be one of"):
+            build_generator("tuned", thinking=typo)
+    with pytest.raises(ValueError, match="effort must be one of"):
+        build_generator("tuned", effort="lowest")
+    # None is the documented way to say "send nothing".
+    assert build_generator("tuned", thinking=None).thinking == "omit"
+
+
+def test_the_spec_splits_the_levers_and_keeps_one_combined_arm():
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "claude_generation_latency.json").read_text())
+    names = [a.name for a in spec.arms]
+    assert names == ["control-verified", "thinking-off", "effort-low",
+                     "first-chunk-optimised"]
+    control, thinking, effort, combined = spec.arms
+
+    # Each single-lever arm differs from the control in one dimension.
+    assert thinking.params["effort"] is None
+    assert effort.params["thinking"] == "omit"
+    assert not thinking.params["first_sentence_directive"]
+    assert not effort.params["first_sentence_directive"]
+
+    # Everything that must be held constant, is.
+    for arm in spec.arms:
+        assert arm.model == "claude-sonnet-5"
+        assert arm.search == "fixed_packet"
+        assert arm.params["first_chunk_words"] == 25
+        assert arm.params["packet"] == "founder_ceos"
+    assert spec.trials == 10 and spec.total_trials == 40
+    assert spec.validate() == []
+
+
 def test_the_tuned_arm_changes_settings_and_nothing_else():
     from experiments.generate import (BENCHMARK_MAX_TOKENS, BENCHMARK_SYSTEM,
                                       build_generator)
