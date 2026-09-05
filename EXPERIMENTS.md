@@ -130,23 +130,47 @@ re-explained, which is the exact opposite of what retrieved sources are for.
 The first replicates the manual run ten times instead of once, so the number
 has a spread. Run it before trusting anything else the engine says.
 
-## Chatterbox
+## Chatterbox Turbo
 
-Two arms, ported from `test_chatterbox.py`. They run the *same* code; they
-differ only in where it runs.
+Ported from the recovered Runpod benchmarks (`test_turbo.py`,
+`fam_chunked_benchmark.py`), which are the source of truth. See
+`experiments/adapters/CHATTERBOX_UNKNOWNS.md` for what they settle and what
+they do not.
 
-**`chatterbox_local` — in-process, no GPU rental.** Exactly what the manual
-test did: `ChatterboxTTS.from_pretrained(device=...)`, then `model.generate()`,
-with the sample rate taken from `model.sr`. On the Mac the test was run on
-that is `device="mps"`; on a card it is `"cuda"`.
+**`chatterbox_local` — in-process.** `ChatterboxTurboTTS.from_pretrained(device="cuda")`.
+Needs a machine with a card:
 
     pip install -r experiments/requirements-chatterbox.txt
 
 **`chatterbox` — remote, over HTTP.** For a pod that is already running. This
-tool never starts, stops or pays for one; without an endpoint it stops and
-says so.
+tool never starts, stops or pays for one.
 
     export CHATTERBOX_ENDPOINT=https://<host>/synthesise
+
+### What is reproduced exactly
+
+| | |
+|---|---|
+| model | `from chatterbox.tts_turbo import ChatterboxTurboTTS` |
+| timing | `torch.cuda.synchronize()` on **both** sides of `perf_counter` |
+| autograd | `with torch.inference_mode():` |
+| warmup | one `generate("This is a warmup.")`, then a fence |
+| duration | `wav.shape[-1] / model.sr` |
+| realtime | `duration / gen_time` |
+| copy | `wav.cpu()` **after** the clock stops |
+| cost | `generation_time / 3600 * 0.75` |
+| chunks | 120 ms silence between, none trailing |
+| headline | "first chunk ready in" |
+
+**The synchronisation is the load-bearing part.** CUDA queues work
+asynchronously, so timing `generate` without a fence on each side measures how
+long it took to *enqueue* the kernels — near-instant, and a realtime factor
+that looks spectacular and means nothing. A test fails if either fence is
+removed.
+
+Both recovered methodologies are reachable, because the two files deliberately
+differ: `params={"warmup": false, "inference_mode": false}` reproduces
+`test_turbo.py`; the defaults reproduce `fam_chunked_benchmark.py`.
 
 ### The endpoint contract
 
@@ -154,38 +178,25 @@ says so.
     {"text": str, "sample_rate": int}          # rate is a hint only
     -> {"pcm_base64": str,                     # 16-bit LE mono PCM, no header
         "sample_rate": int,                    # the MODEL's rate (model.sr)
-        "gpu_seconds": float,                  # optional -> the "remote" column
+        "gpu_seconds": float,                  # the fenced generate time alone
         "device": str,                         # optional, e.g. "cuda"
         "cold": bool}                          # optional, first generate?
 
-**The response's `sample_rate` wins.** The manual test takes it from
-`model.sr`, so the model decides it; a caller imposing its own would be
-resampling or mislabelling.
+A working endpoint is `experiments/adapters/chatterbox_server_example.py` —
+copy it to the pod. It loads *and warms* at startup, so request one is not
+paying for either, and it wraps the same `synthesise()` the local arm calls so
+the two arms stay comparable. Nothing here imports or starts it, and a test
+enforces that.
 
-A working endpoint is in `experiments/adapters/chatterbox_server_example.py` —
-copy it to the pod and run it. It wraps the same `synthesise()` the local arm
-calls, so the two arms stay comparable. Nothing in this repo imports or starts
-it, and a test enforces that.
+### The target pipeline
 
-### Two things the engine measures that one manual run could not
+    python tools/experiment.py plan experiments/specs/fam_latency_pipeline.json
 
-**Model loading is not synthesis.** `from_pretrained` costs seconds and happens
-once per sweep; folding it into trial one would make that trial look
-catastrophic and the rest look fast. It is timed separately and reported as
-`model_load_seconds`.
+    query -> Exa -> Claude streaming -> first 25-word sentence-boundary chunk
+          -> Chatterbox Turbo -> first playable audio
 
-**The first generate is cold.** Lazy kernel compilation makes it slower.
-Every trial records `cold`, and `params={"warmup": true}` absorbs it with a
-throwaway generate first. The default is `false`, which is what the manual test
-did.
-
-**CPU is never chosen silently.** Chatterbox on CPU is slower than realtime, so
-an unasked fallback would report a disastrous number for a model that never got
-a chance. The adapter refuses unless you ask for `device: "cpu"` by name.
-
-### Ready-made spec
-
-    python tools/experiment.py run experiments/specs/piper_vs_chatterbox_local.json
+Every stage is reported separately, with the host it ran on, and the headline
+is time to first audio.
 
 ## Statistics, and why they are cautious
 

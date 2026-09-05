@@ -31,7 +31,7 @@ from pydantic import BaseModel                  # noqa: E402
 
 from experiments.adapters import chatterbox_impl  # noqa: E402
 
-app = FastAPI(title="Chatterbox for FAM")
+app = FastAPI(title="Chatterbox Turbo for FAM")
 
 
 class Request(BaseModel):
@@ -42,15 +42,18 @@ class Request(BaseModel):
 
 @app.on_event("startup")
 def warm() -> None:
-    """Load the model before the first request, and say what it landed on."""
+    """Load and warm before the first request, so it is not paying for either."""
     device, _ = chatterbox_impl.resolve_device(None)
-    _, seconds = chatterbox_impl.load_model(device)
-    print(f"chatterbox ready on {device} in {seconds:.1f}s", flush=True)
+    model, seconds = chatterbox_impl.load_model(device)
+    chatterbox_impl.warm_up(model, device)
+    print(f"chatterbox turbo ready on {device} in {seconds:.1f}s", flush=True)
 
 
 @app.post("/synthesise")
 def synthesise(request: Request) -> dict:
-    out = chatterbox_impl.synthesise(request.text)
+    # warmup is a no-op after startup; inference_mode matches the chunked
+    # benchmark. `gpu_seconds` is the fenced generate time and nothing else.
+    out = chatterbox_impl.synthesise(request.text, warmup=True, inference_mode=True)
     return {
         "pcm_base64": base64.b64encode(out["pcm"]).decode(),
         "sample_rate": out["sample_rate"],

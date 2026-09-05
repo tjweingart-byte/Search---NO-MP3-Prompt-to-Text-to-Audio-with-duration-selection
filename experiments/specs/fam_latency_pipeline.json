@@ -1,0 +1,36 @@
+{
+  "name": "FAM latency pipeline (Exa to Chatterbox Turbo)",
+  "kind": "pipeline",
+  "arms": [
+    {
+      "name": "exa+turbo",
+      "search": "exa",
+      "tts": "chatterbox",
+      "params": {
+        "first_chunk_words": 25,
+        "search_type": "fast",
+        "num_results": 8,
+        "packet_sources": 3,
+        "highlights_per_source": 2,
+        "timeout": 120
+      }
+    },
+    {
+      "name": "current-production",
+      "search": "anthropic_web_search",
+      "tts": "piper",
+      "params": {"first_chunk_words": 25, "max_searches": 3}
+    }
+  ],
+  "queries": [
+    "Why are founder CEOs becoming harder for boards to remove?",
+    "what changed in the news today",
+    "how does a heat pump work"
+  ],
+  "trials": 10,
+  "minutes": 3,
+  "stages": ["search", "generate", "first_chunk", "synthesis", "first_audio"],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "The target: query -> Exa -> Claude streaming -> first 25-word sentence-boundary chunk -> Chatterbox Turbo -> first playable audio, against the current production stack. Every stage is reported separately and the headline is time to first audio. The Chatterbox arm needs a running GPU endpoint; without one the engine stops before spending. Swap tts to chatterbox_local to run Turbo in-process on a machine that already has a card."
+}

@@ -24,9 +24,10 @@ from experiments.timeline import Timeline
 #: Environment variable holding an already-running Chatterbox endpoint.
 CHATTERBOX_ENDPOINT_ENV = "CHATTERBOX_ENDPOINT"
 
-#: Rough hourly rate for an RTX 4090 pod, used only for the pre-run estimate so
-#: the plan can say what a sweep might cost. Never used as a measurement.
-GPU_DOLLARS_PER_HOUR = 0.69
+#: `GPU_RATE = 0.75` from the recovered Runpod benchmarks: an RTX 4090 pod,
+#: dollars per hour. Used for the pre-run estimate, and for the recorded cost
+#: on generation time alone, exactly as the benchmark computes it.
+GPU_DOLLARS_PER_HOUR = 0.75
 
 
 class LocalTTS:
@@ -235,7 +236,7 @@ class ChatterboxLocal:
     """
 
     id = "chatterbox_local"
-    label = "Chatterbox (in-process)"
+    label = "Chatterbox Turbo (in-process)"
     host = "local"
 
     def __init__(self, device: str | None = None) -> None:
@@ -245,11 +246,16 @@ class ChatterboxLocal:
         from experiments.adapters import chatterbox_impl
 
         try:
-            import chatterbox.tts  # noqa: F401
+            import importlib
+
+            importlib.import_module(chatterbox_impl.TURBO_MODULE)
         except ImportError:
             return Availability(
                 ok=False,
-                reason="The chatterbox-tts package is not installed.",
+                reason=(
+                    f"{chatterbox_impl.TURBO_MODULE} is not importable. Turbo is "
+                    "its own module, not a checkpoint of the base model."
+                ),
                 remedy="pip install -r experiments/requirements-chatterbox.txt",
             )
         resolved, explicit = chatterbox_impl.resolve_device(self.device)
@@ -274,18 +280,23 @@ class ChatterboxLocal:
         from experiments.adapters import chatterbox_impl
 
         device = params.get("device") or self.device
-        warmup = bool(params.get("warmup", False))
+        # The chunked benchmark warms up and uses inference_mode; test_turbo.py
+        # does neither. Both are reachable, and the trial records which ran.
+        warmup = bool(params.get("warmup", True))
+        inference_mode = bool(params.get("inference_mode", True))
 
         with timeline.span("synthesis", host=self.host, adapter=self.id) as stage:
             # Off the event loop: inference is blocking work, and blocking the
             # loop here would distort nothing today but would the moment
             # anything else needs to run alongside it.
             out = await asyncio.to_thread(
-                chatterbox_impl.synthesise, text, device, warmup
+                chatterbox_impl.synthesise, text, device, warmup, inference_mode
             )
             stage.detail.update({
                 "device": out["device"],
                 "cold": out["cold"],
+                "channels": out["channels"],
+                "inference_mode": out["inference_mode"],
                 "bytes": len(out["pcm"]),
                 "model_load_seconds": round(out["model_load_seconds"], 3),
             })
@@ -294,11 +305,15 @@ class ChatterboxLocal:
             pcm=out["pcm"],
             sample_rate=out["sample_rate"],
             audio_seconds=out["audio_seconds"],
-            cost=0.0,  # a machine you already have; no per-character billing
+            # On a rented card the generate time bills; on your own it does not.
+            # Recorded either way, on generation time alone as the benchmark does.
+            cost=out["gpu_cost"] if out["device"] == "cuda" else 0.0,
             detail={
                 "wall_seconds": out["generate_seconds"],
                 "device": out["device"],
                 "cold": out["cold"],
+                "channels": out["channels"],
+                "inference_mode": out["inference_mode"],
                 "model_load_seconds": out["model_load_seconds"],
                 "realtime_factor": out["realtime_factor"],
                 "chars": out["chars"],

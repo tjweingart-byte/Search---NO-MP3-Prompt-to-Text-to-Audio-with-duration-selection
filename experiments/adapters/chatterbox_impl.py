@@ -1,54 +1,84 @@
-"""Chatterbox in-process, ported from `test_chatterbox.py`.
+"""Chatterbox Turbo, ported from the recovered Runpod benchmarks.
 
-What the manual test established, and this keeps:
+Source of truth: `test_turbo.py` and `fam_chunked_benchmark.py`, both run on an
+RTX 4090. They correct an earlier port built from a twelve-line Mac file, which
+had the wrong class and — more seriously — no CUDA synchronisation at all.
 
-* the model is `chatterbox.tts.ChatterboxTTS`, loaded with
-  `from_pretrained(device=...)`;
-* synthesis is a single `model.generate(text)` returning a waveform tensor;
-* the sample rate is the model's own `model.sr`, never a value we choose.
+What the recovered code establishes, and this keeps exactly:
 
-What the manual test did **not** contain, and this therefore does not claim to
-have recovered: any timing, any duration arithmetic, and any realtime factor.
-The test wrote a WAV and printed "Done". Those numbers are derived here from
-the tensor and the orchestrator's clock, and they are new measurements rather
-than a reproduction of a previous one.
+* **`from chatterbox.tts_turbo import ChatterboxTurboTTS`** - Turbo is its own
+  module and class, not a checkpoint passed to the base model.
+* **`from_pretrained(device="cuda")`**, timed on its own. Loading is not
+  synthesis and is reported separately.
+* **`torch.cuda.synchronize()` before starting the clock and again after
+  `generate` returns, before stopping it.** CUDA queues work asynchronously, so
+  without both fences the measured time is whatever it took to *enqueue* the
+  work - far too fast, and meaningless. This is the correction that matters
+  most; every CUDA number the previous port would have produced was wrong.
+* **`with torch.inference_mode():`** around generate in the chunked benchmark.
+* **duration = `wav.shape[-1] / model.sr`**, and **speed = duration / gen_time**.
+* **`wav.cpu()` after the clock stops**, so the device-to-host copy is not
+  counted as generation.
+* **$0.75/hour** for the 4090, and cost = generation_seconds / 3600 * rate.
+* chunked runs join with **120 ms of silence between chunks and none after the
+  last**, and report **"first chunk ready in"** - which is exactly FAM's
+  time-to-first-audio.
 
-Two things this adds deliberately, because a repeated-trial run makes them
-matter in a way one manual run did not:
+The two recovered files disagree with each other, deliberately, and both are
+reproduced rather than averaged into one house style:
 
-**Model loading is not synthesis.** `from_pretrained` costs seconds and happens
-once; folding it into trial one would make the first trial look catastrophic
-and every later one look fast. It is timed separately and reported once.
+    test_turbo.py            one generate over a whole episode, cold,
+                             no warmup, no inference_mode
+    fam_chunked_benchmark.py warmup first, inference_mode, per-chunk timing
 
-**The first generate after a load is cold.** Lazy kernel compilation makes it
-slower than the rest, and averaging it in silently is how a voice gets judged
-on its worst run. Each trial records whether it was cold; `warmup=True` does a
-throwaway generate first. The default is `False`, which is what the manual test
-did.
+`SINGLE` and `CHUNKED` below name those two modes.
 """
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from contextlib import nullcontext
+from typing import Any, Optional, Sequence
 
-#: The manual test's device. Apple Silicon Metal - note this is a *Mac* run,
-#: not the RTX 4090; "cuda" is the Runpod equivalent.
-BENCHMARK_DEVICE = "mps"
+#: `from chatterbox.tts_turbo import ChatterboxTurboTTS` - the recovered import.
+TURBO_MODULE = "chatterbox.tts_turbo"
+TURBO_CLASS = "ChatterboxTurboTTS"
 
-#: Loaded models, keyed by device. Loading is expensive and a sweep reuses one.
+#: The device both recovered benchmarks used.
+BENCHMARK_DEVICE = "cuda"
+
+#: Verbatim from fam_chunked_benchmark.py. The text matters only in that it
+#: costs a generate; keeping it identical keeps the warmup cost identical.
+WARMUP_TEXT = "This is a warmup."
+
+#: `silence = torch.zeros(1, int(model.sr * 0.12))`
+SILENCE_SECONDS = 0.12
+
+#: `GPU_RATE = 0.75` - an RTX 4090 pod, dollars per hour.
+GPU_DOLLARS_PER_HOUR = 0.75
+
+#: The two recovered methodologies.
+SINGLE = "single"
+CHUNKED = "chunked"
+
 _MODELS: dict[str, Any] = {}
-#: How long each device's load took, reported once per run.
 _LOAD_SECONDS: dict[str, float] = {}
-#: Devices that have produced at least one waveform, so "cold" is knowable.
 _WARMED: set[str] = set()
+
+
+def _torch():
+    """The torch module, or None. Indirected so tests can substitute a stub."""
+    try:
+        import torch
+    except ImportError:
+        return None
+    return torch
 
 
 def available_devices() -> dict[str, bool]:
     """What this machine can actually run on. No guessing, no silent CPU."""
     out = {"cpu": True, "cuda": False, "mps": False}
-    try:
-        import torch
-    except ImportError:
+    torch = _torch()
+    if torch is None:
         return out
     try:
         out["cuda"] = bool(torch.cuda.is_available())
@@ -64,10 +94,9 @@ def available_devices() -> dict[str, bool]:
 def resolve_device(requested: Optional[str] = None) -> tuple[str, bool]:
     """The device to use, and whether the caller named it explicitly.
 
-    CPU is never chosen automatically. Chatterbox on CPU is slower than
-    realtime, so a run that quietly fell back to it would report a disastrous
-    number for a model that was never given a chance - the same silent-success
-    failure that made the local Piper adapter refuse the debug tone.
+    CPU is never chosen automatically: Chatterbox on CPU is slower than
+    realtime, so a silent fallback would report a disastrous number for a model
+    that never got a chance.
     """
     devices = available_devices()
     if requested:
@@ -79,26 +108,59 @@ def resolve_device(requested: Optional[str] = None) -> tuple[str, bool]:
     return "cpu", False
 
 
+def synchronize(device: str) -> None:
+    """Wait for the GPU to actually finish.
+
+    Both recovered benchmarks fence with `torch.cuda.synchronize()` on each
+    side of the timed region. Without it, `perf_counter` measures how long it
+    took to *queue* the kernels, which on CUDA is close to instant and produces
+    a realtime factor that looks spectacular and means nothing.
+    """
+    if device != "cuda":
+        return
+    torch = _torch()
+    if torch is None:
+        return
+    torch.cuda.synchronize()
+
+
+def _inference_mode(enabled: bool):
+    """`torch.inference_mode()` as the chunked benchmark uses it."""
+    torch = _torch()
+    if not enabled or torch is None:
+        return nullcontext()
+    return torch.inference_mode()
+
+
 def load_model(device: str):
-    """Load once per device and keep it. Returns (model, load_seconds)."""
+    """`ChatterboxTurboTTS.from_pretrained(device=...)`, timed. Cached per device."""
     if device in _MODELS:
         return _MODELS[device], _LOAD_SECONDS.get(device, 0.0)
-    from chatterbox.tts import ChatterboxTTS as _Chatterbox
+
+    import importlib
+
+    module = importlib.import_module(TURBO_MODULE)
+    turbo = getattr(module, TURBO_CLASS)
 
     started = time.perf_counter()
-    model = _Chatterbox.from_pretrained(device=device)
+    model = turbo.from_pretrained(device=device)
     elapsed = time.perf_counter() - started
+
     _MODELS[device] = model
     _LOAD_SECONDS[device] = elapsed
     return model, elapsed
 
 
-def waveform_seconds(wav, sample_rate: int) -> float:
-    """Seconds of audio in the tensor the model returned.
+def warm_up(model, device: str) -> None:
+    """The recovered warmup: one throwaway generate, then a fence."""
+    with _inference_mode(True):
+        model.generate(WARMUP_TEXT)
+    synchronize(device)
+    _WARMED.add(device)
 
-    Derived from the tensor's own frame count rather than from encoded bytes,
-    so it stays exact regardless of how the audio is later packed.
-    """
+
+def waveform_seconds(wav, sample_rate: int) -> float:
+    """`wav.shape[-1] / model.sr`, exactly as both benchmarks compute it."""
     try:
         frames = int(wav.shape[-1])
     except (AttributeError, IndexError, TypeError):
@@ -106,35 +168,41 @@ def waveform_seconds(wav, sample_rate: int) -> float:
     return frames / float(sample_rate) if sample_rate else 0.0
 
 
+def channels(wav) -> int:
+    """How many channels the model returned. FAM streams mono."""
+    shape = getattr(wav, "shape", None)
+    if shape is None or len(shape) < 2:
+        return 1
+    return int(shape[0])
+
+
+def to_cpu(wav):
+    """`wav.cpu()` - always after the clock has stopped, never inside it."""
+    mover = getattr(wav, "cpu", None)
+    return mover() if callable(mover) else wav
+
+
 def to_pcm16(wav) -> bytes:
-    """Waveform tensor -> 16-bit little-endian PCM.
+    """Waveform tensor -> 16-bit little-endian mono PCM.
 
-    FAM streams raw PCM and writes no audio files, so the tensor is converted
-    rather than saved. `test_chatterbox.py` wrote a WAV with `torchaudio.save`;
-    that was right for listening to one sample and wrong for a pipeline whose
-    settled constraint is that nothing becomes a file.
+    FAM streams raw PCM and writes no audio files. The recovered benchmarks
+    save WAVs with `torchaudio.save`, which is right for listening to a sample
+    and wrong for a pipeline whose settled constraint is that nothing becomes a
+    file. The samples are identical either way.
 
-    Values are clamped before scaling: a model that overshoots [-1, 1] would
-    otherwise wrap around into loud noise instead of clipping.
+    Channel 0 is taken explicitly rather than flattening: `flatten()` on a
+    (2, N) tensor concatenates the channels and plays left then right at twice
+    the length, silently. Values are clamped so an overshoot clips instead of
+    wrapping into noise.
     """
-    try:
-        import torch
-    except ImportError:
-        torch = None
-
-    if torch is not None and isinstance(wav, torch.Tensor):
+    torch = _torch()
+    if torch is not None and hasattr(torch, "Tensor") and isinstance(wav, torch.Tensor):
         tensor = wav.detach().to("cpu").float()
-        # Take channel 0 explicitly rather than flattening. `flatten()` on a
-        # (2, N) tensor concatenates the channels, which plays left then right
-        # at twice the length - wrong audio produced silently. FAM is mono
-        # throughout, so a multi-channel model would be a real finding, and
-        # `channels()` below is what surfaces it instead of hiding it.
         while tensor.dim() > 1:
             tensor = tensor[0]
         tensor = tensor.clamp(-1.0, 1.0)
         return (tensor * 32767.0).to(torch.int16).numpy().tobytes()
 
-    # Without torch (tests, and any caller handing us a plain sequence).
     import array
 
     flat = wav
@@ -146,56 +214,144 @@ def to_pcm16(wav) -> bytes:
     return packed.tobytes()
 
 
-def channels(wav) -> int:
-    """How many channels the model returned.
+def silence_pcm(sample_rate: int, seconds: float = SILENCE_SECONDS) -> bytes:
+    """`torch.zeros(1, int(model.sr * 0.12))`, as PCM bytes.
 
-    FAM streams mono. Anything else is recorded on the trial so it is visible
-    rather than quietly mixed down to the first channel.
+    Between chunks only - the recovered loop appends it `if i < len(chunks)`,
+    so a joined episode never ends on silence.
     """
-    shape = getattr(wav, "shape", None)
-    if shape is None or len(shape) < 2:
-        return 1
-    return int(shape[0])
+    return b"\x00\x00" * int(sample_rate * seconds)
 
 
-def synthesise(text: str, device: Optional[str] = None, warmup: bool = False) -> dict:
-    """One `model.generate(text)`, timed. The measurement, minus the loading.
+def gpu_cost(generation_seconds: float, rate: float = GPU_DOLLARS_PER_HOUR) -> float:
+    """`(generation_time / 3600) * GPU_RATE`, on generation time alone."""
+    return (generation_seconds / 3600.0) * rate
 
-    Returns the PCM, the model's own sample rate, the audio duration, the wall
-    time of the generate call alone, and enough context to read the number
-    honestly: which device ran it, whether the model was cold, and how long the
-    one-off load took.
+
+def synthesise(
+    text: str,
+    device: Optional[str] = None,
+    warmup: bool = False,
+    inference_mode: bool = True,
+) -> dict:
+    """One timed `generate`, fenced on both sides exactly as recovered.
+
+        synchronize(); start = perf_counter()
+        with inference_mode(): wav = model.generate(text)
+        synchronize(); gen_time = perf_counter() - start
+        wav = wav.cpu()
+
+    `warmup=False, inference_mode=False` reproduces `test_turbo.py`.
+    `warmup=True, inference_mode=True` reproduces `fam_chunked_benchmark.py`.
     """
     resolved, explicit = resolve_device(device)
     model, load_seconds = load_model(resolved)
 
     if warmup and resolved not in _WARMED:
-        model.generate("Warming up.")
-        _WARMED.add(resolved)
+        warm_up(model, resolved)
 
     cold = resolved not in _WARMED
 
+    synchronize(resolved)
     started = time.perf_counter()
-    wav = model.generate(text)
+    with _inference_mode(inference_mode):
+        wav = model.generate(text)
+    synchronize(resolved)
     elapsed = time.perf_counter() - started
     _WARMED.add(resolved)
 
+    # After the clock: the device-to-host copy is not generation.
+    wav = to_cpu(wav)
     sample_rate = int(getattr(model, "sr", 0) or 0)
-    pcm = to_pcm16(wav)
     seconds = waveform_seconds(wav, sample_rate)
 
     return {
-        "pcm": pcm,
+        "pcm": to_pcm16(wav),
         "sample_rate": sample_rate,
         "audio_seconds": seconds,
         "generate_seconds": elapsed,
         "realtime_factor": (seconds / elapsed) if elapsed else None,
+        "gpu_cost": gpu_cost(elapsed),
         "device": resolved,
         "device_explicit": explicit,
         "cold": cold,
+        "inference_mode": inference_mode,
         "model_load_seconds": load_seconds,
         "chars": len(text),
         "channels": channels(wav),
+    }
+
+
+def synthesise_chunks(
+    chunks: Sequence[str],
+    device: Optional[str] = None,
+    warmup: bool = True,
+    inference_mode: bool = True,
+) -> dict:
+    """`fam_chunked_benchmark.py`, reproduced.
+
+    Each chunk is timed on its own with a fence either side; the pieces are
+    joined with 120 ms of silence between them and none trailing; and the
+    headline is **first chunk ready in**, which is the moment a listener could
+    have started hearing the episode.
+
+    Note one quirk carried over deliberately: `overall_realtime` divides the
+    joined duration - silences included - by the total generation time, which
+    excludes them. That is what the recovered script computes, and changing it
+    would make the numbers incomparable with the run already measured.
+    """
+    resolved, _ = resolve_device(device)
+    model, load_seconds = load_model(resolved)
+
+    if warmup and resolved not in _WARMED:
+        warm_up(model, resolved)
+
+    results: list[dict] = []
+    pieces: list[bytes] = []
+    sample_rate = int(getattr(model, "sr", 0) or 0)
+    gap = silence_pcm(sample_rate)
+
+    total_started = time.perf_counter()
+    for index, text in enumerate(chunks, 1):
+        synchronize(resolved)
+        started = time.perf_counter()
+        with _inference_mode(inference_mode):
+            wav = model.generate(text)
+        synchronize(resolved)
+        elapsed = time.perf_counter() - started
+
+        wav = to_cpu(wav)
+        seconds = waveform_seconds(wav, sample_rate)
+        pieces.append(to_pcm16(wav))
+        if index < len(chunks):
+            pieces.append(gap)
+
+        results.append({
+            "chunk": index,
+            "generate_seconds": elapsed,
+            "audio_seconds": seconds,
+            "realtime_factor": (seconds / elapsed) if elapsed else None,
+            "chars": len(text),
+        })
+    total_generation = time.perf_counter() - total_started
+
+    joined = b"".join(pieces)
+    joined_seconds = (len(joined) / 2) / sample_rate if sample_rate else 0.0
+
+    return {
+        "pcm": joined,
+        "sample_rate": sample_rate,
+        "chunks": results,
+        # The FAM latency number: when the first chunk could start playing.
+        "first_chunk_seconds": results[0]["generate_seconds"] if results else None,
+        "total_generation_seconds": total_generation,
+        "total_audio_seconds": joined_seconds,
+        "overall_realtime": (joined_seconds / total_generation) if total_generation else None,
+        "gpu_cost": gpu_cost(total_generation),
+        "model_load_seconds": load_seconds,
+        "device": resolved,
+        "chunk_count": len(results),
+        "silence_seconds": SILENCE_SECONDS,
     }
 
 

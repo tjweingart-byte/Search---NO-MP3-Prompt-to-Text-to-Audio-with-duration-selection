@@ -1,55 +1,50 @@
-# What the Chatterbox port does not know
+# Chatterbox: what is now known, and what is not
 
-`test_chatterbox.py` is twelve lines run on a Mac (`device="mps"`, and the
-text itself says "running locally"). The Runpod RTX 4090 work was done in a
-Jupyter environment that has not been recovered, so the adapter is built on
-what that one local file proves plus explicit, listed assumptions.
+The Runpod code was recovered. `test_turbo.py` and `fam_chunked_benchmark.py`
+are the source of truth and the adapter is ported from them. This file used to
+list guesses; most are now answered, and the few that remain are below.
 
-This file exists so those assumptions are auditable rather than buried in
-code. Anything here that turns out to be wrong invalidates a comparison, so
-check it before trusting a Chatterbox number.
+## Answered by the recovered code
 
-## Blocking — a wrong guess here makes the numbers meaningless
+| Question | Answer |
+|---|---|
+| Which model is "Turbo"? | `from chatterbox.tts_turbo import ChatterboxTurboTTS` - its own module and class, **not** a checkpoint of the base model |
+| Device | `cuda`, explicitly, on an RTX 4090 |
+| `generate()` arguments | none - `model.generate(text)` and nothing else |
+| One-shot or streaming? | **one-shot.** `generate` returns the whole waveform; latency is managed by chunking the *text*, not by streaming the audio |
+| Timing | `torch.cuda.synchronize()` on both sides of `perf_counter`, around `generate` alone |
+| Autograd | `with torch.inference_mode():` in the chunked run; `test_turbo.py` omits it |
+| Warmup | one throwaway `generate("This is a warmup.")`, then a fence - chunked run only |
+| Duration | `wav.shape[-1] / model.sr` |
+| Realtime factor | `duration / gen_time` |
+| Device-to-host copy | `wav.cpu()` **after** the clock stops |
+| GPU rate | `GPU_RATE = 0.75` dollars/hour; cost = `generation_time / 3600 * rate` |
+| Chunk joining | 120 ms silence between chunks, none after the last |
+| Headline metric | "First chunk ready in" - which is FAM's time to first audio |
+| Output | `torchaudio.save(...)` to `/workspace/*.wav` |
 
-| Unknown | What the adapter assumes | Why it matters |
-|---|---|---|
-| **Is "Turbo" this model?** | plain `ChatterboxTTS.from_pretrained(device=...)`, no checkpoint argument | The local file names no variant. If Turbo is a different package, class or checkpoint, the adapter benchmarks the wrong model and the result is not about Turbo at all. |
-| **`generate()` arguments** | `model.generate(text)` and nothing else | Chatterbox exposes voice-prompt and expressiveness controls. If the Runpod run passed any — a reference voice especially — output quality and speed both differ, and the local file cannot show it. |
-| **One-shot or streaming?** | one call returns the whole waveform | The engine measures "first playable audio" as the end of one `generate`. If Chatterbox was used through a streaming API, first-audio is a different and much earlier event, and the pipeline stage would need restructuring rather than reconfiguring. |
-| **Package and version** | `chatterbox-tts` from PyPI, unpinned | A guess from the import path. The Jupyter install command is the ground truth. |
+The two files differ from each other on purpose and both are reproduced:
+`SINGLE` (one generate, cold, no inference_mode) and `CHUNKED` (warmed,
+inference_mode, per-chunk timing).
 
-## Material — affects reproducibility and cost, not correctness
+## Still unknown
 
-| Unknown | Assumed | Note |
-|---|---|---|
-| CUDA / torch build | whatever `pip install torch` gives | A cu121 vs cu124 mismatch is a common cause of a silent CPU fallback; the adapter refuses unasked CPU, so this surfaces as a refusal rather than a bad number. |
-| Weight cache location | default Hugging Face cache | On Runpod, a container-disk cache re-downloads gigabytes on every pod start. That is load time, not synthesis time, and the adapter already reports them separately. |
-| Gated weights / `HF_TOKEN` | not required | Unverified. If loading needs auth, `from_pretrained` fails at load. |
-| Pod image / Python version | none | Only matters for reproducing the environment exactly. |
-| Existing server on the pod | none — the contract in `chatterbox_server_example.py` is this repo's design | If a server was already written in Jupyter, its shape almost certainly differs from this contract. |
-| Runpod proxy URL shape | any HTTPS URL in `CHATTERBOX_ENDPOINT` | Runpod exposes ports through a proxy host; the adapter does not care, but the URL is not guessable. |
+| Unknown | Impact |
+|---|---|
+| **Package version** | The install command from the Jupyter environment was not recovered. `chatterbox-tts` is unpinned, so a future version could change `tts_turbo` under us. |
+| **Measured values** | No numbers were recovered - only the code. There is still nothing to validate a ported run against; the first real run establishes the baseline rather than reproducing one. |
+| **Weight cache location** | On a fresh pod this decides whether `from_pretrained` re-downloads gigabytes. It is load time, reported separately, so it cannot contaminate a synthesis measurement. |
+| **CUDA / torch build** | Unknown. A mismatch usually shows up as a CPU fallback, which the adapter refuses rather than silently timing. |
+| **Gated weights / `HF_TOKEN`** | Unverified. If loading needs auth, `from_pretrained` fails at load, loudly. |
+| **Any server already written on the pod** | None was recovered. `chatterbox_server_example.py` is this repo's design; if one exists, prefer it and adapt the adapter to it. |
 
-## Confirmed by the file, not assumed
+## Assumptions the code still makes, made visible
 
-* the model class and its `from_pretrained(device=...)` loading
-* `model.generate(text)` returning a waveform
-* the sample rate coming from `model.sr`
-* that the local run was `mps` — a Mac, not the 4090
-
-## Not in the file at all — derived here, and therefore new
-
-No timing, no duration arithmetic, no realtime factor. Twelve lines that save
-a WAV and print "Done" contain no measurement. Duration
-(`frames / model.sr`), realtime factor (`audio / wall`), model-load time and
-cold/warm state are all computed by this engine and have no manual counterpart
-to be checked against.
-
-## Assumptions the code makes visible rather than hiding
-
-* **Mono.** Channel 0 is taken explicitly; the channel count is recorded on
-  every trial. Flattening a stereo tensor would have played left then right at
-  twice the length, silently.
-* **Float waveform in [-1, 1].** Clamped before scaling, so an overshoot clips
-  instead of wrapping into noise.
-* **CPU is never chosen silently**, because Chatterbox on CPU is slower than
-  realtime and would measure the machine rather than the model.
+* **Mono.** Channel 0 taken explicitly; the channel count is recorded on every
+  trial. `silence = torch.zeros(1, ...)` in the recovered code agrees.
+* **Float waveform in [-1, 1]**, clamped before scaling so an overshoot clips
+  rather than wrapping into noise.
+* **PCM, not WAV.** The benchmarks save files; FAM streams raw PCM and writes
+  none. The samples are identical either way.
+* **CPU is never chosen silently**, because it is slower than realtime and
+  would measure the machine rather than the model.

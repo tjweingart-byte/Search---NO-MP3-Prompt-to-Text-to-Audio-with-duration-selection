@@ -980,203 +980,6 @@ def test_the_report_flags_a_cost_it_could_not_measure():
 
 
 # --------------------------------------------------------------------------
-# Chatterbox, ported from test_chatterbox.py
-# --------------------------------------------------------------------------
-class _FakeWav:
-    """Stands in for the torch tensor `model.generate()` returns."""
-
-    def __init__(self, frames, value=0.5):
-        self._data = [value] * frames
-        self.shape = (1, frames)
-
-    def __len__(self):
-        return len(self._data)
-
-    def __getitem__(self, index):
-        return self._data[index]
-
-
-class _FakeChatterboxModel:
-    """`ChatterboxTTS` as the manual test uses it: `.generate()` and `.sr`."""
-
-    sr = 24000
-
-    def __init__(self, frames_per_char=200):
-        self.frames_per_char = frames_per_char
-        self.calls = []
-
-    def generate(self, text):
-        self.calls.append(text)
-        return _FakeWav(self.frames_per_char * max(1, len(text)))
-
-
-@pytest.fixture
-def chatterbox_stub(monkeypatch):
-    """The real adapter code, with only the model load replaced."""
-    from experiments.adapters import chatterbox_impl
-
-    chatterbox_impl.reset()
-    model = _FakeChatterboxModel()
-    monkeypatch.setattr(chatterbox_impl, "load_model", lambda device: (model, 1.75))
-    monkeypatch.setattr(chatterbox_impl, "resolve_device",
-                        lambda requested=None: (requested or "mps", bool(requested)))
-    yield model
-    chatterbox_impl.reset()
-
-
-def test_the_sample_rate_comes_from_the_model_not_from_us(chatterbox_stub):
-    """`test_chatterbox.py` takes the rate from `model.sr`; imposing our own
-    would mislabel or resample the audio."""
-    from experiments.adapters import chatterbox_impl
-
-    out = chatterbox_impl.synthesise("Welcome to FAM.", device="mps")
-    assert out["sample_rate"] == 24000
-    assert out["sample_rate"] != 22050, "must not fall back to FAM's own rate"
-
-
-def test_audio_duration_is_derived_from_the_waveform(chatterbox_stub):
-    from experiments.adapters import chatterbox_impl
-
-    text = "Welcome to FAM."
-    out = chatterbox_impl.synthesise(text, device="mps")
-    expected = (200 * len(text)) / 24000
-    assert out["audio_seconds"] == pytest.approx(expected)
-    # 16-bit mono: two bytes per frame.
-    assert len(out["pcm"]) == 2 * 200 * len(text)
-
-
-def test_realtime_factor_is_audio_over_wall_time(chatterbox_stub):
-    from experiments.adapters import chatterbox_impl
-
-    out = chatterbox_impl.synthesise("Welcome to FAM.", device="mps")
-    assert out["realtime_factor"] == pytest.approx(
-        out["audio_seconds"] / out["generate_seconds"], rel=1e-6)
-    assert out["realtime_factor"] > 1
-
-
-def test_model_loading_is_not_counted_as_synthesis(chatterbox_stub):
-    """`from_pretrained` costs seconds and happens once. Folding it into the
-    first trial would make trial one look catastrophic."""
-    from experiments.adapters import chatterbox_impl
-
-    out = chatterbox_impl.synthesise("Welcome to FAM.", device="mps")
-    assert out["model_load_seconds"] == 1.75
-    assert out["generate_seconds"] < 1.0, "load time leaked into the measurement"
-
-
-def test_the_first_generate_is_recorded_as_cold(chatterbox_stub):
-    """Averaging a cold first run in silently is how a voice gets judged on
-    its worst trial."""
-    from experiments.adapters import chatterbox_impl
-
-    first = chatterbox_impl.synthesise("one", device="mps")
-    second = chatterbox_impl.synthesise("two", device="mps")
-    assert first["cold"] is True
-    assert second["cold"] is False
-
-
-def test_warmup_absorbs_the_cold_run_when_asked(chatterbox_stub):
-    from experiments.adapters import chatterbox_impl
-
-    out = chatterbox_impl.synthesise("one", device="mps", warmup=True)
-    assert out["cold"] is False
-    assert chatterbox_stub.calls[0] == "Warming up."
-    assert chatterbox_stub.calls[1] == "one"
-
-
-def test_cpu_is_never_chosen_silently():
-    """Chatterbox on CPU is slower than realtime; a silent fallback would
-    report a disastrous number for a model that never got a chance."""
-    from experiments.adapters import chatterbox_impl
-
-    devices = {"cpu": True, "cuda": False, "mps": False}
-    original = chatterbox_impl.available_devices
-    try:
-        chatterbox_impl.available_devices = lambda: devices
-        assert chatterbox_impl.resolve_device(None) == ("cpu", False)
-        assert chatterbox_impl.resolve_device("cpu") == ("cpu", True)
-        devices["cuda"] = True
-        assert chatterbox_impl.resolve_device(None) == ("cuda", False)
-        devices["cuda"], devices["mps"] = False, True
-        assert chatterbox_impl.resolve_device(None) == ("mps", False)
-    finally:
-        chatterbox_impl.available_devices = original
-
-
-def test_the_local_adapter_refuses_an_unasked_cpu_run(monkeypatch):
-    from experiments.adapters import chatterbox_impl
-    from experiments.adapters.tts import ChatterboxLocal
-
-    monkeypatch.setitem(sys.modules, "chatterbox", type(sys)("chatterbox"))
-    monkeypatch.setitem(sys.modules, "chatterbox.tts", type(sys)("chatterbox.tts"))
-    monkeypatch.setattr(chatterbox_impl, "resolve_device",
-                        lambda requested=None: ("cpu", bool(requested)))
-    state = ChatterboxLocal().available()
-    assert state.ok is False
-    assert "CPU" in state.reason and "realtime" in state.reason
-    assert ChatterboxLocal(device="cpu").available().ok is True
-
-
-def test_pcm_conversion_clamps_rather_than_wrapping():
-    """A model overshooting [-1, 1] must clip, not wrap into loud noise."""
-    from experiments.adapters.chatterbox_impl import to_pcm16
-
-    assert to_pcm16([0.0, 1.0, -1.0]) == b"\x00\x00\xff\x7f\x01\x80"
-    assert to_pcm16([2.0, -2.0]) == b"\xff\x7f\x01\x80"
-
-
-def test_the_local_adapter_reports_device_and_coldness(chatterbox_stub):
-    from experiments.adapters.tts import ChatterboxLocal
-
-    timeline = Timeline()
-    result = asyncio.run(ChatterboxLocal(device="mps").synth("Welcome to FAM.", timeline))
-    stage = timeline.stages[0]
-    assert stage.name == "synthesis" and stage.host == "local"
-    assert stage.detail["device"] == "mps" and stage.detail["cold"] is True
-    assert result.sample_rate == 24000
-    assert result.audio_seconds > 0
-    assert result.realtime_factor and result.realtime_factor > 1
-    assert result.cost == 0.0, "a machine you already own bills nothing per character"
-
-
-def test_the_remote_adapter_still_needs_approval_and_starts_nothing(monkeypatch):
-    monkeypatch.delenv(CHATTERBOX_ENDPOINT_ENV, raising=False)
-    state = ChatterboxTTS().available()
-    assert state.ok is False and state.needs_approval is True
-    # The local arm is a real alternative that needs no rental.
-    from experiments.adapters.tts import ChatterboxLocal
-
-    assert ChatterboxLocal().available().needs_approval is False
-
-
-def test_the_reference_server_is_not_imported_by_the_engine():
-    """It runs on the pod. Importing it here would pull in fastapi and a model."""
-    import ast
-
-    root = pathlib.Path(__file__).resolve().parent.parent / "experiments"
-    for path in root.rglob("*.py"):
-        if path.name == "chatterbox_server_example.py":
-            continue
-        for node in ast.walk(ast.parse(path.read_text())):
-            names = []
-            if isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                names = [node.module or ""] + [a.name for a in node.names]
-            assert not any("chatterbox_server_example" in n for n in names), path.name
-
-
-def test_the_reference_server_speaks_the_documented_contract():
-    """The endpoint contract must be executable, not just described."""
-    source = (pathlib.Path(__file__).resolve().parent.parent / "experiments"
-              / "adapters" / "chatterbox_server_example.py").read_text()
-    for key in ("pcm_base64", "sample_rate", "gpu_seconds", "device", "cold"):
-        assert f'"{key}"' in source, f"the reference endpoint never returns {key}"
-    # It must wrap the same code the local arm runs, or the arms are not comparable.
-    assert "chatterbox_impl.synthesise" in source
-
-
-# --------------------------------------------------------------------------
 # The bug the fakes were hiding
 # --------------------------------------------------------------------------
 def test_real_tts_adapters_measure_duration_from_a_byte_count():
@@ -1210,20 +1013,335 @@ def test_pcm_duration_really_does_reject_a_buffer():
         pcm_duration(b"\x00" * 44100, sample_rate=22050)
 
 
-def test_multichannel_audio_is_not_silently_concatenated():
-    """`flatten()` on (2, N) plays left then right at twice the length.
 
-    FAM is mono throughout, so a multi-channel model is a finding, not
-    something to quietly mix down. Channel 0 is taken explicitly and the
-    channel count is recorded on the trial.
+# --------------------------------------------------------------------------
+# Chatterbox Turbo, ported from the recovered Runpod benchmarks
+#   test_turbo.py  and  fam_chunked_benchmark.py
+# --------------------------------------------------------------------------
+class _FakeWav:
+    def __init__(self, frames, value=0.5):
+        self._data = [value] * frames
+        self.shape = (1, frames)
+        self.moved_to_cpu = False
+
+    def cpu(self):
+        self.moved_to_cpu = True
+        return self
+
+    def __len__(self):
+        return len(self._data)
+
+    def __getitem__(self, index):
+        return self._data[index]
+
+
+class _FakeTurboModel:
+    """`ChatterboxTurboTTS` as the recovered benchmarks use it."""
+
+    sr = 24000
+
+    def __init__(self, events, frames_per_char=200):
+        self.events = events
+        self.frames_per_char = frames_per_char
+        self.calls = []
+
+    def generate(self, text):
+        self.calls.append(text)
+        self.events.append(f"generate:{text[:18]}")
+        return _FakeWav(self.frames_per_char * max(1, len(text)))
+
+
+class _FakeInferenceMode:
+    def __init__(self, events):
+        self.events = events
+
+    def __enter__(self):
+        self.events.append("inference_mode:enter")
+        return self
+
+    def __exit__(self, *exc):
+        self.events.append("inference_mode:exit")
+        return False
+
+
+class _FakeTorch:
+    """Records the fences and the inference-mode context."""
+
+    Tensor = type("NotATensor", (), {})
+
+    def __init__(self, events):
+        self.events = events
+        outer = self
+
+        class _Cuda:
+            @staticmethod
+            def is_available():
+                return True
+
+            @staticmethod
+            def synchronize():
+                outer.events.append("synchronize")
+
+        self.cuda = _Cuda()
+
+    def inference_mode(self):
+        return _FakeInferenceMode(self.events)
+
+
+@pytest.fixture
+def turbo(monkeypatch):
+    """Real adapter code; only torch and the model load are substituted."""
+    from experiments.adapters import chatterbox_impl
+
+    chatterbox_impl.reset()
+    events: list[str] = []
+    torch_stub = _FakeTorch(events)
+    model = _FakeTurboModel(events)
+
+    monkeypatch.setattr(chatterbox_impl, "_torch", lambda: torch_stub)
+    monkeypatch.setattr(chatterbox_impl, "load_model",
+                        lambda device: (model, 12.5))
+    monkeypatch.setattr(chatterbox_impl, "resolve_device",
+                        lambda requested=None: (requested or "cuda", bool(requested)))
+    yield model, events
+    chatterbox_impl.reset()
+
+
+def test_the_turbo_class_and_module_are_the_recovered_ones():
+    """`from chatterbox.tts_turbo import ChatterboxTurboTTS`.
+
+    The earlier port used `chatterbox.tts.ChatterboxTTS` - the base model, not
+    Turbo - so it would have benchmarked the wrong thing entirely.
     """
+    from experiments.adapters import chatterbox_impl
+
+    assert chatterbox_impl.TURBO_MODULE == "chatterbox.tts_turbo"
+    assert chatterbox_impl.TURBO_CLASS == "ChatterboxTurboTTS"
+    source = (pathlib.Path(__file__).resolve().parent.parent / "experiments"
+              / "adapters" / "chatterbox_impl.py").read_text()
+    assert "from chatterbox.tts import" not in source
+
+
+def test_cuda_is_synchronised_on_both_sides_of_the_timed_region(turbo):
+    """The correction that matters most.
+
+    CUDA queues work asynchronously. Without a fence before the clock starts
+    and another after `generate` returns, `perf_counter` measures how long it
+    took to *enqueue* the kernels - near-instant, and a realtime factor that
+    looks spectacular and means nothing.
+    """
+    from experiments.adapters import chatterbox_impl
+
+    _, events = turbo
+    chatterbox_impl.synthesise("Founder control.", device="cuda", warmup=False)
+
+    generate_at = events.index("generate:Founder control.")
+    assert "synchronize" in events[:generate_at], "no fence before the clock started"
+    assert "synchronize" in events[generate_at + 1:], "no fence before the clock stopped"
+
+
+def test_no_synchronise_is_attempted_off_cuda(turbo):
+    from experiments.adapters import chatterbox_impl
+
+    _, events = turbo
+    chatterbox_impl.synthesise("x", device="mps", warmup=False)
+    assert "synchronize" not in events
+
+
+def test_generate_runs_inside_inference_mode(turbo):
+    from experiments.adapters import chatterbox_impl
+
+    _, events = turbo
+    chatterbox_impl.synthesise("Founder control.", device="cuda", warmup=False)
+    enter = events.index("inference_mode:enter")
+    generate = events.index("generate:Founder control.")
+    exit_at = events.index("inference_mode:exit")
+    assert enter < generate < exit_at
+
+
+def test_test_turbo_mode_runs_without_inference_mode(turbo):
+    """`test_turbo.py` uses neither warmup nor inference_mode; both reachable."""
+    from experiments.adapters import chatterbox_impl
+
+    _, events = turbo
+    out = chatterbox_impl.synthesise("x", device="cuda", warmup=False,
+                                     inference_mode=False)
+    assert "inference_mode:enter" not in events
+    assert out["inference_mode"] is False
+    assert out["cold"] is True
+
+
+def test_the_warmup_text_is_the_recovered_one(turbo):
+    from experiments.adapters import chatterbox_impl
+
+    model, _ = turbo
+    chatterbox_impl.synthesise("real text", device="cuda", warmup=True)
+    assert model.calls[0] == "This is a warmup."
+    assert chatterbox_impl.WARMUP_TEXT == "This is a warmup."
+
+
+def test_the_device_to_host_copy_happens_after_the_clock_stops(turbo):
+    """`wav = wav.cpu()` sits outside the timed region in both benchmarks."""
+    from experiments.adapters import chatterbox_impl
+
+    out = chatterbox_impl.synthesise("x", device="cuda", warmup=False)
+    assert out["generate_seconds"] < 1.0
+    source = (pathlib.Path(__file__).resolve().parent.parent / "experiments"
+              / "adapters" / "chatterbox_impl.py").read_text()
+    body = source[source.index("def synthesise("):source.index("def synthesise_chunks(")]
+    assert body.index("elapsed = time.perf_counter() - started") < body.index("to_cpu(wav)")
+
+
+def test_duration_and_realtime_factor_match_the_benchmark_formulas(turbo):
+    """duration = wav.shape[-1] / model.sr ;  speed = duration / gen_time."""
+    from experiments.adapters import chatterbox_impl
+
+    text = "Founder control."
+    out = chatterbox_impl.synthesise(text, device="cuda", warmup=False)
+    assert out["audio_seconds"] == pytest.approx((200 * len(text)) / 24000)
+    assert out["realtime_factor"] == pytest.approx(
+        out["audio_seconds"] / out["generate_seconds"], rel=1e-6)
+
+
+def test_model_load_is_reported_but_not_timed_as_generation(turbo):
+    from experiments.adapters import chatterbox_impl
+
+    out = chatterbox_impl.synthesise("x", device="cuda", warmup=False)
+    assert out["model_load_seconds"] == 12.5
+    assert out["generate_seconds"] < 1.0
+
+
+def test_the_gpu_rate_is_the_recovered_one():
+    from experiments.adapters import chatterbox_impl
+    from experiments.adapters.tts import GPU_DOLLARS_PER_HOUR
+
+    assert chatterbox_impl.GPU_DOLLARS_PER_HOUR == 0.75
+    assert GPU_DOLLARS_PER_HOUR == 0.75
+    # (generation_time / 3600) * GPU_RATE
+    assert chatterbox_impl.gpu_cost(3600) == pytest.approx(0.75)
+    assert chatterbox_impl.gpu_cost(60) == pytest.approx(0.0125)
+
+
+def test_chunked_run_reports_first_chunk_ready(turbo):
+    """`first_chunk_gen = chunk_results[0][1]` - FAM's time to first audio."""
+    from experiments.adapters import chatterbox_impl
+
+    chunks = ["Chunk one text.", "Chunk two text.", "Chunk three text."]
+    out = chatterbox_impl.synthesise_chunks(chunks, device="cuda")
+
+    assert out["chunk_count"] == 3
+    assert len(out["chunks"]) == 3
+    assert out["first_chunk_seconds"] == out["chunks"][0]["generate_seconds"]
+    assert out["total_generation_seconds"] >= out["first_chunk_seconds"]
+    assert out["overall_realtime"] is not None
+
+
+def test_chunks_are_joined_with_120ms_of_silence_and_none_trailing(turbo):
+    """`silence = torch.zeros(1, int(model.sr * 0.12))`, appended
+    `if i < len(chunks)`."""
+    from experiments.adapters import chatterbox_impl
+
+    chunks = ["aa", "bb", "cc"]
+    out = chatterbox_impl.synthesise_chunks(chunks, device="cuda")
+
+    gap_bytes = len(chatterbox_impl.silence_pcm(24000))
+    assert gap_bytes == 2 * int(24000 * 0.12)
+    speech_bytes = sum(2 * 200 * len(c) for c in chunks)
+    # Two gaps for three chunks: between only, never after the last.
+    assert len(out["pcm"]) == speech_bytes + 2 * gap_bytes
+    assert not out["pcm"].endswith(b"\x00" * gap_bytes), "episode ends on silence"
+
+
+def test_each_chunk_is_fenced_individually(turbo):
+    from experiments.adapters import chatterbox_impl
+
+    _, events = turbo
+    chatterbox_impl.synthesise_chunks(["one", "two"], device="cuda", warmup=False)
+    generates = [i for i, e in enumerate(events) if e.startswith("generate:")]
+    assert len(generates) == 2
+    for at in generates:
+        assert "synchronize" in events[:at]
+        assert "synchronize" in events[at + 1:]
+
+
+def test_a_chunked_run_warms_up_by_default_and_the_warmup_is_not_a_chunk(turbo):
+    from experiments.adapters import chatterbox_impl
+
+    model, _ = turbo
+    out = chatterbox_impl.synthesise_chunks(["one", "two"], device="cuda")
+    assert model.calls[0] == "This is a warmup."
+    assert out["chunk_count"] == 2, "the warmup must not be counted as a chunk"
+
+
+def test_cpu_is_never_chosen_silently():
+    from experiments.adapters import chatterbox_impl
+
+    devices = {"cpu": True, "cuda": False, "mps": False}
+    original = chatterbox_impl.available_devices
+    try:
+        chatterbox_impl.available_devices = lambda: devices
+        assert chatterbox_impl.resolve_device(None) == ("cpu", False)
+        assert chatterbox_impl.resolve_device("cpu") == ("cpu", True)
+        devices["cuda"] = True
+        assert chatterbox_impl.resolve_device(None) == ("cuda", False)
+    finally:
+        chatterbox_impl.available_devices = original
+
+
+def test_pcm_conversion_clamps_and_keeps_one_channel():
     from experiments.adapters.chatterbox_impl import channels, to_pcm16
 
-    stereo = [[0.5, 0.5, 0.5], [-0.5, -0.5, -0.5]]
-    assert to_pcm16(stereo) == b"\xff\x3f" * 3, "must not concatenate channels"
+    assert to_pcm16([0.0, 1.0, -1.0]) == b"\x00\x00\xff\x7f\x01\x80"
+    assert to_pcm16([2.0, -2.0]) == b"\xff\x7f\x01\x80"
+    assert to_pcm16([[0.5, 0.5, 0.5], [-0.5, -0.5, -0.5]]) == b"\xff\x3f" * 3
 
     class _Shaped:
         shape = (2, 3)
 
     assert channels(_Shaped()) == 2
     assert channels([0.1, 0.2]) == 1
+
+
+def test_the_local_adapter_reports_the_recovered_detail(turbo):
+    from experiments.adapters.tts import ChatterboxLocal
+
+    timeline = Timeline()
+    result = asyncio.run(ChatterboxLocal(device="cuda").synth("Founder control.", timeline))
+    stage = timeline.stages[0]
+    assert stage.detail["device"] == "cuda"
+    assert stage.detail["inference_mode"] is True
+    assert stage.detail["channels"] == 1
+    assert result.sample_rate == 24000
+    assert result.cost > 0, "a rented card bills for generation time"
+
+
+def test_the_local_adapter_bills_nothing_off_cuda(turbo, monkeypatch):
+    from experiments.adapters.tts import ChatterboxLocal
+
+    result = asyncio.run(ChatterboxLocal(device="mps").synth("x", Timeline()))
+    assert result.cost == 0.0
+
+
+def test_the_reference_endpoint_serves_turbo_and_the_contract():
+    source = (pathlib.Path(__file__).resolve().parent.parent / "experiments"
+              / "adapters" / "chatterbox_server_example.py").read_text()
+    for key in ("pcm_base64", "sample_rate", "gpu_seconds", "device", "cold"):
+        assert f'"{key}"' in source
+    assert "chatterbox_impl.synthesise" in source
+    assert "warm_up" in source, "the pod must warm before serving, not on request one"
+
+
+def test_the_reference_server_is_not_imported_by_the_engine():
+    import ast
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "experiments"
+    for path in root.rglob("*.py"):
+        if path.name == "chatterbox_server_example.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""] + [a.name for a in node.names]
+            assert not any("chatterbox_server_example" in n for n in names), path.name
