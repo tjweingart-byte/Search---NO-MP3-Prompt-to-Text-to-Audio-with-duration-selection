@@ -71,7 +71,14 @@ def scrub(value: Any) -> Any:
     if isinstance(value, dict):
         out = {}
         for key, item in value.items():
-            if isinstance(key, str) and _SECRET_NAME.search(key):
+            # Name-based masking applies to *strings* only. A credential is
+            # always text, and matching on the name alone masked every number
+            # whose field happened to contain one of these words - which
+            # includes `input_tokens`, `output_tokens` and every timing derived
+            # from `first_token`. The raw data those runs were meant to
+            # preserve came back as "<redacted>".
+            if (isinstance(key, str) and _SECRET_NAME.search(key)
+                    and isinstance(item, (str, bytes))):
                 out[key] = MASK if item else item
             else:
                 out[key] = scrub(item)

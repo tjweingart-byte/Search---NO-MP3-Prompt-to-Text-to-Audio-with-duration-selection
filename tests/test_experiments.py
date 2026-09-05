@@ -2152,3 +2152,49 @@ def test_candidates_markdown_groups_every_trial_by_threshold():
     assert "## 5 words" in out and "## 25 words" in out
     assert "Short 1." in out and "Short 2." in out
     assert "Much longer opening 2." in out
+
+
+def test_numbers_are_never_masked_by_their_field_name():
+    """Regression: the scrubber masked every metric whose name held "token".
+
+    `seg_dispatch_to_first_token`, `input_tokens` and `output_tokens` all match
+    the credential-name pattern, so every stored trial came back "<redacted>"
+    and the raw data the forensics runs existed to preserve was destroyed on
+    the way to disk. A credential is text; a number never is.
+    """
+    payload = {
+        "seg_dispatch_to_first_token": 0.97,
+        "seg_first_token_to_25_words": 0.85,
+        "input_tokens": 1840,
+        "output_tokens": 118,
+        "boundary_25_at": 0.803,
+        "probe_monotonic": True,
+        "words_5_at": None,
+    }
+    assert redact.scrub(payload) == payload
+
+    # Strings under those names are still masked.
+    assert redact.scrub({"api_key": SAMPLE_KEYS[0]})["api_key"] == redact.MASK
+    assert redact.scrub({"auth_token": "a-long-secret-value"})["auth_token"] == redact.MASK
+    # And nested numbers survive alongside a masked sibling.
+    nested = redact.scrub({"usage": {"input_tokens": 1840, "api_key": SAMPLE_KEYS[0]}})
+    assert nested["usage"]["input_tokens"] == 1840
+    assert nested["usage"]["api_key"] == redact.MASK
+
+
+def test_a_stored_trial_keeps_its_timings_and_token_counts(tmp_path):
+    """End to end: the numbers must survive the round trip to disk."""
+    spec = ExperimentSpec(name="roundtrip", arms=[Arm("a")], queries=["q"], trials=3)
+    run = store.create(spec, root=tmp_path)
+    run.append_trial({
+        "index": 1, "ok": True,
+        "metrics": {"seg_dispatch_to_first_token": 0.97, "boundary_10_at": 0.54},
+        "usage": {"input_tokens": 1840, "output_tokens": 118,
+                  "api_key": SAMPLE_KEYS[0]},
+    })
+    back = run.trials()[0]
+    assert back["metrics"]["seg_dispatch_to_first_token"] == 0.97
+    assert back["metrics"]["boundary_10_at"] == 0.54
+    assert back["usage"]["input_tokens"] == 1840
+    assert back["usage"]["api_key"] == redact.MASK
+    assert run.verify_clean() == []
