@@ -123,20 +123,39 @@ def to_pcm16(wav) -> bytes:
         torch = None
 
     if torch is not None and isinstance(wav, torch.Tensor):
-        tensor = wav.detach().to("cpu").flatten().float().clamp(-1.0, 1.0)
+        tensor = wav.detach().to("cpu").float()
+        # Take channel 0 explicitly rather than flattening. `flatten()` on a
+        # (2, N) tensor concatenates the channels, which plays left then right
+        # at twice the length - wrong audio produced silently. FAM is mono
+        # throughout, so a multi-channel model would be a real finding, and
+        # `channels()` below is what surfaces it instead of hiding it.
+        while tensor.dim() > 1:
+            tensor = tensor[0]
+        tensor = tensor.clamp(-1.0, 1.0)
         return (tensor * 32767.0).to(torch.int16).numpy().tobytes()
 
     # Without torch (tests, and any caller handing us a plain sequence).
     import array
 
     flat = wav
-    for _ in range(2):
-        if flat and isinstance(flat[0], (list, tuple)):
-            flat = flat[0]
+    while flat and isinstance(flat[0], (list, tuple)):
+        flat = flat[0]
     packed = array.array(
         "h", [int(max(-1.0, min(1.0, float(v))) * 32767.0) for v in flat]
     )
     return packed.tobytes()
+
+
+def channels(wav) -> int:
+    """How many channels the model returned.
+
+    FAM streams mono. Anything else is recorded on the trial so it is visible
+    rather than quietly mixed down to the first channel.
+    """
+    shape = getattr(wav, "shape", None)
+    if shape is None or len(shape) < 2:
+        return 1
+    return int(shape[0])
 
 
 def synthesise(text: str, device: Optional[str] = None, warmup: bool = False) -> dict:
@@ -176,6 +195,7 @@ def synthesise(text: str, device: Optional[str] = None, warmup: bool = False) ->
         "cold": cold,
         "model_load_seconds": load_seconds,
         "chars": len(text),
+        "channels": channels(wav),
     }
 
 

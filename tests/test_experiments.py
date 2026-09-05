@@ -1208,3 +1208,22 @@ def test_pcm_duration_really_does_reject_a_buffer():
     assert pcm_duration(44100, sample_rate=22050) == pytest.approx(1.0)
     with pytest.raises(TypeError):
         pcm_duration(b"\x00" * 44100, sample_rate=22050)
+
+
+def test_multichannel_audio_is_not_silently_concatenated():
+    """`flatten()` on (2, N) plays left then right at twice the length.
+
+    FAM is mono throughout, so a multi-channel model is a finding, not
+    something to quietly mix down. Channel 0 is taken explicitly and the
+    channel count is recorded on the trial.
+    """
+    from experiments.adapters.chatterbox_impl import channels, to_pcm16
+
+    stereo = [[0.5, 0.5, 0.5], [-0.5, -0.5, -0.5]]
+    assert to_pcm16(stereo) == b"\xff\x3f" * 3, "must not concatenate channels"
+
+    class _Shaped:
+        shape = (2, 3)
+
+    assert channels(_Shaped()) == 2
+    assert channels([0.1, 0.2]) == 1
