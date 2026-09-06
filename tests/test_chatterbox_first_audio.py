@@ -97,40 +97,118 @@ def test_audio_duration_is_derived_from_the_response_rate(server):
     assert result.audio_seconds == pytest.approx(2.0, abs=0.01)
 
 
-def test_chunks_come_from_real_openings_through_the_production_rule(tmp_path):
-    """Nothing in the corpus may be written for the benchmark."""
-    opening = ("Boards used to remove founders in an afternoon. That is no "
-               "longer true, and the reason is a share class.")
-    (tmp_path / "openings_by_arm.md").write_text(
-        f"## A-control\n\n```\n{opening}\n```\n", encoding="utf-8")
+def _openings_file(tmp_path, rows, name="warm"):
+    """A real openings file, written by the generator the parser must match."""
+    from experiments.report import openings_by_arm_markdown
+    from experiments.spec import Arm, ExperimentSpec
 
-    chunks = extract_chunks.extract(tmp_path, words=15)
+    arms = sorted({r["arm"] for r in rows})
+    spec = ExperimentSpec(name=name, trials=1, minutes=3,
+                          queries=sorted({r["query"] for r in rows}),
+                          arms=[Arm(a, search="none", tts="none") for a in arms])
+    trials = [{"arm": r["arm"], "query": r["query"], "index": r.get("index", 1),
+               "ok": True, "first_chunk_text": r["text"],
+               "metrics": {"truncated": r.get("truncated", False)}} for r in rows]
+    (tmp_path / "openings_by_arm.md").write_text(
+        openings_by_arm_markdown(spec, trials), encoding="utf-8")
+    return tmp_path
+
+
+def test_the_parser_matches_the_generator_that_writes_the_file(tmp_path):
+    """The bug: the parser only read fenced blocks, and the file has none.
+
+    It found the markdown, parsed nothing, and said "no chunks extracted",
+    which reads like the run had no openings. Pinned by round-tripping through
+    the real generator rather than through a format written from memory.
+    """
+    text = " ".join(f"w{i}" for i in range(30)) + " and it ends here."
+    _openings_file(tmp_path, [{"arm": "A-control", "query": "why tides", "text": text}])
+
+    chunks = extract_chunks.extract(tmp_path, words=25)
     assert len(chunks) == 1
-    # The production rule keeps whole sentences, so a 15-word threshold runs
-    # past the short first sentence to the next ending.
-    assert chunks[0]["text"].endswith("share class.")
-    assert chunks[0]["words"] >= 15
-    assert chunks[0]["source"].endswith(":A-control")
+    assert chunks[0]["text"] == text
+    assert chunks[0]["source"].startswith("openings_by_arm.md:A-control:why tides")
+
+
+def test_the_recorded_chunk_is_taken_verbatim_not_re_chunked(tmp_path):
+    """It is already the output of the chunk rule; applying it again truncates.
+
+    This text has a sentence ending after 26 words and continues. Re-running
+    the 25-word rule would cut it there and silently shorten the thing being
+    timed.
+    """
+    text = (" ".join(f"w{i}" for i in range(25)) + " done. "
+            + " ".join(f"x{i}" for i in range(20)) + " finished.")
+    _openings_file(tmp_path, [{"arm": "A", "query": "q", "text": text}])
+
+    chunks = extract_chunks.extract(tmp_path, words=25)
+    assert chunks[0]["text"] == text
+    assert chunks[0]["text"].endswith("finished.")
+
+
+def test_no_chunk_markers_never_reach_the_corpus(tmp_path):
+    """'(no chunk)' is a marker for a trial that produced nothing."""
+    good = " ".join(f"w{i}" for i in range(30)) + " end."
+    _openings_file(tmp_path, [
+        {"arm": "A", "query": "q", "text": good, "index": 1},
+        {"arm": "A", "query": "q", "text": "(no chunk)", "index": 2}])
+    chunks = extract_chunks.extract(tmp_path, words=25)
+    assert len(chunks) == 1
+    assert "(no chunk)" not in chunks[0]["text"]
+
+
+def test_a_word_count_mismatch_stops_rather_than_writing_bad_chunks(tmp_path):
+    """The report prints the count; a disagreement means the line parsed wrong."""
+    text = " ".join(f"w{i}" for i in range(30)) + " end."
+    _openings_file(tmp_path, [{"arm": "A", "query": "q", "text": text}])
+    path = tmp_path / "openings_by_arm.md"
+    path.write_text(path.read_text().replace("(31w)", "(99w)"), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as caught:
+        extract_chunks.extract(tmp_path, words=25)
+    assert "parse mismatch" in str(caught.value)
+
+
+def test_a_missing_openings_file_names_what_it_did_find(tmp_path):
+    """report.md is markdown too; 'no markdown' was the wrong complaint."""
+    (tmp_path / "report.md").write_text("# a report\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as caught:
+        extract_chunks.extract(tmp_path, words=25)
+    message = str(caught.value)
+    assert "no openings file" in message and "report.md" in message
 
 
 def test_identical_openings_are_not_timed_twice(tmp_path):
-    same = "One sentence that is quite long indeed and ends here properly now."
-    (tmp_path / "a.md").write_text(f"## A\n\n```\n{same}\n```\n", encoding="utf-8")
-    (tmp_path / "b.md").write_text(f"## B\n\n```\n{same}\n```\n", encoding="utf-8")
-    assert len(extract_chunks.extract(tmp_path, words=5)) == 1
+    same = " ".join(f"w{i}" for i in range(30)) + " end."
+    _openings_file(tmp_path, [{"arm": "A", "query": "q", "text": same},
+                              {"arm": "B", "query": "q", "text": same}])
+    chunks = extract_chunks.extract(tmp_path, words=25)
+    assert len(chunks) == 1
+    assert chunks[0]["also_from"] == ["B/1"]
 
 
-def test_an_empty_results_folder_says_so_rather_than_inventing_text(tmp_path):
-    with pytest.raises(SystemExit) as caught:
-        extract_chunks.extract(tmp_path, words=25)
-    assert "preserve a run first" in str(caught.value)
+def test_buckets_split_a_real_corpus_three_ways(tmp_path):
+    """Fixed boundaries put every real chunk in one bucket.
+
+    The chunk rule guarantees >= 25 words, so 'short = under 15' can never be
+    populated and the length question would be answered over two buckets.
+    """
+    rows = [{"arm": "A", "query": f"q{n}", "index": n,
+             "text": " ".join(f"w{i}" for i in range(n)) + " end."}
+            for n in range(25, 55)]
+    _openings_file(tmp_path, rows)
+    chunks = extract_chunks.extract(tmp_path, words=25)
+    ranges = extract_chunks.assign_buckets(chunks)
+
+    assert set(ranges) == {"short", "medium", "long"}
+    for name in extract_chunks.BUCKET_NAMES:
+        assert [c for c in chunks if c["bucket"] == name]
+    assert ranges["short"][1] < ranges["long"][0]
 
 
-def test_buckets_cover_every_length():
-    assert extract_chunks.bucket_for(1) == "short"
-    assert extract_chunks.bucket_for(20) == "medium"
-    assert extract_chunks.bucket_for(45) == "long"
-    assert extract_chunks.bucket_for(5000) == "very long"
+def test_a_corpus_too_small_to_split_says_medium_rather_than_guessing():
+    chunks = [{"words": 30}, {"words": 31}]
+    assert extract_chunks.assign_buckets(chunks) == {"medium": (30, 31)}
 
 
 def test_preflight_does_not_take_a_named_device_on_trust(monkeypatch, capsys):

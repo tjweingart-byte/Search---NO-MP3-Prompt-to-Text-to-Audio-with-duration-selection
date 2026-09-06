@@ -29,106 +29,266 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from experiments.harness import first_chunk_ready                # noqa: E402
-
-#: Word-count buckets. The benchmark reports startup latency per bucket, which
-#: is how "does length matter" gets a yes or no instead of a scatter plot.
-BUCKETS = ((0, 15, "short"), (15, 30, "medium"), (30, 60, "long"), (60, 10_000, "very long"))
-
-#: Openings are written under a heading naming the arm, then a fenced or
-#: indented block. Both shapes are accepted; anything else is skipped loudly.
-_HEADING = re.compile(r"^#{2,4}\s+(.+?)\s*$")
-
-
-def bucket_for(words: int) -> str:
-    for low, high, name in BUCKETS:
-        if low <= words < high:
-            return name
-    return "very long"
+#: Bucket names, shortest first. The boundaries are **not** fixed: the chunk
+#: rule guarantees every real chunk clears the word threshold, so a fixed
+#: "short = under 15 words" bucket is empty by construction and the benchmark
+#: would answer "does length matter" across two buckets while claiming three.
+#: Boundaries are therefore terciles of the corpus itself, and the real word
+#: range is printed and stored beside every name, so "short" is never mistaken
+#: for a length FAM does not actually produce.
+BUCKET_NAMES = ("short", "medium", "long")
 
 
-def openings_from_markdown(text: str) -> list[tuple[str, str]]:
-    """(label, opening) pairs from a preserved openings-by-arm file."""
-    out, label, buffer, in_fence = [], None, [], False
+def bucket_edges(counts: list[int]) -> list[int]:
+    """Tercile boundaries for these word counts, as [lo, first, second, hi]."""
+    ordered = sorted(counts)
+    if not ordered:
+        return []
+    third = len(ordered) // 3
+    if third == 0:                      # too few to split three ways
+        return [ordered[0], ordered[-1]]
+    return [ordered[0], ordered[third], ordered[2 * third], ordered[-1]]
+
+
+def assign_buckets(chunks: list[dict]) -> dict:
+    """Label each chunk short/medium/long by tercile; return the word ranges."""
+    counts = [c["words"] for c in chunks]
+    if not counts:
+        return {}
+    edges = bucket_edges(counts)
+    if len(edges) < 4:
+        for chunk in chunks:
+            chunk["bucket"] = "medium"
+        return {"medium": (min(counts), max(counts))}
+    _, first, second, _ = edges
+    for chunk in chunks:
+        words = chunk["words"]
+        chunk["bucket"] = ("short" if words < first
+                           else "medium" if words < second else "long")
+    ranges = {}
+    for name in BUCKET_NAMES:
+        mine = [c["words"] for c in chunks if c["bucket"] == name]
+        if mine:
+            ranges[name] = (min(mine), max(mine))
+    return ranges
+
+
+#: `report.openings_by_arm_markdown` writes each recorded chunk as a numbered
+#: line under an arm heading and a bold query line:
+#:
+#:     ## A-control
+#:
+#:     **how does a heat pump work**
+#:
+#:       1. (28w) A heat pump does not make heat. It moves heat that ...
+#:
+#: There are no code fences. The first version of this parser looked only for
+#: fenced blocks, found none, and reported "no chunks extracted" - which read
+#: like the run had no openings rather than like the parser had the wrong
+#: shape. Parsing is now pinned to the generator by a round-trip test.
+_ARM = re.compile(r"^##\s+(?!#)(.+?)\s*$")
+_QUERY = re.compile(r"^\*\*(.+?)\*\*\s*$")
+_CHUNK = re.compile(r"^\s*(\d+)\.\s+\((\d+)w([^)]*)\)\s+(.*)$")
+
+#: Written by the report when a trial produced no chunk at all. It is a marker,
+#: not text, and must never reach a voice.
+NO_CHUNK = "(no chunk)"
+
+
+def openings_from_markdown(text: str) -> list[dict]:
+    """Every recorded chunk in an openings-by-arm file, with its provenance.
+
+    The recorded text is **already** the first speakable chunk - the pipeline
+    applied the chunk rule when the trial ran and stored the result. So it is
+    taken verbatim. Re-running `first_chunk_ready` over it would at best be a
+    no-op and at worst cut it short at an earlier sentence end, which would
+    quietly shorten the very thing being timed.
+
+    The word count the report printed is checked against the text. A mismatch
+    means the line was parsed wrongly, and it is reported rather than absorbed.
+    """
+    out, arm, query = [], None, None
     for line in text.splitlines():
-        if line.strip().startswith("```"):
-            if in_fence:
-                body = "\n".join(buffer).strip()
-                if body:
-                    out.append((label or "unlabelled", body))
-                buffer = []
-            in_fence = not in_fence
+        chunk = _CHUNK.match(line)
+        if chunk:
+            index, stated, flags, body = chunk.groups()
+            body = body.strip()
+            if not body or body == NO_CHUNK:
+                continue
+            out.append({
+                "text": body,
+                "stated_words": int(stated),
+                "truncated": "truncated" in flags,
+                "arm": arm or "unlabelled",
+                "query": query or "(unknown)",
+                "trial": int(index),
+            })
             continue
-        if in_fence:
-            buffer.append(line)
-            continue
-        heading = _HEADING.match(line)
+        heading = _ARM.match(line)
         if heading:
-            label = heading.group(1)
+            arm, query = heading.group(1), None
+            continue
+        asked = _QUERY.match(line)
+        if asked:
+            query = asked.group(1)
     return out
 
 
 def extract(results_dir: pathlib.Path, words: int) -> list[dict]:
-    sources = sorted(results_dir.glob("*.md"))
+    """Real first chunks from the preserved openings, taken as recorded."""
+    sources = sorted(results_dir.rglob("*openings*.md"))
     if not sources:
-        raise SystemExit(f"no markdown in {results_dir} - preserve a run first")
+        # Be specific about which thing is missing. "No markdown" was wrong
+        # advice here: report.md is markdown, and it has no openings in it.
+        available = sorted(p.name for p in results_dir.rglob("*.md"))
+        raise SystemExit(
+            f"no openings file in {results_dir}\n"
+            f"  found: {', '.join(available) or '(nothing)'}\n"
+            "  Expected a file whose name contains 'openings', written by\n"
+            "  tools/preserve_run.py from the run's artifacts.")
 
-    seen, chunks = set(), []
-    skipped = 0
+    seen, chunks, dropped, miscounted = {}, [], 0, []
     for path in sources:
-        for label, opening in openings_from_markdown(path.read_text(encoding="utf-8")):
-            chunk = first_chunk_ready(opening, words)
-            if not chunk:
-                # The opening never reached a sentence end past the threshold.
-                # That is a real pipeline case, but it is not a chunk.
-                skipped += 1
+        for row in openings_from_markdown(path.read_text(encoding="utf-8")):
+            text = row["text"]
+            count = len(text.split())
+            if count != row["stated_words"]:
+                miscounted.append((row["stated_words"], count, text[:60]))
+            if count < words:
+                # Below the threshold this run used. Real, but not a chunk the
+                # pipeline would have spoken at this setting.
+                dropped += 1
                 continue
-            key = chunk.strip()
-            if key in seen:
+            if text in seen:
+                seen[text]["also_from"].append(f"{row['arm']}/{row['trial']}")
                 continue
-            seen.add(key)
-            count = len(key.split())
-            chunks.append({
-                "text": key,
+            entry = {
+                "text": text,
                 "words": count,
-                "chars": len(key),
-                "bucket": bucket_for(count),
-                "source": f"{path.name}:{label}",
-            })
-    if skipped:
-        print(f"  {skipped} opening(s) never reached a {words}-word sentence end")
+                "chars": len(text),
+                "bucket": None,          # assigned once the corpus is complete
+                "truncated_response": row["truncated"],
+                "source": f"{path.name}:{row['arm']}:{row['query']}:{row['trial']}",
+                "also_from": [],
+            }
+            seen[text] = entry
+            chunks.append(entry)
+
+    if dropped:
+        print(f"  {dropped} recorded chunk(s) below {words} words, not used")
+    if miscounted:
+        stated, got, sample = miscounted[0]
+        raise SystemExit(
+            f"parse mismatch: the report says {stated} words, the parsed text "
+            f"has {got}\n  {sample!r}\n"
+            "  The parser is reading these lines wrongly. Nothing was written.")
     return chunks
+
+
+def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
+    """Prove the corpus exists and show what is in it. Free; reads one file.
+
+    Printed before any generation is run, because "the benchmark had real
+    input" is exactly the kind of claim this project has learned not to take
+    on trust.
+    """
+    if not corpus_path.exists():
+        print(f"\n  MISSING  no chunk corpus at {corpus_path}\n")
+        print("  python tools/preserve_run.py --latest --as warm_first_token")
+        print("  python tools/extract_chunks.py experiments/results/warm_first_token\n")
+        return 1
+
+    data = json.loads(corpus_path.read_text(encoding="utf-8"))
+    chunks = data.get("chunks") or []
+    if not chunks:
+        print(f"\n  EMPTY  {corpus_path} holds no chunks\n")
+        return 1
+
+    ranges = data.get("bucket_ranges") or {}
+    words = [c["words"] for c in chunks]
+    truncated = [c for c in chunks if c.get("truncated_response")]
+    arms = sorted({c["source"].split(":")[1] for c in chunks if ":" in c["source"]})
+    topics = sorted({c["source"].split(":")[2] for c in chunks
+                     if c["source"].count(":") >= 2})
+
+    print(f"\nchunk corpus: {corpus_path}")
+    print(f"  from        {data.get('source')}")
+    print(f"  minimum     {data.get('min_words')} words (the run's chunk rule)")
+    print(f"  chunks      {len(chunks)} distinct")
+    print(f"  words       {min(words)}-{max(words)}, median "
+          f"{sorted(words)[len(words) // 2]}")
+    print(f"  arms        {len(arms)}: {', '.join(arms)}")
+    print(f"  topics      {len(topics)}")
+    if truncated:
+        print(f"  note        {len(truncated)} came from a response that hit "
+              "its token cap")
+
+    print(f"\n  {'bucket':<8}{'n':>4}{'words':>12}")
+    for name in BUCKET_NAMES:
+        mine = [c for c in chunks if c["bucket"] == name]
+        if not mine:
+            continue
+        low, high = ranges.get(name, (min(c["words"] for c in mine),
+                                      max(c["words"] for c in mine)))
+        print(f"  {name:<8}{len(mine):>4}{f'{low}-{high}':>12}")
+
+    print("\n  examples (real text, taken verbatim from the run)")
+    for name in BUCKET_NAMES:
+        mine = [c for c in chunks if c["bucket"] == name]
+        for chunk in mine[:examples]:
+            body = chunk["text"]
+            if len(body) > 150:
+                body = body[:150] + "..."
+            print(f"\n    [{name}, {chunk['words']}w] {chunk['source']}")
+            print(f"    {body}")
+    print()
+    return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("results_dir", help="a folder under experiments/results/")
+    parser.add_argument("results_dir", nargs="?",
+                        help="a folder under experiments/results/")
     parser.add_argument("--words", type=int, default=25,
-                        help="chunk threshold; 25 is what the runs used")
+                        help="minimum words to keep; 25 is the rule the runs used")
     parser.add_argument("--out", default="experiments/chunks/first_chunks.json")
+    parser.add_argument("--verify", action="store_true",
+                        help="show what is in an existing corpus; extract nothing")
     args = parser.parse_args()
 
+    if args.verify:
+        return verify(pathlib.Path(args.out))
+
+    if not args.results_dir:
+        raise SystemExit("give a results folder, or --verify an existing corpus")
     chunks = extract(pathlib.Path(args.results_dir), args.words)
+    ranges = assign_buckets(chunks) if chunks else {}
     if not chunks:
-        raise SystemExit("no chunks extracted; nothing written")
+        raise SystemExit(
+            "no chunks extracted; nothing written\n"
+            "  The openings file was found and parsed, but nothing in it "
+            f"survived the {args.words}-word minimum.\n"
+            "  Lower it with --words, or check the file has recorded chunks.")
 
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
         "source": str(args.results_dir),
-        "chunk_words": args.words,
-        "note": ("Extracted from real FAM openings with the production chunk "
-                 "rule. Nothing here was written for the benchmark."),
+        "min_words": args.words,
+        "note": ("The real first speakable chunks recorded by the run, taken "
+                 "verbatim. The chunk rule was applied when the trial ran; it "
+                 "is not applied again here. Nothing was written for the "
+                 "benchmark."),
+        "bucket_ranges": {k: list(v) for k, v in ranges.items()},
         "chunks": chunks,
     }, indent=2), encoding="utf-8")
 
     print(f"wrote {len(chunks)} chunks -> {out}")
-    for _, _, name in BUCKETS:
+    for name in BUCKET_NAMES:
         mine = [c for c in chunks if c["bucket"] == name]
         if mine:
-            lo = min(c["words"] for c in mine)
-            hi = max(c["words"] for c in mine)
-            print(f"  {name:<10} {len(mine):>3}  ({lo}-{hi} words)")
+            lo, hi = ranges[name]
+            print(f"  {name:<8} {len(mine):>3}  ({lo}-{hi} words)")
     return 0
 
 

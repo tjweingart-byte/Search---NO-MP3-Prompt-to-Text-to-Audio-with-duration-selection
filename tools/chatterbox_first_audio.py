@@ -146,7 +146,9 @@ def preflight(chunks_path: pathlib.Path, device: str | None) -> int:
             chunks = []
         buckets = sorted({c["bucket"] for c in chunks})
         check("chunk corpus present", bool(chunks), f"{len(chunks)} chunks")
-        check("all three length buckets represented",
+        # Buckets are terciles of the corpus, so three of them means the corpus
+        # was big enough to split - not that any fixed length was present.
+        check("corpus splits into three length buckets",
               {"short", "medium", "long"} <= set(buckets), ", ".join(buckets))
     else:
         check("chunk corpus present", False, f"{chunks_path} does not exist")
