@@ -67,6 +67,12 @@ class FirstAudio:
     audio_seconds: Optional[float] = None
     sample_rate: Optional[int] = None
     device: Optional[str] = None
+    #: Text in -> the model has a completed waveform. Inference alone.
+    model_seconds: Optional[float] = None
+    #: Waveform exists -> the listener could start playing. Everything after
+    #: inference: encoding, assembly, the wire. Separated because only this
+    #: half is a contract choice.
+    delivery_seconds: Optional[float] = None
     collapsed: list = field(default_factory=list)
     detail: dict = field(default_factory=dict)
 
@@ -85,6 +91,8 @@ class FirstAudio:
             "seg_first_audio_bytes": self.first_audio_bytes,
             "seg_playable": self.playable,
             "seg_complete": self.complete,
+            "model_seconds": self.model_seconds,
+            "delivery_seconds": self.delivery_seconds,
             "first_playable_seconds": self.to_first_playable,
             "audio_seconds": self.audio_seconds,
             "sample_rate": self.sample_rate,
@@ -128,6 +136,8 @@ def measure_in_process(text: str, *, device: Optional[str] = None,
     result.complete = complete
     result.sample_rate = rate
     result.audio_seconds = out.get("audio_seconds")
+    result.model_seconds = generated
+    result.delivery_seconds = complete - generated
     result.collapsed = ["stream_begin", "first_audio_bytes"]
     result.detail = {
         "generate_seconds": generated,
@@ -172,6 +182,10 @@ def measure_http(endpoint: str, text: str, *, sample_rate: int = 24000,
         streaming_pcm = "application/json" not in content_type
         header_rate = reply.headers.get("X-Sample-Rate")
         rate = int(header_rate) if header_rate else sample_rate
+        # The endpoint reports its own fenced generate time, so model latency
+        # can be subtracted from the round trip without a second request.
+        remote_generate = reply.headers.get("X-Generate-Seconds")
+        streaming_kind = reply.headers.get("X-Streaming-Kind")
         want = playable_bytes(rate)
 
         body = bytearray()
@@ -198,7 +212,8 @@ def measure_http(endpoint: str, text: str, *, sample_rate: int = 24000,
             # The whole response was shorter than the playback cushion.
             result.playable = result.complete
             result.collapsed.append("playable")
-        result.detail = {"contract": "streaming_pcm", "pcm_bytes": len(pcm)}
+        result.detail = {"contract": "streaming_pcm", "pcm_bytes": len(pcm),
+                         "streaming_kind": streaming_kind}
     else:
         reply_body = json.loads(bytes(body).decode())
         pcm = base64.b64decode(reply_body.get("pcm_base64", ""))
@@ -224,4 +239,14 @@ def measure_http(endpoint: str, text: str, *, sample_rate: int = 24000,
 
     result.dispatch = 0.0
     result.audio_seconds = len(pcm) / BYTES_PER_SAMPLE / rate if rate else None
+
+    # Model time is whatever the endpoint reported; delivery is the rest of the
+    # wait the listener actually had. Left as None rather than guessed when the
+    # endpoint does not say - an unreported number is not a zero.
+    reported = remote_generate or (
+        result.detail.get("gpu_seconds") if isinstance(result.detail, dict) else None)
+    if reported is not None:
+        result.model_seconds = float(reported)
+        if result.playable is not None:
+            result.delivery_seconds = max(0.0, result.playable - result.model_seconds)
     return result

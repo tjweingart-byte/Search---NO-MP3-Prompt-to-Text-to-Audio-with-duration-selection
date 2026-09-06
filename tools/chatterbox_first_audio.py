@@ -43,6 +43,53 @@ SIMULATED_REALTIME = 12.0
 SIMULATED_WPM = 150.0
 
 
+#: Every result carries where it ran, because "Chatterbox is Xs" without the
+#: device is the kind of number that ends up in a slide and then in a plan.
+LABEL_SIMULATED = "SIMULATED - NOT A CHATTERBOX MEASUREMENT"
+
+
+def banner(device: str) -> str:
+    """What these numbers are, said before they appear and stored beside them."""
+    if device == "mps":
+        return ("LOCAL MPS / DEVELOPMENT BENCHMARK - Apple silicon, not the "
+                "production deployment target. Not production latency.")
+    if device == "cpu":
+        return ("LOCAL CPU / DEVELOPMENT BENCHMARK - slower than realtime by "
+                "design. Not production latency.")
+    return f"LOCAL {device.upper()} / DEVELOPMENT BENCHMARK - not production latency."
+
+
+def prepare_local(device: str) -> dict:
+    """Load the model and warm it, on the clock, before any trial is timed.
+
+    Cold start is measured here and then excluded from every trial, because it
+    is paid once per process and a production server pays it at boot. Folding
+    it into request latency would make the first chunk look catastrophic and
+    every later one look free.
+
+    The device is re-read from the loaded model rather than trusted: Chatterbox
+    Turbo's `from_pretrained` silently falls back to CPU when MPS is missing,
+    which would otherwise be reported as an MPS result.
+    """
+    load_started = time.perf_counter()
+    model, load_seconds = impl.load_model(device)
+    actual = str(getattr(model, "device", device))
+    if actual.split(":")[0] != device:
+        raise SystemExit(
+            f"asked for device {device!r} but the model loaded on {actual!r}.\n"
+            "  Chatterbox falls back to CPU without raising. Refusing to label "
+            "a CPU run as something else.")
+    warm_started = time.perf_counter()
+    impl.warm_up(model, device)
+    return {
+        "device": device,
+        "load_seconds": load_seconds,
+        "warmup_seconds": time.perf_counter() - warm_started,
+        "total_cold_seconds": time.perf_counter() - load_started,
+        "excluded_from_trials": True,
+    }
+
+
 def load_chunks(path: pathlib.Path) -> list[dict]:
     if not path.exists():
         raise SystemExit(
@@ -72,6 +119,8 @@ def simulate(text: str) -> probe.FirstAudio:
     result.complete = elapsed
     result.sample_rate = 24000
     result.audio_seconds = audio_seconds
+    result.model_seconds = elapsed
+    result.delivery_seconds = 0.0
     result.collapsed = ["stream_begin", "first_audio_bytes"]
     result.detail = {"SIMULATED": True, "one_shot": True,
                      "why_collapsed": "Simulated one-shot engine."}
@@ -113,14 +162,23 @@ def summarise(rows) -> dict:
     out = {"trials": len(rows), "ok": len(ok), "buckets": {}}
     for name, mine in by_bucket.items():
         played = sorted(r["first_playable_seconds"] for r in mine)
+        def med(key):
+            values = [r[key] for r in mine if r.get(key) is not None]
+            return statistics.median(values) if values else None
+
+        audio = med("audio_seconds")
+        model = med("model_seconds")
         out["buckets"][name] = {
             "n": len(mine),
             "words_median": statistics.median(r["words"] for r in mine),
             "first_playable_p50": statistics.median(played),
             "first_playable_min": played[0],
             "first_playable_max": played[-1],
-            "audio_seconds_p50": statistics.median(
-                r["audio_seconds"] for r in mine if r.get("audio_seconds")),
+            "audio_seconds_p50": audio,
+            # The two halves the experiment exists to tell apart.
+            "model_seconds_p50": model,
+            "delivery_seconds_p50": med("delivery_seconds"),
+            "realtime_factor_p50": (audio / model) if audio and model else None,
         }
     collapsed = sorted({m for r in ok for m in r.get("collapsed_marks", [])})
     out["collapsed_marks"] = collapsed
@@ -142,6 +200,7 @@ def main() -> int:
     chunks = load_chunks(pathlib.Path(args.chunks))
     transport = "simulate" if args.simulate else ("local" if args.local else "http")
 
+    cold = None
     if transport == "local":
         resolved, explicit = impl.resolve_device(args.device)
         if resolved == "cpu" and not explicit:
@@ -150,19 +209,34 @@ def main() -> int:
                 "slower than realtime, so timing it would measure the machine "
                 "rather than the model.\n"
                 "  Run with --device cpu only if you mean to time the CPU.")
-        print(f"device: {resolved}")
+        cold = prepare_local(resolved)
+        print(banner(cold["device"]))
     if transport == "simulate":
-        print("SIMULATED: no model, no network. These numbers are not measurements.")
+        print(LABEL_SIMULATED + ": no model, no network.")
 
     print(f"{len(chunks)} chunks x {args.trials} trials = "
           f"{len(chunks) * args.trials} synthesises\n")
     rows = run(chunks, transport, args.trials, args.endpoint, args.device)
     summary = summarise(rows)
+    if cold:
+        summary["cold_start"] = cold
+        print(f"\ncold start (excluded from every number below): "
+              f"model load {cold['load_seconds']:.1f}s, "
+              f"warmup generate {cold['warmup_seconds']:.2f}s")
 
-    print(f"\n{'bucket':<12}{'n':>4}{'words':>8}{'first playable p50':>22}")
+    def fmt(value, unit="s"):
+        return f"{value:.3f}{unit}" if value is not None else "—"
+
+    print(f"\n{'bucket':<11}{'n':>4}{'words':>7}{'model':>10}{'delivery':>10}"
+          f"{'playable':>10}{'audio':>9}{'xRT':>7}")
     for name, stats in summary["buckets"].items():
-        print(f"{name:<12}{stats['n']:>4}{stats['words_median']:>8.0f}"
-              f"{stats['first_playable_p50']:>21.3f}s")
+        rtf = stats.get("realtime_factor_p50")
+        print(f"{name:<11}{stats['n']:>4}{stats['words_median']:>7.0f}"
+              f"{fmt(stats.get('model_seconds_p50')):>10}"
+              f"{fmt(stats.get('delivery_seconds_p50')):>10}"
+              f"{fmt(stats['first_playable_p50']):>10}"
+              f"{fmt(stats.get('audio_seconds_p50')):>9}"
+              f"{(f'{rtf:.1f}x' if rtf else '—'):>7}")
     if summary["collapsed_marks"]:
         print(f"\ncollapsed marks: {', '.join(summary['collapsed_marks'])}"
               "  (one-shot engine / non-streaming contract)")
@@ -171,7 +245,10 @@ def main() -> int:
         path = pathlib.Path(args.out)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(
-            {"transport": transport, "simulated": transport == "simulate",
+            {"label": LABEL_SIMULATED if transport == "simulate" else (
+                banner(cold["device"]) if cold else "REMOTE ENDPOINT"),
+             "transport": transport, "simulated": transport == "simulate",
+             "is_production_latency": False,
              "summary": summary, "rows": rows}, indent=2), encoding="utf-8")
         print(f"\nwrote {path}")
     return 0

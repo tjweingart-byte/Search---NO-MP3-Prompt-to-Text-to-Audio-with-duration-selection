@@ -17,6 +17,25 @@ they do - which is the only way the comparison between them means anything.
 The model is loaded at import so the first request is not paying for it, and
 `gpu_seconds` reports the generate call alone, matching what the local arm
 measures.
+
+Two endpoints, and the difference between them is a *delivery* experiment, not
+a model one:
+
+* `POST /synthesise` - the original contract. One JSON object with base64 PCM
+  inside it. Nothing decodes until the closing brace arrives, so the listener
+  waits for the whole chunk however fast the model was.
+* `POST /synthesise/stream` - the same waveform, written to the socket as raw
+  16-bit PCM in small pieces, with the sample rate in a header so the client
+  knows what it is receiving before any audio arrives.
+
+**Neither is model streaming, and the second one must not be described as
+such.** `ChatterboxTurboTTS.generate` returns one completed waveform; there is
+no `yield` anywhere in the package. `/synthesise/stream` therefore begins
+writing only *after* generation has finished. What it removes is the base64
+and JSON assembly barrier on top of that - real, measurable, and strictly
+smaller than the model time it sits behind.
+
+Neither endpoint is production FAM. Nothing in the app imports this file.
 """
 from __future__ import annotations
 
@@ -61,6 +80,47 @@ def synthesise(request: Request) -> dict:
         "device": out["device"],
         "cold": out["cold"],
     }
+
+
+#: Bytes written per socket write in the streaming endpoint. Small enough that
+#: the client's first-byte mark is a real observation, large enough not to turn
+#: the measurement into a syscall benchmark.
+STREAM_CHUNK_BYTES = 8192
+
+
+@app.post("/synthesise/stream")
+def synthesise_stream(request: Request):
+    """The same audio, delivered as raw PCM instead of base64 inside JSON.
+
+    Honest about what it is: generation still completes first. The response
+    begins at the moment the waveform exists, and the client can play the first
+    piece without waiting for the last. The saving is the encode-and-assemble
+    step, not any part of inference.
+
+    `X-Generate-Seconds` carries the fenced generate time so the client can
+    subtract model latency from delivery latency without a second request.
+    """
+    from fastapi.responses import StreamingResponse
+
+    out = chatterbox_impl.synthesise(request.text, warmup=True, inference_mode=True)
+    pcm = out["pcm"]
+
+    def pieces():
+        for index in range(0, len(pcm), STREAM_CHUNK_BYTES):
+            yield pcm[index:index + STREAM_CHUNK_BYTES]
+
+    return StreamingResponse(
+        pieces(),
+        media_type="application/octet-stream",
+        headers={
+            "X-Sample-Rate": str(out["sample_rate"]),
+            "X-Generate-Seconds": f"{out['generate_seconds']:.6f}",
+            "X-Device": str(out["device"]),
+            "X-Audio-Seconds": f"{out['audio_seconds']:.6f}",
+            # Says plainly what this is, to anyone who curls it.
+            "X-Streaming-Kind": "post-generation-delivery-only",
+        },
+    )
 
 
 @app.get("/health")
