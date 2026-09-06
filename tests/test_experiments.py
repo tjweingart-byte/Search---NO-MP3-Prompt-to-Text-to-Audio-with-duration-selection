@@ -2198,3 +2198,96 @@ def test_a_stored_trial_keeps_its_timings_and_token_counts(tmp_path):
     assert back["usage"]["input_tokens"] == 1840
     assert back["usage"]["api_key"] == redact.MASK
     assert run.verify_clean() == []
+
+
+# --------------------------------------------------------------------------
+# Multi-topic: one arm, several topics, evidence held constant per topic
+# --------------------------------------------------------------------------
+def test_a_packet_map_answers_each_query_from_its_own_evidence(tmp_path, monkeypatch):
+    from experiments.adapters import packet as packet_mod
+
+    monkeypatch.setattr(packet_mod, "PACKETS_DIR", tmp_path)
+    for name, body in (("alpha", "EVIDENCE A"), ("beta", "EVIDENCE B")):
+        (tmp_path / f"{name}.json").write_text(json.dumps(
+            {"context": body, "sources": [], "topic": name, "category": "test"}))
+
+    adapter = packet_mod.FixedPacket()
+    adapter.packet_map = {"query one": "alpha", "query two": "beta"}
+    assert adapter.available().ok is True
+
+    first = asyncio.run(adapter.search("query one", Timeline()))
+    second = asyncio.run(adapter.search("query two", Timeline()))
+    assert first.context == "EVIDENCE A" and second.context == "EVIDENCE B"
+    assert first.detail["topic"] == "alpha" and first.detail["category"] == "test"
+
+
+def test_an_unmapped_query_fails_instead_of_borrowing_evidence(tmp_path, monkeypatch):
+    """Answering one topic from another's packet would look like a result."""
+    from experiments.adapters import packet as packet_mod
+
+    monkeypatch.setattr(packet_mod, "PACKETS_DIR", tmp_path)
+    (tmp_path / "alpha.json").write_text(json.dumps({"context": "A", "sources": []}))
+    adapter = packet_mod.FixedPacket()
+    adapter.packet_map = {"query one": "alpha"}
+    with pytest.raises(KeyError, match="No packet mapped"):
+        asyncio.run(adapter.search("an unmapped query", Timeline()))
+
+
+def test_missing_topic_packets_are_reported_before_the_run(tmp_path, monkeypatch):
+    from experiments.adapters import packet as packet_mod
+
+    monkeypatch.setattr(packet_mod, "PACKETS_DIR", tmp_path)
+    (tmp_path / "alpha.json").write_text(json.dumps({"context": "A", "sources": []}))
+    adapter = packet_mod.FixedPacket()
+    adapter.packet_map = {"q1": "alpha", "q2": "beta", "q3": "gamma"}
+    state = adapter.available()
+    assert state.ok is False
+    assert "2 of 3" in state.reason
+    assert "manifest" in state.remedy
+
+
+def test_the_multi_topic_spec_holds_the_control_constant():
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "multi_topic_thresholds.json").read_text())
+    threshold_spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "chunk_threshold_forensics.json").read_text())
+
+    assert len(spec.arms) == 1
+    arm = spec.arms[0]
+    assert arm.model == "claude-sonnet-5"
+    assert arm.params["generator"] == "benchmark"
+    assert arm.params["first_chunk_words"] == 25, "the production rule is unchanged"
+    assert arm.params["chunk_thresholds"] == [5, 10, 15, 20, 25]
+    assert arm.tts == "none"
+    assert "thinking" not in arm.params and "effort" not in arm.params
+
+    # Only the evidence varies: the single packet becomes a map.
+    before = dict(threshold_spec.arms[0].params)
+    after = dict(arm.params)
+    before.pop("packet")
+    after.pop("packet_map")
+    assert after == before, "nothing but the packet source may differ"
+
+    assert len(spec.queries) == 6
+    assert len(set(spec.queries)) == 6, "duplicate queries would double a topic"
+    assert set(arm.params["packet_map"]) == set(spec.queries)
+    assert spec.trials == 10 and spec.total_trials == 60
+    assert spec.validate() == []
+
+
+def test_every_manifest_topic_appears_in_the_spec():
+    root = pathlib.Path(__file__).resolve().parent.parent
+    manifest = json.loads((root / "experiments" / "topics" / "roadmap_v1.json").read_text())
+    spec = ExperimentSpec.from_json(
+        (root / "experiments" / "specs" / "multi_topic_thresholds.json").read_text())
+    mapping = spec.arms[0].params["packet_map"]
+
+    for topic in manifest["topics"]:
+        assert mapping[topic["query"]] == topic["packet"]
+        assert topic["category"] and topic["why"]
+    categories = {t["category"] for t in manifest["topics"]}
+    assert len(categories) == len(manifest["topics"]), "each topic is a distinct shape"
+    # The bridge topic keeps the new run comparable with the old ones.
+    assert "founder_ceos" in mapping.values()

@@ -1,0 +1,42 @@
+{
+  "name": "roadmap_v1",
+  "note": "Five query shapes that stress the opening differently, plus the founder_ceos packet already used by every earlier run so this experiment can be checked against that baseline rather than starting from nothing. Each packet is captured once with the recovered Exa parameters and then frozen: the evidence must be constant, or a difference between topics could be a difference in what the model was handed.",
+  "topics": [
+    {
+      "packet": "markets_week",
+      "category": "research-heavy / current",
+      "query": "what happened in the markets this week",
+      "why": "Moving target. The opening has to commit to a fact that was true this morning, which is where a model most often hedges."
+    },
+    {
+      "packet": "heat_pump",
+      "category": "evergreen explainer",
+      "query": "how does a heat pump work",
+      "why": "Answerable from knowledge. The risk is a textbook opening - a definition rather than a fact with a consequence."
+    },
+    {
+      "packet": "first_programmer",
+      "category": "narrow factual",
+      "query": "who wrote the first computer program",
+      "why": "One short answer. Fixed overhead dominates, and a 5-word chunk may be the entire answer - which is either ideal or absurdly abrupt."
+    },
+    {
+      "packet": "f1_recap",
+      "category": "recap / summary",
+      "query": "recap the latest Formula 1 race weekend",
+      "why": "Sequential events. Openings tend to start with scene-setting before the result, which is exactly what FAM's spec forbids."
+    },
+    {
+      "packet": "nostalgia",
+      "category": "abstract / conceptual",
+      "query": "what makes a piece of music feel nostalgic",
+      "why": "The risk case. Abstract topics invite 'picture this' openings and vague first sentences, so if any threshold breaks it should break here."
+    },
+    {
+      "packet": "founder_ceos",
+      "category": "bridge to the existing baseline",
+      "query": "Why are founder CEOs becoming harder for boards to remove?",
+      "why": "Already captured and used by every earlier run. Included so the new numbers can be checked against the verified control rather than floating free."
+    }
+  ]
+}

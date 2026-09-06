@@ -82,6 +82,45 @@ def median(values):
     return statistics.median(clean) if clean else None
 
 
+def by_topic(trials: list[dict]) -> dict:
+    """Group trials by the query that produced them."""
+    groups: dict = {}
+    for trial in trials:
+        groups.setdefault(trial.get("query", "(unknown)"), []).append(trial)
+    return groups
+
+
+def consistency(result: dict) -> dict:
+    """Per threshold: did it produce a usable-looking opening every time?
+
+    "Usable-looking" is only what can be counted - a complete sentence, not a
+    fragment, not a hedged opener. It is a filter, not a verdict: a threshold
+    that fails this is disqualified, but one that passes still has to be read.
+    """
+    out = {}
+    for threshold, row in result["rows"].items():
+        struct = row["structure"]
+        if not struct:
+            out[threshold] = {"n": 0, "clean": 0, "failures": ["never reached"]}
+            continue
+        failures = []
+        for item in struct:
+            if not item["ends_terminal"]:
+                failures.append("no terminal punctuation")
+            elif not item["starts_capital"]:
+                failures.append("lowercase start")
+            elif item["short"]:
+                failures.append(f"{item['words']} words")
+            elif item["hedged_open"]:
+                failures.append("hedged opening")
+        out[threshold] = {
+            "n": len(struct),
+            "clean": len(struct) - len(failures),
+            "failures": failures,
+        }
+    return out
+
+
 def analyse(trials: list[dict]) -> dict:
     thresholds = next((t["metrics"].get("probe_thresholds") for t in trials
                        if t["metrics"].get("probe_thresholds")), [])
@@ -198,6 +237,84 @@ def render(result: dict, examples: int) -> str:
     return "\n".join(out)
 
 
+def render_multi_topic(groups: dict, examples: int) -> str:
+    """The question this experiment exists for: which threshold holds everywhere.
+
+    A threshold is only interesting if it survives every topic. Averaging the
+    topics together would hide the one that breaks it, which is the only topic
+    that matters.
+    """
+    per_topic = {query: analyse(rows) for query, rows in groups.items()}
+    thresholds = next(iter(per_topic.values()))["thresholds"]
+
+    out = ["", f"  {len(groups)} topics, "
+           f"{sum(len(r) for r in groups.values())} successful trials", ""]
+
+    out += ["  READY TIME (median, from first token) by topic", ""]
+    header = "  " + " " * 34 + "".join(f"{t:>9}w" for t in thresholds)
+    out += [header, "  " + "-" * (34 + 10 * len(thresholds))]
+    for query, result in per_topic.items():
+        cells = ""
+        for threshold in thresholds:
+            value = result["rows"][threshold]["boundary_from_first_token"]
+            cells += f"{value:>9.3f}s" if isinstance(value, float) else f"{'—':>10}"
+        out.append(f"  {query[:32]:<34}{cells}")
+
+    out += ["", "  CHUNK WORDS (median) by topic", "", header,
+            "  " + "-" * (34 + 10 * len(thresholds))]
+    for query, result in per_topic.items():
+        cells = ""
+        for threshold in thresholds:
+            value = result["rows"][threshold]["words"]
+            cells += f"{value:>10.0f}" if isinstance(value, (int, float)) else f"{'—':>10}"
+        out.append(f"  {query[:32]:<34}{cells}")
+
+    out += ["", "  STRUCTURALLY CLEAN trials (counted checks only, not a judgement)",
+            "", header, "  " + "-" * (34 + 10 * len(thresholds))]
+    disqualified: dict = {t: [] for t in thresholds}
+    for query, result in per_topic.items():
+        cons = consistency(result)
+        cells = ""
+        for threshold in thresholds:
+            row = cons[threshold]
+            cells += f"{row['clean']:>6}/{row['n']:<4}"
+            if row["clean"] < row["n"] or row["n"] == 0:
+                disqualified[threshold].append((query, row["failures"][:2]))
+        out.append(f"  {query[:32]:<34}{cells}")
+
+    out += ["", "  TIES - thresholds returning identical text (share of trials)", ""]
+    for query, result in per_topic.items():
+        groups_seen = []
+        for threshold in thresholds:
+            same = [o for o, share in result["rows"][threshold]["same_as"].items()
+                    if share >= 0.9 and o > threshold]
+            if same:
+                groups_seen.append(f"{threshold}={'='.join(str(o) for o in same)}")
+        out.append(f"  {query[:32]:<34}{'  '.join(groups_seen) or 'all thresholds distinct'}")
+
+    out += ["", "  EARLIEST THRESHOLD PASSING THE COUNTED CHECKS ON EVERY TOPIC", ""]
+    survivor = None
+    for threshold in thresholds:
+        if not disqualified[threshold]:
+            survivor = threshold
+            break
+    for threshold in thresholds:
+        if disqualified[threshold]:
+            why = "; ".join(f"{q[:28]}: {', '.join(f)}"
+                            for q, f in disqualified[threshold][:2])
+            out.append(f"    {threshold:>3}w  disqualified - {why}")
+        else:
+            out.append(f"    {threshold:>3}w  passes the counted checks on all topics")
+    out += ["", f"  -> earliest surviving threshold: "
+            f"{str(survivor) + 'w' if survivor else 'none'}",
+            "     This is a filter, not a recommendation. Read the openings below.", ""]
+
+    for query, result in per_topic.items():
+        out += ["  " + "=" * 78, f"  TOPIC: {query}", "  " + "=" * 78]
+        out.append(render(result, examples))
+    return "\n".join(out)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("run", help="a run directory, or a trials.jsonl")
@@ -207,6 +324,12 @@ def main() -> int:
     args = parser.parse_args()
 
     trials = load_trials(pathlib.Path(args.run))
+    groups = by_topic(trials)
+    if len(groups) > 1 and not args.json:
+        print(render_multi_topic(groups, args.examples))
+        print("\n  Quality is not scored here. The counted columns narrow the "
+              "field;\n  the openings above decide it.\n")
+        return 0
     result = analyse(trials)
     if args.json:
         printable = {k: v for k, v in result.items()}

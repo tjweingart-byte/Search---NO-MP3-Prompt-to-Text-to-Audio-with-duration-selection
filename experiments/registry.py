@@ -13,9 +13,17 @@ from experiments.adapters.search import SEARCH_ADAPTERS
 from experiments.adapters.tts import TTS_ADAPTERS
 
 
-def search_adapter(name: str):
+def search_adapter(name: str, params: dict | None = None):
     if name not in SEARCH_ADAPTERS:
         raise KeyError(f"Unknown search adapter {name!r}. Known: {', '.join(sorted(SEARCH_ADAPTERS))}")
+    if name == "fixed_packet" and params:
+        # A per-arm instance, so availability can check every topic packet
+        # before the run rather than failing on trial 31.
+        from experiments.adapters.packet import FixedPacket
+
+        adapter = FixedPacket(params.get("packet") or "founder_ceos")
+        adapter.packet_map = dict(params.get("packet_map") or {})
+        return adapter
     return SEARCH_ADAPTERS[name]
 
 
@@ -62,7 +70,7 @@ def preflight(spec) -> Preflight:
         for kind, name in (("search", arm.search), ("tts", arm.tts)):
             try:
                 adapter = (
-                    search_adapter(name)
+                    search_adapter(name, arm.params)
                     if kind == "search"
                     else tts_adapter(name, arm.params.get("voice"))
                 )

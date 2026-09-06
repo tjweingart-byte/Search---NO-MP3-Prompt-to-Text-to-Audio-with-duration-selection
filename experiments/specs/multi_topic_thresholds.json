@@ -1,0 +1,49 @@
+{
+  "name": "Multi-topic threshold validation",
+  "kind": "component",
+  "arms": [
+    {
+      "name": "control-verified",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "benchmark",
+        "first_chunk_words": 25,
+        "http_trace": true,
+        "chunk_thresholds": [
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        "packet_map": {
+          "what happened in the markets this week": "markets_week",
+          "how does a heat pump work": "heat_pump",
+          "who wrote the first computer program": "first_programmer",
+          "recap the latest Formula 1 race weekend": "f1_recap",
+          "what makes a piece of music feel nostalgic": "nostalgia",
+          "Why are founder CEOs becoming harder for boards to remove?": "founder_ceos"
+        }
+      }
+    }
+  ],
+  "queries": [
+    "what happened in the markets this week",
+    "how does a heat pump work",
+    "who wrote the first computer program",
+    "recap the latest Formula 1 race weekend",
+    "what makes a piece of music feel nostalgic",
+    "Why are founder CEOs becoming harder for boards to remove?"
+  ],
+  "trials": 10,
+  "minutes": 3,
+  "stages": [
+    "generate",
+    "first_chunk"
+  ],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "Roadmap Experiment 1. One arm, six topics, ten trials each. The request is the verified control byte for byte - same Sonnet 5 model, benchmark system prompt, 220-token ceiling, no thinking and no output_config - and each topic is answered from its own frozen Exa packet, captured once with the recovered parameters so the evidence never varies between trials. Every threshold is observed on the same stream, so five thresholds cost one call. The trial still breaks at 25 words, which stays the production rule; the lower thresholds are recorded and never acted on. The question is not which threshold is fastest but which is the earliest that holds up on every topic - so the openings are saved per topic and read, and a single malformed opening at a threshold disqualifies it rather than averaging away."
+}

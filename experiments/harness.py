@@ -158,7 +158,8 @@ class Harness:
         timeline = Timeline()
         token_stream = None
         generator = None
-        search = self.search_factory(arm.search)
+        search = self.search_factory(arm.search, arm.params) \
+            if self.search_factory is registry.search_adapter else self.search_factory(arm.search)
         tts = self.tts_factory(arm.tts, arm.params.get("voice"))
         generator = self.generator_factory(arm)
 

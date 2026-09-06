@@ -160,3 +160,68 @@ def test_failed_trials_are_excluded(tmp_path):
     path = tmp_path / "trials.jsonl"
     path.write_text("\n".join(json.dumps(t) for t in rows))
     assert len(module.load_trials(path)) == 2
+
+
+def _multi_topic_fixture():
+    """Two topics: one where 10 words is clean, one where it is a fragment."""
+    good = [_trial(i, {"5": SHORT, "10": MID, "15": MID, "20": MID, "25": LONG},
+                   {5: 0.12, 10: 0.54, 15: 0.54, 20: 0.54, 25: 0.80})
+            for i in range(1, 4)]
+    for t in good:
+        t["query"] = "how does a heat pump work"
+
+    # The risk topic: at 5 and 10 the opening is a hedged fragment.
+    bad_text = "there is a feeling"
+    risky = [_trial(i, {"5": bad_text, "10": bad_text, "15": MID, "20": MID, "25": LONG},
+                    {5: 0.10, 10: 0.20, 15: 0.60, 20: 0.60, 25: 0.85})
+             for i in range(1, 4)]
+    for t in risky:
+        t["query"] = "what makes a piece of music feel nostalgic"
+    return good + risky
+
+
+def test_trials_are_grouped_by_topic():
+    module = _load()
+    groups = module.by_topic(_multi_topic_fixture())
+    assert len(groups) == 2
+    assert all(len(rows) == 3 for rows in groups.values())
+
+
+def test_consistency_disqualifies_a_threshold_that_fails_anywhere():
+    module = _load()
+    groups = module.by_topic(_multi_topic_fixture())
+    risky = module.analyse(groups["what makes a piece of music feel nostalgic"])
+    cons = module.consistency(risky)
+
+    assert cons[5]["clean"] < cons[5]["n"], "a hedged fragment must not count as clean"
+    assert cons[10]["clean"] < cons[10]["n"]
+    assert cons[15]["clean"] == cons[15]["n"]
+    assert cons[25]["clean"] == cons[25]["n"]
+
+
+def test_the_multi_topic_view_names_the_earliest_surviving_threshold():
+    module = _load()
+    text = module.render_multi_topic(module.by_topic(_multi_topic_fixture()), examples=1)
+
+    assert "READY TIME" in text and "CHUNK WORDS" in text
+    assert "STRUCTURALLY CLEAN" in text and "TIES" in text
+    assert "earliest surviving threshold: 15w" in text
+    assert "5w  disqualified" in text and "10w  disqualified" in text
+    assert "filter, not a recommendation" in text
+    # Both topics' openings are printed for reading.
+    assert "how does a heat pump work" in text
+    assert "what makes a piece of music feel nostalgic" in text
+
+
+def test_one_bad_topic_is_not_averaged_away():
+    """The topic that breaks a threshold is the only one that matters."""
+    module = _load()
+    trials = _multi_topic_fixture()
+    # Nine clean topics would not rescue the tenth.
+    for extra in range(3):
+        for t in _multi_topic_fixture()[:3]:
+            clone = dict(t)
+            clone["query"] = f"clean topic {extra}"
+            trials.append(clone)
+    text = module.render_multi_topic(module.by_topic(trials), examples=0)
+    assert "earliest surviving threshold: 15w" in text

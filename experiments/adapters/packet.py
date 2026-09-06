@@ -54,8 +54,46 @@ class FixedPacket:
 
     def __init__(self, name: str = "founder_ceos") -> None:
         self.name = name
+        #: query -> packet name, for a run that spans several topics. Set from
+        #: the arm's `packet_map` so one arm can hold every topic constant
+        #: while the topic itself varies with the query.
+        self.packet_map: dict = {}
+
+    def resolve(self, query: str, params: dict) -> str:
+        """Which packet this query should be answered from.
+
+        A `packet_map` wins, then an explicit `packet`, then the default. A
+        query that is mapped to nothing is an error rather than a silent
+        fallback: answering one topic from another topic's evidence would look
+        like a result and be nonsense.
+        """
+        mapping = params.get("packet_map") or self.packet_map
+        if mapping:
+            if query not in mapping:
+                raise KeyError(
+                    f"No packet mapped for query {query!r}. Mapped queries: "
+                    f"{', '.join(sorted(mapping))}"
+                )
+            return mapping[query]
+        return params.get("packet") or self.name
 
     def available(self) -> Availability:
+        if self.packet_map:
+            missing = [f"{q[:40]}... -> {n}" for q, n in sorted(self.packet_map.items())
+                       if not packet_path(n).exists()]
+            if missing:
+                return Availability(
+                    ok=False,
+                    reason=f"{len(missing)} of {len(self.packet_map)} topic packets "
+                           f"are missing: {'; '.join(missing[:3])}",
+                    remedy="python tools/capture_packet.py --manifest "
+                           "experiments/topics/<manifest>.json",
+                )
+            total = sum(len(json.loads(packet_path(n).read_text())["context"])
+                        for n in self.packet_map.values())
+            return Availability(
+                ok=True,
+                reason=f"{len(self.packet_map)} topic packets, {total} chars total")
         path = packet_path(self.name)
         if not path.exists():
             return Availability(
@@ -74,14 +112,17 @@ class FixedPacket:
                                             f"{len(data.get('sources') or [])} sources")
 
     async def search(self, query: str, timeline: Timeline, **params) -> SearchResult:
-        data = load_packet(params.get("packet") or self.name)
+        name = self.resolve(query, params)
+        data = load_packet(name)
         return SearchResult(
             context=data["context"],
             sources=list(data.get("sources") or []),
             searches=0,
             cost=0.0,
             detail={
-                "packet": self.name,
+                "packet": name,
+                "topic": data.get("topic"),
+                "category": data.get("category"),
                 "packet_chars": len(data["context"]),
                 "captured_at": data.get("captured_at"),
                 "replayed": True,
