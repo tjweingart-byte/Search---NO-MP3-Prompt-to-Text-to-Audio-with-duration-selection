@@ -359,11 +359,19 @@ class BenchmarkOpeningGenerator:
     the product. An arm picks one with `params={"generator": "benchmark"}`.
     """
 
-    def __init__(self, http_trace: bool = False, **_ignored) -> None:
+    def __init__(self, http_trace: bool = False, reuse_client: bool = False,
+                 pool_key: str = "default", keepalive: float | None = None,
+                 **_ignored) -> None:
         # Off by default, so the control stays exactly the call that was
         # verified. When on it only subscribes to httpcore's trace events; the
         # request is unchanged either way, which the golden-request test pins.
         self.http_trace = bool(http_trace)
+        # Off by default too: the control builds a client, uses it once and
+        # closes it. Reuse changes only which client the request travels on,
+        # never the request.
+        self.reuse_client = bool(reuse_client)
+        self.pool_key = pool_key
+        self.keepalive = keepalive
         self._usage: dict = {}
         self._timing: Optional[StreamTiming] = None
 
@@ -381,12 +389,23 @@ class BenchmarkOpeningGenerator:
     ) -> AsyncIterator[str]:
         from anthropic_client import build_async_client
 
-        client = build_async_client()
+        if self.reuse_client:
+            from experiments import client_pool
+
+            client = client_pool.acquire(
+                self.pool_key,
+                self.keepalive if self.keepalive else client_pool.KEEPALIVE_SECONDS)
+        else:
+            client = build_async_client()
+
         recorder = None
         if self.http_trace:
             from experiments import http_trace as trace_mod
 
-            recorder = trace_mod.attach(client)
+            session = trace_mod.attach(client)
+            # A pooled client is wrapped once and serves many requests, so the
+            # recorder is renewed here rather than at wrap time.
+            recorder = session.begin() if session is not None else None
         chosen = model or BENCHMARK_MODEL
         final = None
         timing = StreamTiming()
@@ -421,9 +440,14 @@ class BenchmarkOpeningGenerator:
                         else:
                             detail.update(recorder.phases(timing.dispatch))
                             detail["trace_events"] = recorder.event_log()
+                    detail["reuse_client"] = self.reuse_client
+                    detail["pool_key"] = self.pool_key if self.reuse_client else None
                     self._usage["timing"] = detail
         finally:
-            await client.close()
+            # A pooled client outlives the trial on purpose; the sweep closes
+            # it. Closing here would defeat the arm entirely.
+            if not self.reuse_client:
+                await client.close()
 
     def request_kwargs(self, model: str, query: str, context: str) -> dict:
         """The verified request, unchanged.

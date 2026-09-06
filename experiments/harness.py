@@ -37,7 +37,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s")
 
 #: Arm params the generators understand. Everything else in `params` belongs
 #: to an adapter, so it is not forwarded and cannot be silently misread.
-GENERATOR_OPTIONS = ("thinking", "effort", "first_sentence_directive", "http_trace")
+GENERATOR_OPTIONS = ("thinking", "effort", "first_sentence_directive", "http_trace",
+                     "reuse_client", "pool_key", "keepalive")
 
 
 def _generator_for(arm: Arm):
@@ -327,6 +328,11 @@ class Harness:
                         self.run.append_trial(result.to_dict())
                     if progress:
                         progress(result)
+        # Pooled clients outlive their trials by design, so the sweep is what
+        # closes them. Harmless when nothing was pooled.
+        from experiments import client_pool
+
+        await client_pool.close_all()
         return self.results
 
 
@@ -376,7 +382,8 @@ def _segments(timeline: Timeline, timing: Optional[dict]) -> dict:
     # verbatim: a phase that was not observed stays absent rather than zero.
     for key, value in timing.items():
         if key.startswith("phase_") or key in ("http_trace", "connection_reused",
-                                               "events_seen"):
+                                               "events_seen", "reuse_client",
+                                               "pool_key"):
             out[key] = value
 
     dispatch = timing.get("dispatch_perf")

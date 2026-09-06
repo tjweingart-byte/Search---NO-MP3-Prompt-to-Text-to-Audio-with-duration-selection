@@ -120,18 +120,38 @@ class TraceRecorder:
         return [{"event": name, "at": round(at - origin, 6)} for name, at in self.events]
 
 
+class TraceSession:
+    """Holds the recorder the next request should use.
+
+    A reused client is wrapped once but serves many requests, so the recorder
+    has to be swapped between them. Without this the events of every trial
+    would pile into one recorder and each trial after the first would look like
+    it had connected, uploaded and received headers several times over.
+    """
+
+    def __init__(self) -> None:
+        self.current: Optional[TraceRecorder] = TraceRecorder()
+
+    def begin(self) -> TraceRecorder:
+        """A fresh recorder for the request about to be made."""
+        self.current = TraceRecorder()
+        self.current.available = True
+        return self.current
+
+
 class _TracingTransport:
     """Delegates everything, and adds the trace extension on the way past."""
 
-    def __init__(self, inner, recorder: TraceRecorder) -> None:
+    def __init__(self, inner, session: "TraceSession") -> None:
         self._inner = inner
-        self._recorder = recorder
+        self._session = session
 
     async def handle_async_request(self, request):
         # Client-side only. httpx passes extensions to the transport; it never
         # writes them to the socket.
         try:
-            request.extensions = {**dict(request.extensions), "trace": self._recorder}
+            request.extensions = {**dict(request.extensions),
+                                  "trace": self._session.current}
         except Exception:
             pass
         return await self._inner.handle_async_request(request)
@@ -143,12 +163,14 @@ class _TracingTransport:
         return getattr(self._inner, name)
 
 
-def attach(client) -> Optional[TraceRecorder]:
+def attach(client) -> Optional["TraceSession"]:
     """Wrap an Anthropic client's transport so phases are recorded.
 
-    Returns the recorder, or None when the transport could not be reached -
-    in which case the caller records that phases are unavailable instead of
-    reporting a bucket as a measurement.
+    Returns a session whose `begin()` yields a fresh recorder per request, or
+    None when the transport could not be reached - in which case the caller
+    records that phases are unavailable instead of reporting a bucket as a
+    measurement. Wrapping twice is avoided, so a pooled client attached on
+    every trial keeps one wrapper.
     """
     http_client = getattr(client, "_client", None)
     if http_client is None:
@@ -156,10 +178,11 @@ def attach(client) -> Optional[TraceRecorder]:
     inner = getattr(http_client, "_transport", None)
     if inner is None:
         return None
-    recorder = TraceRecorder()
+    if isinstance(inner, _TracingTransport):
+        return inner._session
+    session = TraceSession()
     try:
-        http_client._transport = _TracingTransport(inner, recorder)
+        http_client._transport = _TracingTransport(inner, session)
     except Exception:
         return None
-    recorder.available = True
-    return recorder
+    return session

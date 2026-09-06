@@ -280,6 +280,7 @@ def render(spec: ExperimentSpec, analysis: dict, previous: Optional[dict] = None
     # -- forensics -----------------------------------------------------
     out += _segment_section(spec, analysis)
     out += _threshold_section(spec, analysis)
+    out += _reuse_section(spec, analysis)
 
     # -- cost ----------------------------------------------------------
     label = ("Simulated, and therefore meaningless as a cost"
@@ -408,6 +409,166 @@ def _segment_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
                          f"roughly {ft.median - tr.median:.3f}s is the model "
                          f"before it writes anything.")
             out += [note, ""]
+    return out
+
+
+#: Phases a reused connection should skip entirely.
+HANDSHAKE_PHASES = (("phase_connect", "DNS + TCP connect"), ("phase_tls", "TLS handshake"))
+
+
+def _reuse_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
+    """What connection reuse actually saved, in milliseconds and as a share.
+
+    Two measurements, and they answer different questions. The handshake cost
+    is *directly* measured - connect and TLS are present in one arm and absent
+    in the other - and needs almost no trials to be certain of. The end-to-end
+    difference is what a listener would feel, and it is noisier because model
+    latency varies far more than a handshake does. Both are reported; where
+    they disagree, the handshake figure is the sound one and the end-to-end
+    figure is the one that matters.
+    """
+    trials = [t for t in analysis.get("_trials", []) if t.get("ok")]
+    if not any(t["metrics"].get("reuse_client") is not None for t in trials):
+        return []
+    arms = [a.name for a in spec.arms]
+    if len(arms) < 2:
+        return []
+
+    def rows(arm):
+        return [t for t in trials if t["arm"] == arm]
+
+    def stat(arm, key):
+        return stats_mod.summarise([t["metrics"].get(key) for t in rows(arm)
+                                    if t["metrics"].get(key) is not None])
+
+    out = ["## Connection reuse: what it saved", "",
+           "*The two arms differ in three parameters (`reuse_client`, `pool_key`, "
+           "`keepalive`) but one intervention: keeping a single client alive. The "
+           "request itself is byte-identical, which a golden-request test pins.*", ""]
+
+    # -- did the arms actually do what they claim? --------------------
+    out += ["| arm | trials | connection reused | client |",
+            "|---|---|---|---|"]
+    reuse_rate = {}
+    for arm in arms:
+        mine = rows(arm)
+        reused = [t["metrics"].get("connection_reused") for t in mine]
+        hits = sum(1 for r in reused if r is True)
+        reuse_rate[arm] = hits / len(mine) if mine else 0.0
+        pooled = any(t["metrics"].get("reuse_client") for t in mine)
+        out.append(f"| {arm} | {len(mine)} | **{hits}/{len(mine)}** "
+                   f"({reuse_rate[arm] * 100:.0f}%) | "
+                   f"{'pooled, kept alive' if pooled else 'fresh per request'} |")
+    out.append("")
+
+    fresh = min(arms, key=lambda a: reuse_rate[a])
+    warm = max(arms, key=lambda a: reuse_rate[a])
+    if reuse_rate[warm] < 0.5:
+        out += ["⚠️ **The reuse arm did not actually reuse its connection.** "
+                "Every comparison below is therefore between two arms doing the "
+                "same thing, and the experiment has not tested what it set out "
+                "to test. Check the pool's keep-alive against the gap between "
+                "that arm's trials.", ""]
+    if reuse_rate[fresh] > 0.1:
+        out += [f"⚠️ The control arm reused a connection on "
+                f"{reuse_rate[fresh] * 100:.0f}% of trials, which it should "
+                f"never do. Treat the comparison as unsound.", ""]
+
+    # -- phase by phase -----------------------------------------------
+    phase_rows = list(HANDSHAKE_PHASES) + [
+        ("phase_local_setup", "local setup + serialisation"),
+        ("phase_upload", "request upload"),
+        ("phase_wait_for_headers", "wait for response headers"),
+        ("phase_dispatch_to_headers", "dispatch -> response headers"),
+    ]
+    out += [f"| phase | {fresh} (p50, n) | {warm} (p50, n) | difference |",
+            "|---|---|---|---|"]
+    handshake_saved = 0.0
+    handshake_incurred = {}
+    for key, label in phase_rows:
+        a, b = stat(fresh, key), stat(warm, key)
+        total_warm = len(rows(warm))
+        a_text = f"{a.median * 1000:.1f} ms (n={a.n})" if a else "—"
+        # A handshake phase is skipped on a reused connection, so the reused
+        # arm has fewer samples than trials. Taking a median over only the
+        # trials that *did* connect would report the cost as if it were paid
+        # every time, and hide the whole saving. The count is the point.
+        if b:
+            b_text = (f"{b.median * 1000:.1f} ms "
+                      f"(n={b.n} of {total_warm})")
+        else:
+            b_text = f"never incurred (0 of {total_warm})"
+
+        if key in dict(HANDSHAKE_PHASES):
+            skipped = total_warm - (b.n if b else 0)
+            handshake_incurred[label] = (b.n if b else 0, total_warm)
+            if a:
+                handshake_saved += a.median * 1000
+            diff = (f"**avoided on {skipped} of {total_warm}** trials"
+                    if skipped else "paid every time")
+        elif a and b:
+            diff = f"{(a.median - b.median) * 1000:+.1f} ms"
+        else:
+            diff = "—"
+        out.append(f"| {label} | {a_text} | {b_text} | {diff} |")
+    out.append("")
+
+    # -- the numbers a listener feels ---------------------------------
+    headline_rows = [
+        ("seg_dispatch_to_first_token", "dispatch -> first token"),
+        ("seg_first_token_to_25_words", "first token -> 25 words"),
+        ("seg_dispatch_to_boundary", "dispatch -> first speakable chunk"),
+    ]
+    out += [f"| measure | {fresh} p50 | {fresh} p95 | {warm} p50 | {warm} p95 "
+            f"| p50 saved |", "|---|---|---|---|---|---|"]
+    end_to_end_saved = None
+    baseline_total = None
+    for key, label in headline_rows:
+        a, b = stat(fresh, key), stat(warm, key)
+        if not a or not b:
+            out.append(f"| {label} | — | — | — | — | — |")
+            continue
+        saved = (a.median - b.median) * 1000
+        if key == "seg_dispatch_to_boundary":
+            end_to_end_saved, baseline_total = saved, a.median * 1000
+        out.append(f"| {label} | {a.median:.3f}s | {a.p95:.3f}s "
+                   f"| {b.median:.3f}s | {b.p95:.3f}s | **{saved:+.1f} ms** |")
+    out.append("")
+
+    # -- the arithmetic the question asked for ------------------------
+    out += ["### The saving", ""]
+    if handshake_saved:
+        share = (handshake_saved / baseline_total * 100) if baseline_total else None
+        incurred = "; ".join(f"{label} on {n} of {total}"
+                             for label, (n, total) in handshake_incurred.items())
+        line = (f"- **Handshake avoided: {handshake_saved:.1f} ms per reused "
+                f"request** (DNS + TCP + TLS, directly measured — `{fresh}` pays "
+                f"it on every trial; `{warm}` incurred {incurred})")
+        if share is not None:
+            line += (f". That is **{share:.1f}%** of `{fresh}`'s median time to "
+                     f"the first speakable chunk")
+        out.append(line)
+        out.append("  A pooled client still pays the handshake once, when it opens "
+                   "the connection. The saving is per request after that, which is "
+                   "why it matters more the more episodes a process serves.")
+    if end_to_end_saved is not None and baseline_total:
+        share = end_to_end_saved / baseline_total * 100
+        out.append(f"- **End-to-end: {end_to_end_saved:+.1f} ms** to the first "
+                   f"speakable chunk, **{share:+.1f}%** of "
+                   f"{baseline_total:.0f} ms")
+        comparison = stats_mod.bootstrap_diff(
+            [t["metrics"].get("seg_dispatch_to_boundary") for t in rows(warm)
+             if t["metrics"].get("seg_dispatch_to_boundary") is not None],
+            [t["metrics"].get("seg_dispatch_to_boundary") for t in rows(fresh)
+             if t["metrics"].get("seg_dispatch_to_boundary") is not None],
+            a_label=warm, b_label=fresh, seed=spec.seed)
+        if comparison:
+            out += ["", f"  {comparison.verdict}"]
+            if not comparison.significant:
+                out.append("  The handshake figure above is still sound: it is a "
+                           "direct measurement of a phase that either happened or "
+                           "did not, not a difference between two noisy totals.")
+    out.append("")
     return out
 
 

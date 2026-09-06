@@ -1,0 +1,64 @@
+{
+  "name": "Connection reuse A/B",
+  "kind": "component",
+  "arms": [
+    {
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "benchmark",
+        "first_chunk_words": 25,
+        "http_trace": true,
+        "packet_map": {
+          "what happened in the markets this week": "markets_week",
+          "how does a heat pump work": "heat_pump",
+          "who wrote the first computer program": "first_programmer",
+          "recap the latest Formula 1 race weekend": "f1_recap",
+          "what makes a piece of music feel nostalgic": "nostalgia",
+          "Why are founder CEOs becoming harder for boards to remove?": "founder_ceos"
+        }
+      },
+      "name": "A-fresh-client"
+    },
+    {
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "benchmark",
+        "first_chunk_words": 25,
+        "http_trace": true,
+        "packet_map": {
+          "what happened in the markets this week": "markets_week",
+          "how does a heat pump work": "heat_pump",
+          "who wrote the first computer program": "first_programmer",
+          "recap the latest Formula 1 race weekend": "f1_recap",
+          "what makes a piece of music feel nostalgic": "nostalgia",
+          "Why are founder CEOs becoming harder for boards to remove?": "founder_ceos"
+        },
+        "reuse_client": true,
+        "pool_key": "reuse_ab",
+        "keepalive": 300
+      },
+      "name": "B-reused-client"
+    }
+  ],
+  "queries": [
+    "what happened in the markets this week",
+    "how does a heat pump work",
+    "who wrote the first computer program",
+    "recap the latest Formula 1 race weekend",
+    "what makes a piece of music feel nostalgic",
+    "Why are founder CEOs becoming harder for boards to remove?"
+  ],
+  "trials": 6,
+  "minutes": 3,
+  "stages": [
+    "generate",
+    "first_chunk"
+  ],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "Connection reuse, and nothing else. Arm A is the current behaviour exactly - a client built, used once and closed, so every request pays DNS, TCP and TLS. Arm B takes one client from a pool and leaves it open. The request itself is byte identical between them: same claude-sonnet-5, same six frozen packets, same benchmark system prompt, same 220-token cap, no thinking, no output_config, no TTS, and the 25-word production chunk rule untouched. Arm B pins a 300s keep-alive because the SDK expires an idle connection after 5s and the harness alternates arms - without it the reuse arm would silently reconnect every trial and the experiment would measure nothing. So arm B is 'one client, kept alive', which is the intervention a production change would actually make. Every trial records whether the connection was really reused, so a failed arm shows as a failed arm."
+}

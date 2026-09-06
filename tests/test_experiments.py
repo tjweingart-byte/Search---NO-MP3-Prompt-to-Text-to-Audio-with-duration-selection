@@ -1831,8 +1831,11 @@ def test_the_extension_is_client_side_and_delegates_everything():
         extensions = {"timeout": {"connect": 5}}
         content = b'{"model":"claude-sonnet-5"}'
 
-    recorder = TraceRecorder()
-    transport = _TracingTransport(Inner(), recorder)
+    from experiments.http_trace import TraceSession
+
+    session = TraceSession()
+    recorder = session.begin()
+    transport = _TracingTransport(Inner(), session)
     assert asyncio.run(transport.handle_async_request(Request())) == "response"
 
     # The trace rides in extensions, which httpx never serialises.
@@ -2333,3 +2336,182 @@ def test_a_threshold_run_writes_one_self_contained_analysis():
     assert "filter, not a judgement" in text
     # Both topics present, so the per-topic view was used.
     assert spec.queries[0] in text and spec.queries[1] in text
+
+
+# --------------------------------------------------------------------------
+# Connection reuse A/B
+# --------------------------------------------------------------------------
+def test_the_two_arms_send_an_identical_request():
+    from experiments.generate import BenchmarkOpeningGenerator
+
+    fresh = BenchmarkOpeningGenerator(http_trace=True)
+    reused = BenchmarkOpeningGenerator(http_trace=True, reuse_client=True,
+                                       pool_key="ab", keepalive=300)
+    assert (fresh.request_kwargs("claude-sonnet-5", "WHY", "PACKET")
+            == reused.request_kwargs("claude-sonnet-5", "WHY", "PACKET")
+            == GOLDEN_CONTROL_REQUEST)
+    assert fresh.reuse_client is False and reused.reuse_client is True
+
+
+def test_a_pooled_client_is_built_once_and_kept():
+    from experiments import client_pool
+
+    built = []
+
+    original = client_pool.build_pooled_client
+    client_pool.build_pooled_client = lambda keepalive=300: built.append(keepalive) or object()
+    try:
+        first = client_pool.acquire("k", 300)
+        second = client_pool.acquire("k", 300)
+        other = client_pool.acquire("other", 300)
+        assert first is second, "the same key must return the same client"
+        assert other is not first
+        assert built == [300, 300], "one build per key, not per request"
+        assert client_pool.pooled_keys() == ["k", "other"]
+        assert client_pool.keepalive_for("k") == 300
+    finally:
+        client_pool.build_pooled_client = original
+        asyncio.run(client_pool.close_all())
+    assert client_pool.pooled_keys() == []
+
+
+def test_closing_the_pool_is_idempotent_and_never_raises():
+    from experiments import client_pool
+
+    class Angry:
+        async def close(self):
+            raise RuntimeError("already gone")
+
+    client_pool._CLIENTS["x"] = Angry()
+    asyncio.run(client_pool.close_all())
+    asyncio.run(client_pool.close_all())
+    assert client_pool.pooled_keys() == []
+
+
+def test_the_pool_pins_a_keepalive_longer_than_the_sdk_default():
+    """The SDK expires an idle connection after 5s and the harness alternates
+    arms, so without this the reuse arm would reconnect every trial."""
+    from anthropic._constants import DEFAULT_CONNECTION_LIMITS
+
+    from experiments import client_pool
+
+    assert DEFAULT_CONNECTION_LIMITS.keepalive_expiry == 5.0
+    assert client_pool.KEEPALIVE_SECONDS > 60
+
+
+def test_a_reused_client_gets_a_fresh_recorder_per_request():
+    """Otherwise every trial after the first would look like it reconnected."""
+    from experiments.http_trace import TraceSession, _TracingTransport
+
+    session = TraceSession()
+    seen = []
+
+    class Inner:
+        async def handle_async_request(self, request):
+            seen.append(request.extensions["trace"])
+            return "ok"
+
+    class Request:
+        extensions: dict = {}
+
+    transport = _TracingTransport(Inner(), session)
+    for _ in range(3):
+        session.begin()
+        asyncio.run(transport.handle_async_request(Request()))
+    assert len({id(r) for r in seen}) == 3, "recorders must not be shared between requests"
+
+
+def test_attaching_twice_does_not_double_wrap():
+    import anthropic
+
+    from experiments.http_trace import _TracingTransport, attach
+
+    client = anthropic.AsyncAnthropic(api_key="k")
+    first = attach(client)
+    second = attach(client)
+    assert first is second
+    assert not isinstance(client._client._transport._inner, _TracingTransport)
+
+
+def test_the_reuse_spec_varies_one_thing():
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "connection_reuse_ab.json").read_text())
+    assert [a.name for a in spec.arms] == ["A-fresh-client", "B-reused-client"]
+    fresh, reused = spec.arms
+
+    assert fresh.model == reused.model == "claude-sonnet-5"
+    assert fresh.tts == reused.tts == "none"
+    for arm in spec.arms:
+        assert arm.params["first_chunk_words"] == 25
+        assert arm.params["generator"] == "benchmark"
+        assert arm.params["http_trace"] is True
+        assert "thinking" not in arm.params and "effort" not in arm.params
+        assert len(arm.params["packet_map"]) == 6
+
+    extra = set(reused.params) - set(fresh.params)
+    assert extra == {"reuse_client", "pool_key", "keepalive"}
+    assert reused.params["keepalive"] > 5, "must outlast the SDK's 5s expiry"
+    assert len(spec.queries) == 6
+    assert spec.trials == 6 and spec.total_trials == 72
+    assert spec.validate() == []
+
+
+def test_the_report_computes_the_saving_and_its_share():
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "connection_reuse_ab.json").read_text())
+
+    def trial(arm, index, reused, phases):
+        return {"arm": arm, "query": spec.queries[0], "index": index, "ok": True,
+                "simulated": False, "usage": {}, "cost": 0.0, "artifacts": [],
+                "first_chunk_text": "x", "timeline": {"stages": []},
+                "metrics": {"reuse_client": arm.startswith("B"),
+                            "connection_reused": reused, "http_trace": "ok",
+                            "first_chunk": 1.0, **phases}}
+
+    trials = []
+    for i in range(1, 7):
+        trials.append(trial("A-fresh-client", i, False, {
+            "phase_local_setup": 0.002, "phase_connect": 0.040, "phase_tls": 0.070,
+            "phase_upload": 0.010, "phase_wait_for_headers": 0.200,
+            "phase_dispatch_to_headers": 0.322,
+            "seg_dispatch_to_first_token": 0.970,
+            "seg_first_token_to_25_words": 0.850,
+            "seg_dispatch_to_boundary": 1.820}))
+        trials.append(trial("B-reused-client", i, i > 1, {
+            "phase_local_setup": 0.002, "phase_upload": 0.010,
+            "phase_wait_for_headers": 0.200, "phase_dispatch_to_headers": 0.212,
+            "seg_dispatch_to_first_token": 0.860,
+            "seg_first_token_to_25_words": 0.850,
+            "seg_dispatch_to_boundary": 1.710}))
+
+    text = report.render(spec, report.analyse(spec, trials))
+    assert "Connection reuse: what it saved" in text
+    assert "Handshake avoided: 110.0 ms" in text
+    assert "6.0%" in text, "the handshake share of first-chunk latency"
+    assert "End-to-end: +110.0 ms" in text
+    assert "never incurred (0 of 6)" in text, "a phase the reused arm never paid"
+    assert "avoided on 6 of 6" in text
+    assert "per reused request" in text, "the saving is per request, not once"
+    assert "5/6" in text and "0/6" in text, "the reuse rate per arm"
+
+
+def test_the_report_flags_an_arm_that_did_not_actually_reuse():
+    """A silent reconnect would make the experiment measure nothing."""
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "connection_reuse_ab.json").read_text())
+    trials = []
+    for arm in ("A-fresh-client", "B-reused-client"):
+        for i in range(1, 5):
+            trials.append({"arm": arm, "query": spec.queries[0], "index": i, "ok": True,
+                           "simulated": False, "usage": {}, "cost": 0.0, "artifacts": [],
+                           "first_chunk_text": "x", "timeline": {"stages": []},
+                           "metrics": {"reuse_client": arm.startswith("B"),
+                                       "connection_reused": False, "http_trace": "ok",
+                                       "phase_connect": 0.04, "phase_tls": 0.07,
+                                       "seg_dispatch_to_boundary": 1.8}})
+    text = report.render(spec, report.analyse(spec, trials))
+    assert "did not actually reuse" in text
+    assert "has not tested what it set out to test" in text
