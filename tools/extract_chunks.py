@@ -98,39 +98,77 @@ NO_CHUNK = "(no chunk)"
 def openings_from_markdown(text: str) -> list[dict]:
     """Every recorded chunk in an openings-by-arm file, with its provenance.
 
-    The recorded text is **already** the first speakable chunk - the pipeline
-    applied the chunk rule when the trial ran and stored the result. So it is
-    taken verbatim. Re-running `first_chunk_ready` over it would at best be a
-    no-op and at worst cut it short at an earlier sentence end, which would
-    quietly shorten the very thing being timed.
+    **A chunk can span several markdown lines.** `first_chunk_ready` returns
+    `buffer[:index + 1].strip()`, which strips only the ends - so any newline
+    the model wrote inside its opening survives into the recorded chunk, and
+    the report writes that chunk inline. A model that breaks a paragraph after
+    its first sentence therefore produces a row like:
 
-    The word count the report printed is checked against the text. A mismatch
-    means the line was parsed wrongly, and it is reported rather than absorbed.
+          1. (40w) Monza gave us one for the history books this weekend, and if
+        you were watching you already know why.
+
+        The rest of it continues here.
+
+    Reading only the first line gave 23 words where the report said 40. So a
+    row runs from its numbered line until the next structural marker - another
+    numbered line, a query, an arm heading, or the end - and the lines between
+    are rejoined exactly as the model wrote them, newlines included, because
+    that is the string FAM would hand to a voice.
+
+    The recorded text is **already** the first speakable chunk; the rule ran
+    when the trial ran. Re-running it here would at best be a no-op and at
+    worst cut it at an earlier sentence end.
+
+    The word count the report printed is checked against the reconstruction by
+    the caller. That check is what makes this parse trustworthy rather than
+    plausible: if the reconstruction is wrong, nothing is written.
     """
+    lines = text.splitlines()
     out, arm, query = [], None, None
-    for line in text.splitlines():
-        chunk = _CHUNK.match(line)
-        if chunk:
-            index, stated, flags, body = chunk.groups()
-            body = body.strip()
-            if not body or body == NO_CHUNK:
-                continue
-            out.append({
-                "text": body,
-                "stated_words": int(stated),
-                "truncated": "truncated" in flags,
-                "arm": arm or "unlabelled",
-                "query": query or "(unknown)",
-                "trial": int(index),
-            })
-            continue
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+
         heading = _ARM.match(line)
         if heading:
             arm, query = heading.group(1), None
+            index += 1
             continue
+
         asked = _QUERY.match(line)
         if asked:
             query = asked.group(1)
+            index += 1
+            continue
+
+        chunk = _CHUNK.match(line)
+        if not chunk:
+            index += 1
+            continue
+
+        number, stated, flags, first = chunk.groups()
+        body = [first]
+        index += 1
+        while index < len(lines):
+            following = lines[index]
+            if (_CHUNK.match(following) or _QUERY.match(following)
+                    or _ARM.match(following)):
+                break
+            body.append(following)
+            index += 1
+
+        recovered = "\n".join(body).strip()
+        if not recovered or recovered == NO_CHUNK:
+            continue
+        out.append({
+            "text": recovered,
+            "stated_words": int(stated),
+            "truncated": "truncated" in flags,
+            "arm": arm or "unlabelled",
+            "query": query or "(unknown)",
+            "trial": int(number),
+            "lines": len(body),
+        })
     return out
 
 
@@ -147,7 +185,7 @@ def extract(results_dir: pathlib.Path, words: int) -> list[dict]:
             "  Expected a file whose name contains 'openings', written by\n"
             "  tools/preserve_run.py from the run's artifacts.")
 
-    seen, chunks, dropped, miscounted = {}, [], 0, []
+    seen, chunks, short, miscounted = {}, [], [], []
     for path in sources:
         for row in openings_from_markdown(path.read_text(encoding="utf-8")):
             text = row["text"]
@@ -155,9 +193,12 @@ def extract(results_dir: pathlib.Path, words: int) -> list[dict]:
             if count != row["stated_words"]:
                 miscounted.append((row["stated_words"], count, text[:60]))
             if count < words:
-                # Below the threshold this run used. Real, but not a chunk the
-                # pipeline would have spoken at this setting.
-                dropped += 1
+                # Under a `words`-word rule every recorded chunk should clear
+                # `words`: first_chunk_ready returns None otherwise, and the
+                # report writes "(no chunk)". So a short chunk is not routine -
+                # it is either a truncated response or an unexplained one, and
+                # both are named below rather than counted away.
+                short.append({**row, "words": count})
                 continue
             if text in seen:
                 seen[text]["also_from"].append(f"{row['arm']}/{row['trial']}")
@@ -168,21 +209,54 @@ def extract(results_dir: pathlib.Path, words: int) -> list[dict]:
                 "chars": len(text),
                 "bucket": None,          # assigned once the corpus is complete
                 "truncated_response": row["truncated"],
+                # >1 means the model wrote a newline inside its own chunk.
+                "lines": row.get("lines", 1),
                 "source": f"{path.name}:{row['arm']}:{row['query']}:{row['trial']}",
                 "also_from": [],
             }
             seen[text] = entry
             chunks.append(entry)
 
-    if dropped:
-        print(f"  {dropped} recorded chunk(s) below {words} words, not used")
+    if short:
+        _report_short(short, words)
     if miscounted:
         stated, got, sample = miscounted[0]
         raise SystemExit(
-            f"parse mismatch: the report says {stated} words, the parsed text "
-            f"has {got}\n  {sample!r}\n"
-            "  The parser is reading these lines wrongly. Nothing was written.")
+            f"parse mismatch on {len(miscounted)} row(s): the report says "
+            f"{stated} words, the reconstructed text has {got}\n  {sample!r}\n"
+            "  The parser is reading these rows wrongly. Nothing was written.")
     return chunks
+
+
+def _report_short(short: list[dict], words: int) -> None:
+    """Name every sub-threshold chunk and say which are explained.
+
+    Dropping these quietly is how a corpus ends up unrepresentative without
+    anyone noticing. A truncated response explains a short chunk; nothing else
+    does, so anything unexplained is called out as a defect to investigate
+    rather than a rounding error.
+    """
+    truncated = [r for r in short if r["truncated"]]
+    unexplained = [r for r in short if not r["truncated"]]
+
+    print(f"\n  {len(short)} recorded chunk(s) below the {words}-word rule, "
+          "not used in the corpus:")
+    for row in sorted(short, key=lambda r: r["words"]):
+        why = "response hit its token cap" if row["truncated"] else "UNEXPLAINED"
+        print(f"    {row['words']:>3}w  {row['arm']}/{row['query'][:32]}"
+              f"/{row['trial']}  - {why}")
+    if truncated:
+        print(f"\n  {len(truncated)} are explained: the response stopped at "
+              "max_tokens, so the text never reached a sentence end past "
+              f"{words} words.")
+    if unexplained:
+        print(f"\n  {len(unexplained)} are NOT explained. Under a {words}-word "
+              "rule first_chunk_ready returns None rather than a short chunk, "
+              "and the report writes '(no chunk)'. A short chunk that is not "
+              "truncated means the run used a different threshold, or this "
+              "parser is still wrong. Worth checking before trusting the "
+              "corpus.")
+    print()
 
 
 def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
@@ -219,9 +293,17 @@ def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
           f"{sorted(words)[len(words) // 2]}")
     print(f"  arms        {len(arms)}: {', '.join(arms)}")
     print(f"  topics      {len(topics)}")
+    multiline = [c for c in chunks if c.get("lines", 1) > 1]
     if truncated:
-        print(f"  note        {len(truncated)} came from a response that hit "
-              "its token cap")
+        print(f"  truncated   {len(truncated)} of {len(chunks)} came from a "
+              "response that hit its token cap")
+        for chunk in truncated[:5]:
+            print(f"                {chunk['words']:>3}w  {chunk['source']}")
+    else:
+        print("  truncated   none - no chunk came from a capped response")
+    if multiline:
+        print(f"  multi-line  {len(multiline)} contain a newline the model "
+              "wrote; sent to the voice as recorded")
 
     print(f"\n  {'bucket':<8}{'n':>4}{'words':>12}")
     for name in BUCKET_NAMES:

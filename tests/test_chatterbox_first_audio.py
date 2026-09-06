@@ -130,6 +130,75 @@ def test_the_parser_matches_the_generator_that_writes_the_file(tmp_path):
     assert chunks[0]["source"].startswith("openings_by_arm.md:A-control:why tides")
 
 
+def test_a_chunk_that_spans_lines_is_reconstructed_whole(tmp_path):
+    """The reported failure: "says 40 words, the parsed text has 23".
+
+    `first_chunk_ready` strips only the ends, so a newline the model wrote
+    inside its opening survives into the recorded chunk and the report writes
+    it inline across several markdown lines. Taking the first line alone gave
+    a short fragment that still looked like prose.
+    """
+    text = ("Monza gave us one for the history books this weekend, and if you "
+            "only saw the final classification you missed the whole story of "
+            "it.\n\nThe pass that decided it came on lap forty six.")
+    assert "\n" in text and len(text.split()) == 35
+    _openings_file(tmp_path, [{"arm": "A-control", "query": "f1", "text": text}])
+
+    chunks = extract_chunks.extract(tmp_path, words=25)
+    assert len(chunks) == 1
+    assert chunks[0]["words"] == 35
+    # Rejoined as the model wrote it: this is the string a voice would receive.
+    assert chunks[0]["text"] == text
+    assert chunks[0]["lines"] > 1
+
+
+def test_a_multi_line_chunk_does_not_swallow_the_next_row(tmp_path):
+    """Reconstruction must stop at the next structural marker, not run on."""
+    spanning = ("First part of it here across a break.\n\nSecond part of it "
+                "continues after the break and ends properly.")
+    plain = " ".join(f"w{i}" for i in range(30)) + " end."
+    _openings_file(tmp_path, [
+        {"arm": "A", "query": "q", "text": spanning, "index": 1},
+        {"arm": "A", "query": "q", "text": plain, "index": 2}])
+
+    chunks = extract_chunks.extract(tmp_path, words=10)
+    assert len(chunks) == 2
+    assert chunks[0]["text"] == spanning
+    assert chunks[1]["text"] == plain
+
+
+def test_a_multi_line_chunk_at_the_end_of_an_arm_stops_at_the_heading(tmp_path):
+    spanning = "Across a break here.\n\nAnd the rest of it lands here."
+    plain = " ".join(f"w{i}" for i in range(30)) + " end."
+    _openings_file(tmp_path, [
+        {"arm": "A", "query": "q", "text": spanning, "index": 1},
+        {"arm": "B", "query": "q", "text": plain, "index": 1}])
+
+    chunks = extract_chunks.extract(tmp_path, words=5)
+    by_arm = {c["source"].split(":")[1]: c for c in chunks}
+    assert by_arm["A"]["text"] == spanning
+    assert "## B" not in by_arm["A"]["text"]
+
+
+def test_short_chunks_are_named_with_their_provenance(tmp_path, capsys):
+    """They must never be counted away without an explanation."""
+    long_enough = " ".join(f"w{i}" for i in range(30)) + " end."
+    _openings_file(tmp_path, [
+        {"arm": "A-control", "query": "q", "text": long_enough, "index": 1},
+        {"arm": "E-max-tokens-96", "query": "q", "index": 1,
+         "text": "Cut off early here.", "truncated": True},
+        {"arm": "B-thinking-off", "query": "q", "index": 1,
+         "text": "Short for no reason."}])
+
+    extract_chunks.extract(tmp_path, words=25)
+    out = capsys.readouterr().out
+    assert "2 recorded chunk(s) below the 25-word rule" in out
+    assert "E-max-tokens-96/q/1  - response hit its token cap" in out
+    assert "B-thinking-off/q/1  - UNEXPLAINED" in out
+    assert "1 are explained" in out
+    assert "1 are NOT explained" in out
+
+
 def test_the_recorded_chunk_is_taken_verbatim_not_re_chunked(tmp_path):
     """It is already the output of the chunk rule; applying it again truncates.
 
