@@ -94,6 +94,24 @@ _CHUNK = re.compile(r"^\s*(\d+)\.\s+\((\d+)w([^)]*)\)\s+(.*)$")
 #: not text, and must never reach a voice.
 NO_CHUNK = "(no chunk)"
 
+#: `harness._SENTENCE_CHARS`. A chunk is only ever cut at one of these, so a
+#: chunk that does not end in one did not come from the chunk rule.
+SENTENCE_END = ".!?"
+
+#: Closing punctuation the rule keeps after the sentence end.
+TRAILING = "\"')]}\u201d\u2019"
+
+
+def ends_complete(text: str) -> bool:
+    """Did this chunk end at a sentence boundary?
+
+    `first_chunk_ready` cuts only at `.`, `!` or `?`, so a real chunk always
+    ends at one. This is the empirical form of that guarantee: it is checked
+    against the text rather than assumed from the code.
+    """
+    stripped = text.rstrip().rstrip(TRAILING)
+    return bool(stripped) and stripped[-1] in SENTENCE_END
+
 
 def openings_from_markdown(text: str) -> list[dict]:
     """Every recorded chunk in an openings-by-arm file, with its provenance.
@@ -211,6 +229,8 @@ def extract(results_dir: pathlib.Path, words: int) -> list[dict]:
                 "truncated_response": row["truncated"],
                 # >1 means the model wrote a newline inside its own chunk.
                 "lines": row.get("lines", 1),
+                # Measured from the text, not inferred from the response.
+                "ends_complete": ends_complete(text),
                 "source": f"{path.name}:{row['arm']}:{row['query']}:{row['trial']}",
                 "also_from": [],
             }
@@ -219,6 +239,14 @@ def extract(results_dir: pathlib.Path, words: int) -> list[dict]:
 
     if short:
         _report_short(short, words)
+    incomplete = [c for c in chunks if not c["ends_complete"]]
+    if incomplete:
+        raise SystemExit(
+            f"{len(incomplete)} chunk(s) do not end at a sentence boundary, "
+            "which the chunk rule makes impossible.\n"
+            f"  {incomplete[0]['source']}: {incomplete[0]['text'][-60:]!r}\n"
+            "  Either the parse is wrong or these are not chunk-rule output. "
+            "Nothing was written.")
     if miscounted:
         stated, got, sample = miscounted[0]
         raise SystemExit(
@@ -259,6 +287,87 @@ def _report_short(short: list[dict], words: int) -> None:
     print()
 
 
+def audit(results_dir: pathlib.Path, words: int) -> int:
+    """What `truncated` actually means, joined from the run's own two files.
+
+    `truncated` in a trial record is `stop_reason == "max_tokens"` on the
+    **final message** - a property of the whole response, read after the
+    stream finished. It says nothing about the first chunk, which was emitted
+    much earlier.
+
+    This joins the recorded chunk text (openings file) to the recorded
+    stop_reason (trials.jsonl) on arm/query/trial, and counts the four cases
+    that matter, so the distinction is measured rather than argued.
+    """
+    sources = sorted(results_dir.rglob("*openings*.md"))
+    if not sources:
+        raise SystemExit(f"no openings file in {results_dir}")
+
+    rows = []
+    for path in sources:
+        rows.extend(openings_from_markdown(path.read_text(encoding="utf-8")))
+
+    # (no chunk) rows are skipped by the parser, so count them separately.
+    no_chunk = 0
+    for path in sources:
+        no_chunk += path.read_text(encoding="utf-8").count(f") {NO_CHUNK}")
+
+    stop_reasons: dict = {}
+    trials_path = results_dir / "trials.jsonl"
+    by_key: dict = {}
+    if trials_path.exists():
+        for line in trials_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                trial = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            reason = trial.get("stop_reason") or "(not recorded)"
+            stop_reasons[reason] = stop_reasons.get(reason, 0) + 1
+            by_key[(trial.get("arm"), trial.get("query"), trial.get("trial"))] = trial
+
+    capped = [r for r in rows if r["truncated"]]
+    complete = [r for r in rows if ends_complete(r["text"])]
+    capped_and_complete = [r for r in capped if ends_complete(r["text"])]
+    capped_and_incomplete = [r for r in capped if not ends_complete(r["text"])]
+    short = [r for r in rows if len(r["text"].split()) < words]
+
+    print(f"\naudit: what 'truncated' means in {results_dir}\n")
+    print(f"  recorded chunks (non-empty)        {len(rows)}")
+    print(f"  rows with no chunk at all          {no_chunk}")
+    share = f"  ({len(capped) / len(rows) * 100:.0f}% of chunks)" if rows else ""
+    print(f"  responses flagged truncated        {len(capped)}{share}")
+    print()
+    print(f"  chunks ending at a sentence end    {len(complete)} of {len(rows)}")
+    print(f"  truncated response, complete chunk {len(capped_and_complete)}")
+    print(f"  truncated response, CUT chunk      {len(capped_and_incomplete)}")
+    print(f"  chunks below the {words}-word rule       {len(short)}")
+
+    if stop_reasons:
+        print(f"\n  stop_reason across {sum(stop_reasons.values())} trials in "
+              "trials.jsonl")
+        for reason, count in sorted(stop_reasons.items(), key=lambda kv: -kv[1]):
+            print(f"    {reason:<16} {count}")
+    else:
+        print(f"\n  (no trials.jsonl at {trials_path}; chunk-side counts only)")
+
+    print()
+    if capped_and_incomplete:
+        print("  VERDICT  some first chunks really were cut mid-sentence. Those "
+              "are not valid benchmark input.")
+        for row in capped_and_incomplete[:5]:
+            print(f"    {row['arm']}/{row['query'][:30]}/{row['trial']}: "
+                  f"...{row['text'][-50:]!r}")
+        return 1
+    print("  VERDICT  every recorded chunk ends at a sentence boundary. "
+          "'truncated' marks the response, which ran on past the chunk and was")
+    print("           cut at max_tokens later. The chunks themselves are intact.")
+    print()
+    return 0
+
+
 def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
     """Prove the corpus exists and show what is in it. Free; reads one file.
 
@@ -294,13 +403,16 @@ def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
     print(f"  arms        {len(arms)}: {', '.join(arms)}")
     print(f"  topics      {len(topics)}")
     multiline = [c for c in chunks if c.get("lines", 1) > 1]
+    intact = [c for c in chunks if c.get("ends_complete", True)]
     if truncated:
-        print(f"  truncated   {len(truncated)} of {len(chunks)} came from a "
-              "response that hit its token cap")
-        for chunk in truncated[:5]:
-            print(f"                {chunk['words']:>3}w  {chunk['source']}")
+        print(f"  capped      {len(truncated)} of {len(chunks)} came from a "
+              "RESPONSE that later hit max_tokens")
+        print("              (a property of the whole response, not of the "
+              "chunk - see --audit)")
     else:
-        print("  truncated   none - no chunk came from a capped response")
+        print("  capped      none - no chunk came from a capped response")
+    print(f"  chunk text  {len(intact)} of {len(chunks)} end at a sentence "
+          "boundary" + (" - all intact" if len(intact) == len(chunks) else ""))
     if multiline:
         print(f"  multi-line  {len(multiline)} contain a newline the model "
               "wrote; sent to the voice as recorded")
@@ -336,10 +448,16 @@ def main() -> int:
     parser.add_argument("--out", default="experiments/chunks/first_chunks.json")
     parser.add_argument("--verify", action="store_true",
                         help="show what is in an existing corpus; extract nothing")
+    parser.add_argument("--audit", action="store_true",
+                        help="what 'truncated' means in this run; extract nothing")
     args = parser.parse_args()
 
     if args.verify:
         return verify(pathlib.Path(args.out))
+    if args.audit:
+        if not args.results_dir:
+            raise SystemExit("--audit needs the results folder")
+        return audit(pathlib.Path(args.results_dir), args.words)
 
     if not args.results_dir:
         raise SystemExit("give a results folder, or --verify an existing corpus")

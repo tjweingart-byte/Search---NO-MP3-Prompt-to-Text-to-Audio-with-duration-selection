@@ -180,6 +180,52 @@ def test_a_multi_line_chunk_at_the_end_of_an_arm_stops_at_the_heading(tmp_path):
     assert "## B" not in by_arm["A"]["text"]
 
 
+def test_truncated_marks_the_response_not_the_chunk(tmp_path, capsys):
+    """The question behind 'truncated 100 of 109'.
+
+    `truncated` is `stop_reason == "max_tokens"` on the final message - read
+    after the stream ended, about the whole response. The first chunk was
+    emitted long before. The audit has to say so from the text, not assert it.
+    """
+    text = " ".join(f"w{i}" for i in range(30)) + " and it ends here."
+    _openings_file(tmp_path, [
+        {"arm": "A-control", "query": "q", "text": text, "truncated": True}])
+
+    assert extract_chunks.audit(tmp_path, words=25) == 0
+    out = capsys.readouterr().out
+    assert "truncated response, complete chunk 1" in out
+    assert "truncated response, CUT chunk      0" in out
+    assert "The chunks themselves are intact." in out
+
+
+def test_the_audit_fails_when_a_chunk_really_was_cut(tmp_path, capsys):
+    """Otherwise the reassurance is worthless."""
+    cut = " ".join(f"w{i}" for i in range(30)) + " and then it stops mid"
+    _openings_file(tmp_path, [
+        {"arm": "E", "query": "q", "text": cut, "truncated": True}])
+
+    assert extract_chunks.audit(tmp_path, words=25) == 1
+    assert "really were cut mid-sentence" in capsys.readouterr().out
+
+
+def test_extraction_refuses_a_chunk_that_is_not_sentence_ended(tmp_path):
+    """The chunk rule cuts only at . ! ? - anything else is not its output."""
+    cut = " ".join(f"w{i}" for i in range(30)) + " and then it stops mid"
+    _openings_file(tmp_path, [{"arm": "E", "query": "q", "text": cut}])
+
+    with pytest.raises(SystemExit) as caught:
+        extract_chunks.extract(tmp_path, words=25)
+    assert "do not end at a sentence boundary" in str(caught.value)
+
+
+def test_sentence_end_detection_allows_closing_punctuation():
+    assert extract_chunks.ends_complete("It ended here.")
+    assert extract_chunks.ends_complete('He said "it ended here."')
+    assert extract_chunks.ends_complete("Did it end here?")
+    assert not extract_chunks.ends_complete("It did not end here")
+    assert not extract_chunks.ends_complete("It ended with a comma,")
+
+
 def test_short_chunks_are_named_with_their_provenance(tmp_path, capsys):
     """They must never be counted away without an explanation."""
     long_enough = " ".join(f"w{i}" for i in range(30)) + " end."
