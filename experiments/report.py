@@ -417,6 +417,54 @@ def _segment_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
 HANDSHAKE_PHASES = (("phase_connect", "DNS + TCP connect"), ("phase_tls", "TLS handshake"))
 
 
+def _warm_transport_section(arms, rows) -> list[str]:
+    """Every arm pooled: report reuse as a validity check, not a saving.
+
+    The question here is not "what did reuse buy" - nothing is being compared
+    against a fresh client. It is "was the transport actually held constant",
+    and the answer is the number of connections the whole run opened. One is
+    the target. The first trial executed pays it, so that arm shows one miss
+    and every later arm shows none; that pattern is the proof, not a fault.
+    """
+    out = ["## Transport check: was the connection held constant?", "",
+           "*Every arm in this experiment is pooled onto one client, so this is "
+           "not a reuse A/B. Reuse is a precondition here: it is what makes the "
+           "arms comparable on anything other than transport.*", "",
+           "| arm | trials | connection reused | new connections opened |",
+           "|---|---|---|---|"]
+    opened_total = 0
+    trials_total = 0
+    for arm in arms:
+        mine = rows(arm)
+        reused = [t["metrics"].get("connection_reused") for t in mine]
+        hits = sum(1 for r in reused if r is True)
+        known = [r for r in reused if r is not None]
+        opened = sum(1 for r in known if r is False)
+        opened_total += opened
+        trials_total += len(mine)
+        rate = hits / len(mine) * 100 if mine else 0.0
+        out.append(f"| {arm} | {len(mine)} | **{hits}/{len(mine)}** "
+                   f"({rate:.0f}%) | {opened} |")
+    out.append("")
+
+    if opened_total == 1:
+        out += [f"**One connection served all {trials_total} trials.** The single "
+                "handshake was paid by the first trial executed, which is why "
+                "exactly one arm shows a rate below 100%. Transport is held "
+                "constant and any difference between arms is generation-side.", ""]
+    elif opened_total == 0:
+        out += ["No trial recorded opening a connection. Either the trace did not "
+                "attach or the pool was warm before the run; the transport claim "
+                "is unverified rather than confirmed.", ""]
+    else:
+        out += [f"⚠️ **{opened_total} connections were opened across "
+                f"{trials_total} trials.** The transport was not constant, so "
+                "part of any difference between arms may be handshake cost "
+                "rather than generation. Check the pool keep-alive against the "
+                "gap between trials before reading the arm comparison.", ""]
+    return out
+
+
 def _reuse_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
     """What connection reuse actually saved, in milliseconds and as a share.
 
@@ -441,6 +489,16 @@ def _reuse_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
     def stat(arm, key):
         return stats_mod.summarise([t["metrics"].get(key) for t in rows(arm)
                                     if t["metrics"].get(key) is not None])
+
+    # An experiment where *every* arm is pooled is not a fresh-vs-warm A/B; it
+    # is an experiment holding transport constant so something else can vary.
+    # Reading it as an A/B picks the lowest-reuse arm and calls it the control,
+    # then warns that the control reused a connection "which it should never
+    # do" - which is exactly backwards: reuse is the design there, and the arm
+    # that goes first is the one that opens the single connection, so its rate
+    # is the only one below 100%.
+    if all(any(t["metrics"].get("reuse_client") for t in rows(a)) for a in arms):
+        return _warm_transport_section(arms, rows)
 
     out = ["## Connection reuse: what it saved", "",
            "*The two arms differ in three parameters (`reuse_client`, `pool_key`, "

@@ -2583,6 +2583,79 @@ def test_each_arm_differs_from_the_control_by_exactly_one_request_key():
             f"{arm.name} should differ only on {expected[arm.name]}, got {differing}")
 
 
+def _pooled_trials(arms, per_arm=24):
+    """A warm-client run: one connection, opened by the first trial executed."""
+    trials, first = [], True
+    for index in range(per_arm):
+        for arm in arms:
+            trials.append({
+                "ok": True, "arm": arm,
+                "metrics": {
+                    "reuse_client": True,
+                    "connection_reused": not first,
+                    "seg_dispatch_to_boundary": 2.4,
+                },
+            })
+            first = False
+    return trials
+
+
+def test_an_all_pooled_experiment_is_not_read_as_a_reuse_ab():
+    """The false alarm on the warm first-token run.
+
+    Every arm was pooled by design. The section picked the lowest-reuse arm as
+    if it were a fresh-client control and warned that it "should never" reuse -
+    when 23/24 is precisely what one connection for the whole run looks like
+    from the arm that went first.
+    """
+    arms = ["A-control", "B-thinking-off", "C-effort-low"]
+    spec = ExperimentSpec(name="warm", trials=24, minutes=3, queries=["q"],
+                          arms=[Arm(a, search="none", tts="none",
+                                    params={"reuse_client": True}) for a in arms])
+    text = "\n".join(report._reuse_section(
+        spec, {"_trials": _pooled_trials(arms)}))
+
+    assert "should never do" not in text
+    assert "Treat the comparison as unsound" not in text
+    assert "One connection served all 72 trials" in text
+    # The arm that went first is the one that opened it; that is the evidence.
+    assert "23/24" in text and "24/24" in text
+
+
+def test_a_warm_run_that_reconnects_is_still_flagged():
+    """The check has to keep its teeth, or it is only decoration."""
+    arms = ["A", "B"]
+    trials = _pooled_trials(arms, per_arm=10)
+    for t in trials[4:8]:
+        t["metrics"]["connection_reused"] = False
+    spec = ExperimentSpec(name="warm", trials=10, minutes=3, queries=["q"],
+                          arms=[Arm(a, search="none", tts="none",
+                                    params={"reuse_client": True}) for a in arms])
+    text = "\n".join(report._reuse_section(spec, {"_trials": trials}))
+    assert "5 connections were opened" in text
+    assert "transport was not constant" in text
+
+
+def test_a_real_fresh_vs_pooled_ab_still_reports_the_saving():
+    """The A/B path must be untouched by the all-pooled special case."""
+    trials = []
+    for index in range(10):
+        trials.append({"ok": True, "arm": "fresh",
+                       "metrics": {"reuse_client": False, "connection_reused": False,
+                                   "phase_tls": 0.05,
+                                   "seg_dispatch_to_boundary": 2.6}})
+        trials.append({"ok": True, "arm": "warm",
+                       "metrics": {"reuse_client": True,
+                                   "connection_reused": index > 0,
+                                   "seg_dispatch_to_boundary": 2.4}})
+    spec = ExperimentSpec(name="ab", trials=10, minutes=3, queries=["q"],
+                          arms=[Arm("fresh", search="none", tts="none"),
+                                Arm("warm", search="none", tts="none",
+                                    params={"reuse_client": True})])
+    text = "\n".join(report._reuse_section(spec, {"_trials": trials}))
+    assert "Connection reuse: what it saved" in text
+
+
 def test_a_missing_spec_file_is_an_error_not_an_english_request():
     """The fault that ran the wrong experiment.
 
