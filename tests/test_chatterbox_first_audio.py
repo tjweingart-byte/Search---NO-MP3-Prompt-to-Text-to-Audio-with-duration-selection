@@ -131,3 +131,32 @@ def test_buckets_cover_every_length():
     assert extract_chunks.bucket_for(20) == "medium"
     assert extract_chunks.bucket_for(45) == "long"
     assert extract_chunks.bucket_for(5000) == "very long"
+
+
+def test_preflight_does_not_take_a_named_device_on_trust(monkeypatch, capsys):
+    """It passed `--device mps` on a Linux box with no Metal.
+
+    `resolve_device` honours an explicit name by design - that is the escape
+    hatch for timing CPU deliberately. The preflight has to ask the machine.
+    """
+    import pathlib as _pathlib
+
+    from experiments.adapters import chatterbox_impl
+    from tools import chatterbox_first_audio as runner
+
+    monkeypatch.setattr(chatterbox_impl, "available_devices",
+                        lambda: {"cpu": True, "cuda": False, "mps": False})
+    assert runner.preflight(_pathlib.Path("nope.json"), "mps") == 1
+    assert "device 'mps' exists on this machine" in capsys.readouterr().out
+
+
+def test_preflight_reports_a_missing_corpus_with_the_commands_to_fix_it(
+        monkeypatch, capsys):
+    import pathlib as _pathlib
+
+    from tools import chatterbox_first_audio as runner
+
+    runner.preflight(_pathlib.Path("definitely-absent.json"), None)
+    out = capsys.readouterr().out
+    assert "chunk corpus present" in out
+    assert "tools/extract_chunks.py" in out

@@ -90,6 +90,77 @@ def prepare_local(device: str) -> dict:
     }
 
 
+def preflight(chunks_path: pathlib.Path, device: str | None) -> int:
+    """Everything that can fail, checked before anything slow starts.
+
+    A benchmark that dies twenty minutes in - on a missing package, an absent
+    corpus, or a device that quietly became CPU - has cost more than the run
+    was worth. None of these checks loads a model or downloads a weight.
+    """
+    ok = True
+
+    def check(label, good, detail=""):
+        nonlocal ok
+        ok &= bool(good)
+        print(f"  {'ok  ' if good else 'FAIL'}  {label}"
+              + (f"  {detail}" if detail else ""))
+
+    print("\npreflight\n")
+
+    try:
+        import torch
+        check("torch importable", True, torch.__version__)
+        built = torch.backends.mps.is_built()
+        avail = torch.backends.mps.is_available()
+        check("MPS built into this torch", built)
+        check("MPS available on this machine", avail)
+        if built and not avail:
+            print("        torch has MPS but the machine does not offer it; "
+                  "Chatterbox would fall back to CPU and the run would refuse.")
+    except ImportError:
+        check("torch importable", False,
+              "pip install -r experiments/requirements-chatterbox.txt")
+
+    try:
+        import importlib
+        importlib.import_module(impl.TURBO_MODULE)
+        check(f"{impl.TURBO_MODULE} importable", True)
+    except ImportError as exc:
+        check(f"{impl.TURBO_MODULE} importable", False, str(exc))
+
+    # `resolve_device` honours an explicitly named device without asking the
+    # machine whether it has one, which is right for the runner and wrong here:
+    # naming --device mps on a box with no Metal passed this check until it was
+    # made to consult available_devices().
+    resolved, explicit = impl.resolve_device(device)
+    devices = impl.available_devices()
+    check(f"device {resolved!r} exists on this machine", devices.get(resolved, False),
+          "available: " + ", ".join(k for k, v in devices.items() if v))
+    check("device is not CPU", resolved != "cpu" or explicit, resolved)
+
+    if chunks_path.exists():
+        try:
+            chunks = json.loads(chunks_path.read_text(encoding="utf-8"))["chunks"]
+        except Exception as exc:
+            check("chunk corpus readable", False, str(exc))
+            chunks = []
+        buckets = sorted({c["bucket"] for c in chunks})
+        check("chunk corpus present", bool(chunks), f"{len(chunks)} chunks")
+        check("all three length buckets represented",
+              {"short", "medium", "long"} <= set(buckets), ", ".join(buckets))
+    else:
+        check("chunk corpus present", False, f"{chunks_path} does not exist")
+        print("        python tools/preserve_run.py --latest --as warm_first_token")
+        print("        python tools/extract_chunks.py experiments/results/warm_first_token")
+
+    print()
+    if ok:
+        print("  preflight ok - the benchmark can run.\n")
+        return 0
+    print("  preflight failed - fix the above before running.\n")
+    return 1
+
+
 def load_chunks(path: pathlib.Path) -> list[dict]:
     if not path.exists():
         raise SystemExit(
@@ -195,7 +266,12 @@ def main() -> int:
     parser.add_argument("--trials", type=int, default=5)
     parser.add_argument("--device", help="cuda / mps; never cpu unless named")
     parser.add_argument("--out", help="write rows and summary here as JSON")
+    parser.add_argument("--preflight", action="store_true",
+                        help="check everything and run nothing; free and fast")
     args = parser.parse_args()
+
+    if args.preflight:
+        return preflight(pathlib.Path(args.chunks), args.device)
 
     chunks = load_chunks(pathlib.Path(args.chunks))
     transport = "simulate" if args.simulate else ("local" if args.local else "http")
