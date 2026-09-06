@@ -695,6 +695,30 @@ def test_the_benchmark_generator_is_not_costed_as_a_full_episode():
     assert cost_mod.estimate(opening).anthropic < cost_mod.estimate(full).anthropic
 
 
+def test_the_tuned_generator_is_costed_at_its_own_token_cap():
+    """It writes an opening too, and an arm that lowers the cap costs less.
+
+    The estimator once keyed the cap off the generator *name*, so every tuned
+    arm was priced as a full 3-minute episode - about four times what it can
+    possibly cost - and an arm that lowered max_tokens showed no saving at all.
+    """
+    def spec_for(params):
+        return ExperimentSpec(name="c", trials=10, minutes=3, queries=["q"],
+                              arms=[Arm("a", search="none", tts="none", params=params)])
+
+    full = spec_for({})
+    tuned = spec_for({"generator": "tuned"})
+    capped = spec_for({"generator": "tuned", "max_tokens": 96})
+
+    assert cost_mod.estimate(tuned).anthropic < cost_mod.estimate(full).anthropic
+    assert cost_mod.estimate(capped).anthropic < cost_mod.estimate(tuned).anthropic
+    # At neutral settings the tuned generator sends the control's request, so
+    # it must cost exactly what the benchmark generator costs.
+    benchmark = spec_for({"generator": "benchmark"})
+    assert cost_mod.estimate(tuned).anthropic == pytest.approx(
+        cost_mod.estimate(benchmark).anthropic)
+
+
 def test_exa_is_costed_as_one_call_per_trial():
     spec = ExperimentSpec(name="c", trials=10, minutes=3, queries=["q"],
                           arms=[Arm("a", search="exa", tts="none",

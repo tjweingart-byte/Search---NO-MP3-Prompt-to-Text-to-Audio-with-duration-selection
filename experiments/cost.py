@@ -101,13 +101,15 @@ def estimate(spec) -> Estimate:
             # actually be right.
             input_tokens = _packet_input_tokens(arm) or input_tokens
         output_tokens = int(ASSUMED_OUTPUT_TOKENS_PER_MINUTE * spec.minutes)
-        if arm.params.get("generator") == "benchmark":
-            # The manual benchmark writes only an opening, hard-capped at 220
-            # tokens. Estimating a full episode for it overstates the cost by
-            # roughly four times, and an estimate that cries wolf gets ignored.
-            from experiments.generate import BENCHMARK_MAX_TOKENS
-
-            output_tokens = min(output_tokens, BENCHMARK_MAX_TOKENS)
+        cap = _output_cap(arm)
+        if cap:
+            # An opening-only generator is hard-capped at its own max_tokens.
+            # Estimating a full episode for it overstates the cost by roughly
+            # four times, and an estimate that cries wolf gets ignored. The cap
+            # is read from the arm, not from the generator name: the tuned
+            # generator writes openings too, and an arm that lowers the cap
+            # (max_tokens) is cheaper still.
+            output_tokens = min(output_tokens, cap)
         est.anthropic += model_cost(model, input_tokens, output_tokens) * per_arm_trials
 
         if arm.search == "exa":
@@ -132,6 +134,20 @@ def estimate(spec) -> Estimate:
             "recorded from the API response once the adapter is connected."
         )
     return est
+
+
+#: Generators that write only an episode opening, capped at max_tokens rather
+#: than running to a full episode.
+OPENING_GENERATORS = ("benchmark", "tuned")
+
+
+def _output_cap(arm) -> int | None:
+    """The arm's hard output ceiling, or None if it writes a whole episode."""
+    if arm.params.get("generator") not in OPENING_GENERATORS:
+        return None
+    from experiments.generate import BENCHMARK_MAX_TOKENS
+
+    return int(arm.params.get("max_tokens") or BENCHMARK_MAX_TOKENS)
 
 
 #: Rough chars-per-token for English prose. Only used to size a saved packet
