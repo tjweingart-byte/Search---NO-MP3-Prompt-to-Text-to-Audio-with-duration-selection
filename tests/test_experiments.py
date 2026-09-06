@@ -2515,3 +2515,143 @@ def test_the_report_flags_an_arm_that_did_not_actually_reuse():
     text = report.render(spec, report.analyse(spec, trials))
     assert "did not actually reuse" in text
     assert "has not tested what it set out to test" in text
+
+
+# --------------------------------------------------------------------------
+# First-token isolation on a warm client
+# --------------------------------------------------------------------------
+def _warm_spec():
+    return ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "warm_first_token.json").read_text())
+
+
+def test_each_arm_differs_from_the_control_by_exactly_one_request_key():
+    """The test that caught a silent no-op.
+
+    `max_tokens` was missing from GENERATOR_OPTIONS, so arm E was dropped on the
+    floor and sent the control's request. It would have run, produced a clean
+    null result, and been reported as "the token cap makes no difference" - a
+    plumbing bug wearing the costume of a finding. Comparing params is not
+    enough; only the real request settles it.
+    """
+    from experiments.harness import _generator_for
+
+    spec = _warm_spec()
+    control = _generator_for(spec.arms[0]).request_kwargs(
+        "claude-sonnet-5", "WHY", "PACKET")
+    assert control == GOLDEN_CONTROL_REQUEST
+
+    expected = {
+        "B-thinking-off": "thinking",
+        "C-effort-low": "output_config",
+        "D-first-sentence": "system",
+        "E-max-tokens-96": "max_tokens",
+    }
+    for arm in spec.arms[1:]:
+        request = _generator_for(arm).request_kwargs(
+            "claude-sonnet-5", "WHY", "PACKET")
+        differing = {k for k in set(control) | set(request)
+                     if control.get(k) != request.get(k)}
+        assert differing == {expected[arm.name]}, (
+            f"{arm.name} should differ only on {expected[arm.name]}, got {differing}")
+
+
+def test_the_tuned_generator_at_neutral_reproduces_the_control_request():
+    """Everything above depends on this being exactly true."""
+    from experiments.generate import BenchmarkOpeningGenerator, TunedOpeningGenerator
+
+    neutral = TunedOpeningGenerator(thinking="omit", effort=None,
+                                    first_sentence_directive=False)
+    assert (neutral.request_kwargs("claude-sonnet-5", "Q", "P")
+            == BenchmarkOpeningGenerator().request_kwargs("claude-sonnet-5", "Q", "P"))
+
+
+def test_every_arm_shares_one_warm_connection():
+    spec = _warm_spec()
+    keys = {a.params["pool_key"] for a in spec.arms}
+    assert len(keys) == 1, "arms must share a pool, or transport is not held constant"
+    for arm in spec.arms:
+        assert arm.params["reuse_client"] is True
+        assert arm.params["keepalive"] > 5
+        assert arm.params["http_trace"] is True
+        assert arm.params["first_chunk_words"] == 25
+        assert arm.model == "claude-sonnet-5"
+        assert arm.tts == "none"
+        assert len(arm.params["packet_map"]) == 6
+    assert spec.trials == 4 and spec.total_trials == 120
+    assert spec.validate() == []
+
+
+def test_a_lower_cap_is_high_enough_for_a_twenty_five_word_chunk():
+    """Arm E must be able to succeed, or it tests nothing."""
+    spec = _warm_spec()
+    cap = next(a.params["max_tokens"] for a in spec.arms if a.name == "E-max-tokens-96")
+    assert cap < 220, "it has to actually be lower"
+    # 25 words is roughly 33 tokens; the cap needs room for that plus a closing
+    # sentence and whatever the model thinks first.
+    assert cap >= 64
+
+
+def test_truncation_is_recorded_rather_than_inferred():
+    from experiments.generate import _usage_from
+
+    class Usage:
+        input_tokens, output_tokens = 1840, 96
+
+    class Cut:
+        usage, content, stop_reason = Usage(), [], "max_tokens"
+
+    class Whole:
+        usage, content, stop_reason = Usage(), [], "end_turn"
+
+    assert _usage_from(Cut(), None, "m")["truncated"] is True
+    assert _usage_from(Whole(), None, "m")["truncated"] is False
+    assert _usage_from(Whole(), None, "m")["stop_reason"] == "end_turn"
+
+
+def test_the_first_token_section_splits_network_from_model():
+    spec = _warm_spec()
+
+    def trial(arm, index, network, model, truncated=False):
+        return {"arm": arm, "query": spec.queries[0], "index": index, "ok": True,
+                "simulated": False, "usage": {}, "cost": 0.0, "artifacts": [],
+                "first_chunk_text": "A complete concrete opening sentence here.",
+                "timeline": {"stages": []},
+                "metrics": {"dispatch_to_stream_open": network,
+                            "seg_headers_to_first_token": model,
+                            "seg_dispatch_to_first_token": network + model,
+                            "seg_first_token_to_25_words": 0.85,
+                            "seg_dispatch_to_boundary": network + model + 0.85,
+                            "first_chunk_words": 27, "truncated": truncated,
+                            "connection_reused": True, "http_trace": "ok"}}
+
+    trials = []
+    for i in range(1, 5):
+        trials.append(trial("A-control", i, 0.06, 0.90))
+        trials.append(trial("B-thinking-off", i, 0.06, 0.30))
+        trials.append(trial("C-effort-low", i, 0.06, 0.70))
+        trials.append(trial("D-first-sentence", i, 0.06, 0.88))
+        trials.append(trial("E-max-tokens-96", i, 0.06, 0.89, truncated=(i == 1)))
+
+    text = report.render(spec, report.analyse(spec, trials))
+    assert "First token on a warm client" in text
+    assert "network versus model" in text.lower()
+    assert "Which half moved" in text
+    assert "attributable to **model**" in text, "a model-side change must be named as one"
+    assert "-600 ms" in text, "B's saving against the control"
+    assert "hit the token ceiling" in text and "E-max-tokens-96" in text
+
+
+def test_openings_are_grouped_by_arm_for_reading():
+    spec = _warm_spec()
+    trials = [{"arm": a.name, "query": spec.queries[0], "index": 1, "ok": True,
+               "first_chunk_text": f"Opening from {a.name}.",
+               "metrics": {"truncated": a.name.startswith("E")}}
+              for a in spec.arms]
+    out = report.openings_by_arm_markdown(spec, trials)
+    for arm in spec.arms:
+        assert f"## {arm.name}" in out
+        assert f"Opening from {arm.name}." in out
+    assert "⚠️ truncated" in out
+    assert "still sounds like FAM" in out

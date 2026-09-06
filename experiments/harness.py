@@ -37,8 +37,13 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s")
 
 #: Arm params the generators understand. Everything else in `params` belongs
 #: to an adapter, so it is not forwarded and cannot be silently misread.
+#: Params forwarded to the generator. An option missing from this list is
+#: silently dropped, and the arm then runs as the control while claiming to be
+#: something else - which is a false negative wearing the costume of a finding.
+#: `tests/test_experiments.py` diffs each arm's real request against the
+#: control for exactly this reason.
 GENERATOR_OPTIONS = ("thinking", "effort", "first_sentence_directive", "http_trace",
-                     "reuse_client", "pool_key", "keepalive")
+                     "reuse_client", "pool_key", "keepalive", "max_tokens")
 
 
 def _generator_for(arm: Arm):
@@ -313,6 +318,12 @@ class Harness:
                     # silently produced a row of blanks.
                     if complete.get("timing"):
                         result.metrics.update(_segments(timeline, complete["timing"]))
+                    # An arm that lowers max_tokens has to show whether it
+                    # truncated: a first chunk that never completed would
+                    # otherwise read as a fast one.
+                    for key in ("max_tokens", "truncated", "stop_reason"):
+                        if complete.get(key) is not None:
+                            result.metrics[key] = complete[key]
 
         return result
 
@@ -364,6 +375,7 @@ def _segments(timeline: Timeline, timing: Optional[dict]) -> dict:
         "seg_dispatch_to_boundary": None,
         "seg_dispatch_to_complete": None,
         "dispatch_to_stream_open": None,
+        "seg_headers_to_first_token": None,
         "harness_first_token_lag": None,
     }
     words_25 = timeline.absolute("words_25")
@@ -388,7 +400,17 @@ def _segments(timeline: Timeline, timing: Optional[dict]) -> dict:
 
     dispatch = timing.get("dispatch_perf")
     first_text = timing.get("first_text_perf")
+    _ = dispatch
     out["dispatch_to_stream_open"] = timing.get("dispatch_to_stream_open")
+    # The cleanest split the tracing allows: everything up to the response
+    # headers is transport and the server accepting the request; everything
+    # from there to the first text token is the model deciding what to say.
+    headers_at = timing.get("headers_complete_perf") or (
+        (dispatch_perf := timing.get("dispatch_perf")) is not None
+        and timing.get("dispatch_to_stream_open") is not None
+        and dispatch_perf + timing["dispatch_to_stream_open"]) or None
+    if headers_at and first_text is not None:
+        out["seg_headers_to_first_token"] = first_text - headers_at
     out["seg_dispatch_to_first_token"] = timing.get("dispatch_to_first_text")
     out["seg_dispatch_to_complete"] = timing.get("dispatch_to_complete")
     if dispatch is not None and boundary is not None:

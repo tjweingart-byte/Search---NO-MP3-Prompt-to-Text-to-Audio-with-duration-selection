@@ -300,8 +300,14 @@ def _usage_from(final, stream, model: str) -> dict:
     usage = getattr(message, "usage", None)
     input_tokens = getattr(usage, "input_tokens", 0) or 0
     output_tokens = getattr(usage, "output_tokens", 0) or 0
+    # `max_tokens` means the response was cut off. An arm that lowers the cap
+    # has to be able to show whether it truncated, or a first chunk that never
+    # completed would be read as a fast one.
+    stop_reason = getattr(message, "stop_reason", None)
     return {
         "model": model,
+        "stop_reason": stop_reason,
+        "truncated": stop_reason == "max_tokens",
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "searches": _search_count(message),
@@ -515,7 +521,14 @@ class TunedOpeningGenerator:
     EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
     def __init__(self, thinking: str | None = "disabled", effort: str | None = "low",
-                 first_sentence_directive: bool = False, **_ignored) -> None:
+                 first_sentence_directive: bool = False,
+                 max_tokens: int | None = None, http_trace: bool = False,
+                 reuse_client: bool = False, pool_key: str = "default",
+                 keepalive: float | None = None, **_ignored) -> None:
+        self.http_trace = bool(http_trace)
+        self.reuse_client = bool(reuse_client)
+        self.pool_key = pool_key
+        self.keepalive = keepalive
         thinking = "omit" if thinking is None else thinking
         # Validated rather than tolerated: a typo like "disabed" would silently
         # fall through to omitted, the arm would run adaptive thinking, and the
@@ -529,6 +542,10 @@ class TunedOpeningGenerator:
         self.thinking = thinking
         self.effort = effort
         self.first_sentence_directive = first_sentence_directive
+        # None keeps the control's ceiling. A lower cap is an arm of its own:
+        # `max_tokens` is enforced but not something the model is told, so any
+        # effect on time-to-first-token would be scheduling, not behaviour.
+        self.max_tokens = int(max_tokens) if max_tokens else BENCHMARK_MAX_TOKENS
         self._usage: dict = {}
 
     def usage(self) -> dict:
@@ -542,7 +559,7 @@ class TunedOpeningGenerator:
     def request_kwargs(self, model: str, query: str, context: str) -> dict:
         kwargs: dict = {
             "model": model,
-            "max_tokens": BENCHMARK_MAX_TOKENS,
+            "max_tokens": self.max_tokens,
             "system": self.system_prompt(),
             "messages": [{
                 "role": "user",
@@ -575,31 +592,62 @@ class TunedOpeningGenerator:
     ) -> AsyncIterator[str]:
         from anthropic_client import build_async_client
 
-        client = build_async_client()
+        if self.reuse_client:
+            from experiments import client_pool
+
+            client = client_pool.acquire(
+                self.pool_key,
+                self.keepalive if self.keepalive else client_pool.KEEPALIVE_SECONDS)
+        else:
+            client = build_async_client()
+
+        recorder = None
+        if self.http_trace:
+            from experiments import http_trace as trace_mod
+
+            session = trace_mod.attach(client)
+            recorder = session.begin() if session is not None else None
+
         chosen = model or BENCHMARK_MODEL
         final = None
-        started = time.perf_counter()
+        timing = StreamTiming()
+        self._timing = timing
         try:
+            timing.mark_dispatch()
+            started = timing.dispatch
             async with client.messages.stream(
                 **self.request_kwargs(chosen, query, context)
             ) as stream:
+                timing.mark_stream_open(stream)
                 text_stream = stream.text_stream
                 try:
                     async for delta in text_stream:
+                        timing.mark_first_text()
                         yield delta
                     final = await stream.get_final_message()
                 finally:
-                    elapsed = await _drain_timed(text_stream, started)
+                    elapsed = await _drain_timed(text_stream, started, timing)
                     self._usage = _usage_from(final, stream, chosen)
                     self._usage["stream_seconds"] = elapsed
+                    detail = timing.to_dict()
+                    if self.http_trace and recorder is not None:
+                        detail.update(recorder.phases(timing.dispatch))
+                        detail["trace_events"] = recorder.event_log()
+                    elif self.http_trace:
+                        detail["http_trace"] = "unavailable"
+                    detail["reuse_client"] = self.reuse_client
+                    detail["pool_key"] = self.pool_key if self.reuse_client else None
+                    self._usage["timing"] = detail
                     self._usage.update({
                         "generator": "tuned",
+                        "max_tokens": self.max_tokens,
                         "thinking": self.thinking,
                         "effort": self.effort,
                         "first_sentence_directive": self.first_sentence_directive,
                     })
         finally:
-            await client.close()
+            if not self.reuse_client:
+                await client.close()
 
 
 GENERATORS = {

@@ -281,6 +281,7 @@ def render(spec: ExperimentSpec, analysis: dict, previous: Optional[dict] = None
     out += _segment_section(spec, analysis)
     out += _threshold_section(spec, analysis)
     out += _reuse_section(spec, analysis)
+    out += _first_token_section(spec, analysis)
 
     # -- cost ----------------------------------------------------------
     label = ("Simulated, and therefore meaningless as a cost"
@@ -570,6 +571,124 @@ def _reuse_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
                            "did not, not a difference between two noisy totals.")
     out.append("")
     return out
+
+
+def _first_token_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
+    """Where the wait before the first word goes, arm by arm.
+
+    Split as cleanly as the tracing allows: everything up to the response
+    headers is transport plus the server accepting the request; everything from
+    there to the first text token is the model. On a warm shared connection the
+    first half should be near-identical across arms, so a difference between
+    them is a difference in the model's behaviour, which is the point.
+    """
+    trials = [t for t in analysis.get("_trials", []) if t.get("ok")]
+    if len(spec.arms) < 3 or not any(
+            t["metrics"].get("seg_headers_to_first_token") is not None for t in trials):
+        return []
+
+    def rows(arm):
+        return [t for t in trials if t["arm"] == arm]
+
+    def stat(arm, key):
+        return stats_mod.summarise([t["metrics"].get(key) for t in rows(arm)
+                                    if t["metrics"].get(key) is not None])
+
+    control = spec.arms[0].name
+    out = ["## First token on a warm client: network versus model", "",
+           f"*Control: `{control}`. Every arm shares one pooled connection, so "
+           f"transport is held as close to constant as the stack allows.*", ""]
+
+    out += ["| arm | dispatch→headers | headers→first token | dispatch→first token "
+            "| p95 | Δ vs control |", "|---|---|---|---|---|---|"]
+    base = stat(control, "seg_dispatch_to_first_token")
+    for arm in spec.arms:
+        network = stat(arm.name, "dispatch_to_stream_open")
+        model = stat(arm.name, "seg_headers_to_first_token")
+        total = stat(arm.name, "seg_dispatch_to_first_token")
+        if not total:
+            out.append(f"| {arm.name} | — | — | — | — | — |")
+            continue
+        delta = ("—" if arm.name == control or not base
+                 else f"**{(total.median - base.median) * 1000:+.0f} ms**")
+        out.append(
+            f"| {arm.name} "
+            f"| {network.median * 1000:.0f} ms" if network else f"| {arm.name} | — ")
+        out[-1] += (f" | {model.median * 1000:.0f} ms" if model else " | — ")
+        out[-1] += (f" | **{total.median:.3f}s** | {total.p95:.3f}s | {delta} |")
+    out.append("")
+
+    out += ["| arm | first token→25 words | dispatch→first chunk | p95 "
+            "| chunk words | truncated |", "|---|---|---|---|---|---|"]
+    for arm in spec.arms:
+        accum = stat(arm.name, "seg_first_token_to_25_words")
+        chunk = stat(arm.name, "seg_dispatch_to_boundary")
+        words = stat(arm.name, "first_chunk_words")
+        cut = sum(1 for t in rows(arm.name) if t["metrics"].get("truncated"))
+        cut_text = f"**{cut} of {len(rows(arm.name))}**" if cut else "none"
+        out.append(f"| {arm.name} "
+                   f"| {accum.median:.3f}s" if accum else f"| {arm.name} | — ")
+        out[-1] += (f" | {chunk.median:.3f}s | {chunk.p95:.3f}s" if chunk else " | — | — ")
+        out[-1] += (f" | {words.median:.0f}" if words else " | — ")
+        out[-1] += f" | {cut_text} |"
+    out.append("")
+
+    truncating = [a.name for a in spec.arms
+                  if any(t["metrics"].get("truncated") for t in rows(a.name))]
+    if truncating:
+        out += [f"⚠️ **{', '.join(truncating)} hit the token ceiling on some trials.** "
+                f"A response cut off before its sentence closed did not produce a "
+                f"first chunk faster - it produced a different, shorter thing. "
+                f"Read those openings before crediting the arm with any saving.", ""]
+
+    # Does the arm move the model half, or only look like it?
+    out += ["### Which half moved", ""]
+    base_model = stat(control, "seg_headers_to_first_token")
+    base_net = stat(control, "dispatch_to_stream_open")
+    for arm in spec.arms[1:]:
+        model = stat(arm.name, "seg_headers_to_first_token")
+        network = stat(arm.name, "dispatch_to_stream_open")
+        if not model or not base_model:
+            continue
+        model_delta = (model.median - base_model.median) * 1000
+        net_delta = ((network.median - base_net.median) * 1000
+                     if network and base_net else 0.0)
+        verdict = ("model" if abs(model_delta) > abs(net_delta) * 2 else
+                   "transport noise" if abs(net_delta) > abs(model_delta) else "mixed")
+        out.append(f"- **{arm.name}**: model {model_delta:+.0f} ms, "
+                   f"transport {net_delta:+.0f} ms → attributable to **{verdict}**")
+        comparison = stats_mod.bootstrap_diff(
+            [t["metrics"].get("seg_dispatch_to_first_token") for t in rows(arm.name)
+             if t["metrics"].get("seg_dispatch_to_first_token") is not None],
+            [t["metrics"].get("seg_dispatch_to_first_token") for t in rows(control)
+             if t["metrics"].get("seg_dispatch_to_first_token") is not None],
+            a_label=arm.name, b_label=control, seed=spec.seed)
+        if comparison:
+            out.append(f"  - {comparison.verdict}")
+    out.append("")
+    return out
+
+
+def openings_by_arm_markdown(spec: ExperimentSpec, trials: list[dict]) -> str:
+    """Every arm's opening, grouped so degradation is read rather than assumed."""
+    lines = [f"# Openings by arm — {spec.name}", "",
+             "Latency is in the report. This is the half that decides whether a "
+             "faster arm is actually usable: read down an arm and ask whether it "
+             "still sounds like FAM.", ""]
+    for arm in spec.arms:
+        mine = [t for t in trials if t["arm"] == arm.name and t.get("ok")]
+        lines += [f"## {arm.name}", ""]
+        by_query: dict = {}
+        for trial in mine:
+            by_query.setdefault(trial.get("query", "(unknown)"), []).append(trial)
+        for query, rows in by_query.items():
+            lines += [f"**{query}**", ""]
+            for trial in rows:
+                text = trial.get("first_chunk_text") or "(no chunk)"
+                flag = " ⚠️ truncated" if trial["metrics"].get("truncated") else ""
+                lines.append(f"{trial['index']:>3}. ({len(text.split())}w{flag}) {text}")
+            lines.append("")
+    return "\n".join(lines)
 
 
 def _threshold_section(spec: ExperimentSpec, analysis: dict) -> list[str]:

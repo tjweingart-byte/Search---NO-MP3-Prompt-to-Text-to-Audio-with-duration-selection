@@ -1,0 +1,146 @@
+{
+  "name": "First-token latency on a warm client",
+  "kind": "component",
+  "arms": [
+    {
+      "name": "A-control",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "benchmark",
+        "first_chunk_words": 25,
+        "http_trace": true,
+        "packet_map": {
+          "what happened in the markets this week": "markets_week",
+          "how does a heat pump work": "heat_pump",
+          "who wrote the first computer program": "first_programmer",
+          "recap the latest Formula 1 race weekend": "f1_recap",
+          "what makes a piece of music feel nostalgic": "nostalgia",
+          "Why are founder CEOs becoming harder for boards to remove?": "founder_ceos"
+        },
+        "reuse_client": true,
+        "pool_key": "warm_first_token",
+        "keepalive": 300
+      }
+    },
+    {
+      "name": "B-thinking-off",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "tuned",
+        "first_chunk_words": 25,
+        "http_trace": true,
+        "packet_map": {
+          "what happened in the markets this week": "markets_week",
+          "how does a heat pump work": "heat_pump",
+          "who wrote the first computer program": "first_programmer",
+          "recap the latest Formula 1 race weekend": "f1_recap",
+          "what makes a piece of music feel nostalgic": "nostalgia",
+          "Why are founder CEOs becoming harder for boards to remove?": "founder_ceos"
+        },
+        "reuse_client": true,
+        "pool_key": "warm_first_token",
+        "keepalive": 300,
+        "thinking": "disabled",
+        "effort": null,
+        "first_sentence_directive": false
+      }
+    },
+    {
+      "name": "C-effort-low",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "tuned",
+        "first_chunk_words": 25,
+        "http_trace": true,
+        "packet_map": {
+          "what happened in the markets this week": "markets_week",
+          "how does a heat pump work": "heat_pump",
+          "who wrote the first computer program": "first_programmer",
+          "recap the latest Formula 1 race weekend": "f1_recap",
+          "what makes a piece of music feel nostalgic": "nostalgia",
+          "Why are founder CEOs becoming harder for boards to remove?": "founder_ceos"
+        },
+        "reuse_client": true,
+        "pool_key": "warm_first_token",
+        "keepalive": 300,
+        "thinking": "omit",
+        "effort": "low",
+        "first_sentence_directive": false
+      }
+    },
+    {
+      "name": "D-first-sentence",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "tuned",
+        "first_chunk_words": 25,
+        "http_trace": true,
+        "packet_map": {
+          "what happened in the markets this week": "markets_week",
+          "how does a heat pump work": "heat_pump",
+          "who wrote the first computer program": "first_programmer",
+          "recap the latest Formula 1 race weekend": "f1_recap",
+          "what makes a piece of music feel nostalgic": "nostalgia",
+          "Why are founder CEOs becoming harder for boards to remove?": "founder_ceos"
+        },
+        "reuse_client": true,
+        "pool_key": "warm_first_token",
+        "keepalive": 300,
+        "thinking": "omit",
+        "effort": null,
+        "first_sentence_directive": true
+      }
+    },
+    {
+      "name": "E-max-tokens-96",
+      "search": "fixed_packet",
+      "tts": "none",
+      "model": "claude-sonnet-5",
+      "params": {
+        "generator": "tuned",
+        "first_chunk_words": 25,
+        "http_trace": true,
+        "packet_map": {
+          "what happened in the markets this week": "markets_week",
+          "how does a heat pump work": "heat_pump",
+          "who wrote the first computer program": "first_programmer",
+          "recap the latest Formula 1 race weekend": "f1_recap",
+          "what makes a piece of music feel nostalgic": "nostalgia",
+          "Why are founder CEOs becoming harder for boards to remove?": "founder_ceos"
+        },
+        "reuse_client": true,
+        "pool_key": "warm_first_token",
+        "keepalive": 300,
+        "thinking": "omit",
+        "effort": null,
+        "first_sentence_directive": false,
+        "max_tokens": 96
+      }
+    }
+  ],
+  "queries": [
+    "what happened in the markets this week",
+    "how does a heat pump work",
+    "who wrote the first computer program",
+    "recap the latest Formula 1 race weekend",
+    "what makes a piece of music feel nostalgic",
+    "Why are founder CEOs becoming harder for boards to remove?"
+  ],
+  "trials": 4,
+  "minutes": 3,
+  "stages": [
+    "generate",
+    "first_chunk"
+  ],
+  "concurrency": 1,
+  "seed": 1234,
+  "notes": "Every arm runs on one shared warm client - the same pool key - so the transport is as close to identical as the stack allows and only generation-side settings vary. Arm A is the verified control request byte for byte. Arms B to E each change exactly one thing from it: thinking disabled, effort low, a first-sentence directive, or a lower token cap. The tuned generator at neutral settings produces the control's request exactly, which a test pins - that is what makes 'one change' true. Held constant: claude-sonnet-5, the six frozen packets, the benchmark system prompt except where arm D appends to it, the 25-word chunk rule, no TTS. Arm E is the one that can fail on its own terms: a lower cap could truncate before 25 words, so stop_reason is recorded and the report flags any truncated trial rather than reporting a first chunk that never completed as a fast one."
+}

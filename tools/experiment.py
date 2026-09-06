@@ -184,6 +184,11 @@ def cmd_run(args) -> int:
     run.write_report(markdown)
     # The openings, grouped for reading. Latency is in the report; this is the
     # half that decides whether an earlier threshold is acceptable.
+    if len(spec.arms) > 2 and any(t.get("first_chunk_text")
+                                  for t in analysis.get("_trials", [])):
+        run.write_artifact(
+            "openings_by_arm.md",
+            report.openings_by_arm_markdown(spec, analysis["_trials"]).encode("utf-8"))
     if any(t.get("threshold_texts") for t in analysis.get("_trials", [])):
         trials_for_analysis = analysis["_trials"]
         run.write_artifact(
