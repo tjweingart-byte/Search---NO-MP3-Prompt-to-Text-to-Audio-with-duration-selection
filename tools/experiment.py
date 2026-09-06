@@ -40,7 +40,19 @@ def _load_spec(text: str, queries_file: str | None, trials: int | None,
                minutes: float | None) -> tuple[ExperimentSpec, list[str]]:
     """Either a JSON spec file, or English."""
     path = pathlib.Path(text)
-    if path.suffix == ".json" and path.exists():
+    if path.suffix == ".json":
+        # A .json argument is a spec file and nothing else. This used to fall
+        # through to the English compiler when the file was missing, which
+        # compiled the *filename* into a default 15-trial one-arm "baseline"
+        # and planned that instead - a wrong experiment reported as a fine one.
+        if not path.exists():
+            raise SystemExit(
+                f"no spec file at {path}\n"
+                f"  cwd is {pathlib.Path.cwd()}\n"
+                "  A .json argument is read as a spec file, never as English. "
+                "Check the path, and that this checkout is on the branch that "
+                "carries the spec (git pull)."
+            )
         spec = ExperimentSpec.from_json(path.read_text(encoding="utf-8"))
         assumptions = [f"Loaded verbatim from {path}."]
     else:
@@ -100,6 +112,99 @@ def cmd_plan(args) -> int:
         pathlib.Path(args.save).write_text(spec.to_json(), encoding="utf-8")
         print(f"  spec written to {args.save}\n")
     return 0
+
+
+def cmd_preflight(args) -> int:
+    """Prove which spec is loaded, and that its arms really differ. Free.
+
+    This exists because a missing spec file once compiled its own *filename*
+    into a 15-trial one-arm "baseline" and planned that instead. A preflight
+    that reads back the arm names, the topic count and the total trial count
+    from the loaded object - not from a description of it - is the cheapest
+    way to know the machine is about to run the experiment you think it is.
+
+    Nothing here calls an API, so it costs nothing and needs no key.
+    """
+    from experiments.harness import _generator_for
+
+    spec, assumptions = _load_spec(args.request, args.queries, args.trials, args.minutes)
+    ok = True
+
+    print(f"\n{BOLD}{spec.name}{RESET}")
+    print(f"  file       {args.request}")
+    print(f"  git        {_git_describe()}")
+    for note in assumptions:
+        print(f"  loaded     {note}")
+
+    print(f"\n  {BOLD}arms{RESET}  ({len(spec.arms)})")
+    for arm in spec.arms:
+        print(f"    {arm.name}")
+    print(f"\n  {BOLD}topics{RESET}  ({len(spec.queries)})")
+    for q in spec.queries:
+        print(f"    {q}")
+    print(f"\n  trials     {spec.trials} per arm per topic")
+    print(f"  {BOLD}TOTAL      {spec.total_trials}{RESET}")
+
+    if args.expect_arms:
+        want = [a.strip() for a in args.expect_arms.split(",") if a.strip()]
+        got = [a.name for a in spec.arms]
+        ok &= _expect("arm names", got, want)
+    if args.expect_topics is not None:
+        ok &= _expect("topic count", len(spec.queries), args.expect_topics)
+    if args.expect_total is not None:
+        ok &= _expect("total trials", spec.total_trials, args.expect_total)
+
+    # The one thing a spec cannot show on its face: whether each arm actually
+    # sends a different request. Params can differ while the request does not.
+    try:
+        control = _generator_for(spec.arms[0]).request_kwargs(
+            spec.arms[0].model or "claude-sonnet-5", "PREFLIGHT", "PACKET")
+    except Exception as exc:                       # pragma: no cover - defensive
+        print(f"\n  requests   not comparable ({exc})")
+        control = None
+    if control is not None:
+        print(f"\n  {BOLD}request differences from {spec.arms[0].name}{RESET}")
+        print(f"    {spec.arms[0].name:<24} control: {sorted(control)}")
+        for arm in spec.arms[1:]:
+            request = _generator_for(arm).request_kwargs(
+                arm.model or "claude-sonnet-5", "PREFLIGHT", "PACKET")
+            differing = sorted(k for k in set(control) | set(request)
+                               if control.get(k) != request.get(k))
+            mark = "" if differing else "   <- SENDS THE CONTROL'S REQUEST"
+            if not differing:
+                ok = False
+            print(f"    {arm.name:<24} differs on: {differing}{mark}")
+
+    print()
+    if not ok:
+        print(f"  {BOLD}PREFLIGHT FAILED{RESET} - do not run this.\n")
+        return 1
+    print("  preflight ok - this is the experiment described.\n")
+    return 0
+
+
+def _expect(label: str, got, want) -> bool:
+    if got == want:
+        print(f"  ok         {label}: {got}")
+        return True
+    print(f"  MISMATCH   {label}: expected {want}, got {got}")
+    return False
+
+
+def _git_describe() -> str:
+    import subprocess
+    try:
+        root = pathlib.Path(__file__).resolve().parent.parent
+        out = subprocess.run(["git", "-C", str(root), "log", "-1", "--format=%h %s"],
+                             capture_output=True, text=True, timeout=5)
+        branch = subprocess.run(["git", "-C", str(root), "rev-parse",
+                                 "--abbrev-ref", "HEAD"],
+                                capture_output=True, text=True, timeout=5)
+        if out.returncode == 0:
+            return f"{branch.stdout.strip()} @ {out.stdout.strip()}"
+    except Exception:
+        pass
+    return "(not a git checkout)"
 
 
 def cmd_run(args) -> int:
@@ -278,6 +383,14 @@ def main() -> int:
     common(p_plan)
     p_plan.add_argument("--save", help="write the compiled spec to this .json")
     p_plan.set_defaults(func=cmd_plan)
+
+    p_pre = subs.add_parser(
+        "preflight", help="prove which spec is loaded and that its arms differ; free")
+    common(p_pre)
+    p_pre.add_argument("--expect-arms", help="comma-separated arm names that must match")
+    p_pre.add_argument("--expect-topics", type=int, help="topic count that must match")
+    p_pre.add_argument("--expect-total", type=int, help="total trial count that must match")
+    p_pre.set_defaults(func=cmd_preflight)
 
     p_run = subs.add_parser("run", help="run the experiment and save a report")
     common(p_run)

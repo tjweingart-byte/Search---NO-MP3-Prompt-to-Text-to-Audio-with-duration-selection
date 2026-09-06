@@ -7,6 +7,7 @@ those is pinned by a test that fails loudly.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -2544,10 +2545,11 @@ def test_the_report_flags_an_arm_that_did_not_actually_reuse():
 # --------------------------------------------------------------------------
 # First-token isolation on a warm client
 # --------------------------------------------------------------------------
+_SPEC_DIR = pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+
+
 def _warm_spec():
-    return ExperimentSpec.from_json(
-        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
-         / "warm_first_token.json").read_text())
+    return ExperimentSpec.from_json((_SPEC_DIR / "warm_first_token.json").read_text())
 
 
 def test_each_arm_differs_from_the_control_by_exactly_one_request_key():
@@ -2579,6 +2581,63 @@ def test_each_arm_differs_from_the_control_by_exactly_one_request_key():
                      if control.get(k) != request.get(k)}
         assert differing == {expected[arm.name]}, (
             f"{arm.name} should differ only on {expected[arm.name]}, got {differing}")
+
+
+def test_a_missing_spec_file_is_an_error_not_an_english_request():
+    """The fault that ran the wrong experiment.
+
+    `plan experiments/specs/warm_first_token.json` from a checkout without that
+    file fell through to the English compiler, which read the *filename* as a
+    request and produced a default one-arm, 15-trial "baseline". The plan then
+    printed cleanly. A .json argument is a file and nothing else.
+    """
+    import tools.experiment as cli
+
+    with pytest.raises(SystemExit) as caught:
+        cli._load_spec("experiments/specs/definitely_absent.json", None, None, None)
+    assert "no spec file" in str(caught.value)
+
+    # The English path still works for something that is not a .json path.
+    spec, _ = cli._load_spec("compare two voices", None, None, None)
+    assert spec.arms
+
+
+def test_preflight_fails_when_an_arm_sends_the_controls_request(monkeypatch, capsys):
+    """It has to catch the silent no-op, or it is only reading the spec back."""
+    import tools.experiment as cli
+
+    spec = _warm_spec()
+    # Strip the one thing that makes arm E different, exactly as the missing
+    # GENERATOR_OPTIONS entry did.
+    spec.arms[4].params.pop("max_tokens")
+    monkeypatch.setattr(cli, "_load_spec", lambda *a, **k: (spec, ["stub"]))
+    args = argparse.Namespace(request="x", queries=None, trials=None, minutes=None,
+                              expect_arms=None, expect_topics=None, expect_total=None)
+    assert cli.cmd_preflight(args) == 1
+    assert "SENDS THE CONTROL'S REQUEST" in capsys.readouterr().out
+
+
+def test_preflight_fails_on_a_shape_mismatch(monkeypatch, capsys):
+    import tools.experiment as cli
+
+    monkeypatch.setattr(cli, "_load_spec", lambda *a, **k: (_warm_spec(), ["stub"]))
+    args = argparse.Namespace(request="x", queries=None, trials=None, minutes=None,
+                              expect_arms=None, expect_topics=6, expect_total=99)
+    assert cli.cmd_preflight(args) == 1
+    out = capsys.readouterr().out
+    assert "MISMATCH   total trials: expected 99, got 120" in out
+
+
+def test_preflight_passes_on_the_real_spec(monkeypatch, capsys):
+    import tools.experiment as cli
+
+    args = argparse.Namespace(
+        request=str(_SPEC_DIR / "warm_first_token.json"), queries=None, trials=None,
+        minutes=None,
+        expect_arms="A-control,B-thinking-off,C-effort-low,D-first-sentence,E-max-tokens-96",
+        expect_topics=6, expect_total=120)
+    assert cli.cmd_preflight(args) == 0
+    assert "preflight ok" in capsys.readouterr().out
 
 
 def test_the_tuned_generator_at_neutral_reproduces_the_control_request():
