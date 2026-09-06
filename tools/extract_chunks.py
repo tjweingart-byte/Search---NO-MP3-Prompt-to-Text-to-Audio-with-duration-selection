@@ -203,21 +203,32 @@ def extract(results_dir: pathlib.Path, words: int) -> list[dict]:
             "  Expected a file whose name contains 'openings', written by\n"
             "  tools/preserve_run.py from the run's artifacts.")
 
-    seen, chunks, short, miscounted = {}, [], [], []
+    seen, chunks, excluded, miscounted = {}, [], [], []
     for path in sources:
         for row in openings_from_markdown(path.read_text(encoding="utf-8")):
             text = row["text"]
             count = len(text.split())
             if count != row["stated_words"]:
                 miscounted.append((row["stated_words"], count, text[:60]))
-            if count < words:
-                # Under a `words`-word rule every recorded chunk should clear
-                # `words`: first_chunk_ready returns None otherwise, and the
-                # report writes "(no chunk)". So a short chunk is not routine -
-                # it is either a truncated response or an unexplained one, and
-                # both are named below rather than counted away.
-                short.append({**row, "words": count})
+
+            complete = ends_complete(text)
+            if not complete and not row["truncated"]:
+                # The fallback below only fires on a stream that ended early.
+                # A cut chunk from a response that was *not* truncated cannot
+                # be explained, so it is a parse fault, not a data case.
+                raise SystemExit(
+                    f"{row['arm']}/{row['query']}/{row['trial']} does not end "
+                    "at a sentence boundary, and its response was not "
+                    f"truncated.\n  ...{text[-60:]!r}\n"
+                    "  Nothing explains this; the parse is likely wrong. "
+                    "Nothing was written.")
+            if not complete:
+                excluded.append({**row, "words": count, "reason": "cut"})
                 continue
+            if count < words:
+                excluded.append({**row, "words": count, "reason": "short"})
+                continue
+
             if text in seen:
                 seen[text]["also_from"].append(f"{row['arm']}/{row['trial']}")
                 continue
@@ -230,60 +241,64 @@ def extract(results_dir: pathlib.Path, words: int) -> list[dict]:
                 # >1 means the model wrote a newline inside its own chunk.
                 "lines": row.get("lines", 1),
                 # Measured from the text, not inferred from the response.
-                "ends_complete": ends_complete(text),
+                "ends_complete": True,
                 "source": f"{path.name}:{row['arm']}:{row['query']}:{row['trial']}",
                 "also_from": [],
             }
             seen[text] = entry
             chunks.append(entry)
 
-    if short:
-        _report_short(short, words)
-    incomplete = [c for c in chunks if not c["ends_complete"]]
-    if incomplete:
-        raise SystemExit(
-            f"{len(incomplete)} chunk(s) do not end at a sentence boundary, "
-            "which the chunk rule makes impossible.\n"
-            f"  {incomplete[0]['source']}: {incomplete[0]['text'][-60:]!r}\n"
-            "  Either the parse is wrong or these are not chunk-rule output. "
-            "Nothing was written.")
+    if excluded:
+        _report_excluded(excluded, words)
     if miscounted:
         stated, got, sample = miscounted[0]
         raise SystemExit(
             f"parse mismatch on {len(miscounted)} row(s): the report says "
             f"{stated} words, the reconstructed text has {got}\n  {sample!r}\n"
             "  The parser is reading these rows wrongly. Nothing was written.")
-    return chunks
+    return chunks, excluded
 
 
-def _report_short(short: list[dict], words: int) -> None:
-    """Name every sub-threshold chunk and say which are explained.
+def _report_excluded(excluded: list[dict], words: int) -> None:
+    """Name every excluded chunk and why. No exclusion is silent.
 
-    Dropping these quietly is how a corpus ends up unrepresentative without
-    anyone noticing. A truncated response explains a short chunk; nothing else
-    does, so anything unexplained is called out as a defect to investigate
-    rather than a rounding error.
+    Both reasons trace to the same place - `harness.py`'s fallback:
+
+        if first_chunk is None:
+            first_chunk = buffer.strip()
+
+    When a stream ends before the chunk rule is ever satisfied, the raw buffer
+    is recorded as the chunk. It is whatever the model got out before the cap,
+    so it is short, or mid-sentence, or both. That is real pipeline behaviour,
+    but it is not chunk-rule output and it is not what FAM would speak.
     """
-    truncated = [r for r in short if r["truncated"]]
-    unexplained = [r for r in short if not r["truncated"]]
+    cut = [r for r in excluded if r["reason"] == "cut"]
+    short = [r for r in excluded if r["reason"] == "short"]
 
-    print(f"\n  {len(short)} recorded chunk(s) below the {words}-word rule, "
-          "not used in the corpus:")
-    for row in sorted(short, key=lambda r: r["words"]):
-        why = "response hit its token cap" if row["truncated"] else "UNEXPLAINED"
-        print(f"    {row['words']:>3}w  {row['arm']}/{row['query'][:32]}"
+    print(f"\n  {len(excluded)} recorded chunk(s) excluded from the corpus:")
+    for row in sorted(excluded, key=lambda r: (r["reason"], r["words"])):
+        why = ("cut mid-sentence" if row["reason"] == "cut"
+               else f"below the {words}-word rule")
+        if not row["truncated"]:
+            why += " - UNEXPLAINED"
+        print(f"    {row['words']:>3}w  {row['arm']}/{row['query'][:30]}"
               f"/{row['trial']}  - {why}")
-    if truncated:
-        print(f"\n  {len(truncated)} are explained: the response stopped at "
-              "max_tokens, so the text never reached a sentence end past "
-              f"{words} words.")
+
+    if cut:
+        print(f"\n  {len(cut)} cut mid-sentence. The stream ended before any "
+              f"sentence end past {words} words, so harness.py recorded the raw "
+              "buffer instead of chunk-rule output. Every one has a truncated "
+              "response, which is what explains it.")
+    if short:
+        capped = [r for r in short if r["truncated"]]
+        print(f"\n  {len(short)} below the rule. {len(capped)} of them have a "
+              "truncated response - the same fallback, where the buffer was "
+              "all there was when the response stopped.")
+    unexplained = [r for r in excluded if not r["truncated"]]
     if unexplained:
-        print(f"\n  {len(unexplained)} are NOT explained. Under a {words}-word "
-              "rule first_chunk_ready returns None rather than a short chunk, "
-              "and the report writes '(no chunk)'. A short chunk that is not "
-              "truncated means the run used a different threshold, or this "
-              "parser is still wrong. Worth checking before trusting the "
-              "corpus.")
+        print(f"\n  {len(unexplained)} exclusion(s) are UNEXPLAINED: the "
+              "response was not truncated, so the fallback cannot account for "
+              "them. Worth checking before trusting the corpus.")
     print()
 
 
@@ -354,16 +369,32 @@ def audit(results_dir: pathlib.Path, words: int) -> int:
         print(f"\n  (no trials.jsonl at {trials_path}; chunk-side counts only)")
 
     print()
+    unexplained_cut = [r for r in rows
+                       if not ends_complete(r["text"]) and not r["truncated"]]
+    if unexplained_cut:
+        print("  VERDICT  chunks are cut mid-sentence with no truncated "
+              "response to explain it. That is a parse fault, not a data case.")
+        for row in unexplained_cut[:5]:
+            print(f"    {row['arm']}/{row['query'][:30]}/{row['trial']}: "
+                  f"...{row['text'][-50:]!r}")
+        print()
+        return 1
+
     if capped_and_incomplete:
-        print("  VERDICT  some first chunks really were cut mid-sentence. Those "
-              "are not valid benchmark input.")
+        print(f"  VERDICT  {len(capped_and_incomplete)} chunk(s) really were cut "
+              "mid-sentence. When a stream ends before the chunk rule is ever")
+        print("           satisfied, harness.py records the raw buffer instead "
+              "of chunk-rule output:")
+        print("               if first_chunk is None: first_chunk = buffer.strip()")
+        print("           Every one has a truncated response, which explains it. "
+              "They are excluded from the corpus automatically.")
         for row in capped_and_incomplete[:5]:
             print(f"    {row['arm']}/{row['query'][:30]}/{row['trial']}: "
                   f"...{row['text'][-50:]!r}")
-        return 1
-    print("  VERDICT  every recorded chunk ends at a sentence boundary. "
-          "'truncated' marks the response, which ran on past the chunk and was")
-    print("           cut at max_tokens later. The chunks themselves are intact.")
+    print(f"\n           The other {len(complete)} chunks end at a sentence "
+          "boundary. For those, 'truncated' marks the RESPONSE, which ran on")
+    print("           past the chunk and was cut at max_tokens later. Those "
+          "chunks are intact and are valid benchmark input.")
     print()
     return 0
 
@@ -390,7 +421,15 @@ def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
     ranges = data.get("bucket_ranges") or {}
     words = [c["words"] for c in chunks]
     truncated = [c for c in chunks if c.get("truncated_response")]
-    arms = sorted({c["source"].split(":")[1] for c in chunks if ":" in c["source"]})
+    arms = set()
+    for chunk in chunks:
+        if ":" in chunk["source"]:
+            arms.add(chunk["source"].split(":")[1])
+        # An identical opening from another arm is folded in by dedup; the arm
+        # still contributed it, so it still counts as represented.
+        for other in chunk.get("also_from", []):
+            arms.add(other.split("/")[0])
+    arms = sorted(arms)
     topics = sorted({c["source"].split(":")[2] for c in chunks
                      if c["source"].count(":") >= 2})
 
@@ -404,6 +443,8 @@ def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
     print(f"  topics      {len(topics)}")
     multiline = [c for c in chunks if c.get("lines", 1) > 1]
     intact = [c for c in chunks if c.get("ends_complete", True)]
+    cut_included = [c for c in chunks if not c.get("ends_complete", True)]
+    excluded = data.get("excluded") or []
     if truncated:
         print(f"  capped      {len(truncated)} of {len(chunks)} came from a "
               "RESPONSE that later hit max_tokens")
@@ -413,6 +454,7 @@ def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
         print("  capped      none - no chunk came from a capped response")
     print(f"  chunk text  {len(intact)} of {len(chunks)} end at a sentence "
           "boundary" + (" - all intact" if len(intact) == len(chunks) else ""))
+    print(f"  CUT chunks included in corpus       {len(cut_included)}")
     if multiline:
         print(f"  multi-line  {len(multiline)} contain a newline the model "
               "wrote; sent to the voice as recorded")
@@ -425,6 +467,25 @@ def verify(corpus_path: pathlib.Path, examples: int = 3) -> int:
         low, high = ranges.get(name, (min(c["words"] for c in mine),
                                       max(c["words"] for c in mine)))
         print(f"  {name:<8}{len(mine):>4}{f'{low}-{high}':>12}")
+
+    if excluded:
+        by_reason: dict = {}
+        for row in excluded:
+            by_reason.setdefault(row["reason"], []).append(row)
+        print(f"\n  exclusions ({len(excluded)}, every one accounted for)")
+        for reason, rows in sorted(by_reason.items()):
+            label = ("cut mid-sentence" if reason == "cut"
+                     else f"below the {data.get('min_words')}-word rule")
+            capped = sum(1 for r in rows if r.get("truncated_response"))
+            print(f"    {reason:<6} {len(rows):>3}  {label}"
+                  f"  ({capped} of {len(rows)} from a truncated response)")
+            for row in rows:
+                print(f"           {row['words']:>3}w  {row['arm']}/"
+                      f"{row['query'][:28]}/{row['trial']}")
+        unexplained = [r for r in excluded if not r.get("truncated_response")]
+        print(f"    unexplained exclusions             {len(unexplained)}")
+    else:
+        print("\n  exclusions  none")
 
     print("\n  examples (real text, taken verbatim from the run)")
     for name in BUCKET_NAMES:
@@ -461,7 +522,7 @@ def main() -> int:
 
     if not args.results_dir:
         raise SystemExit("give a results folder, or --verify an existing corpus")
-    chunks = extract(pathlib.Path(args.results_dir), args.words)
+    chunks, excluded = extract(pathlib.Path(args.results_dir), args.words)
     ranges = assign_buckets(chunks) if chunks else {}
     if not chunks:
         raise SystemExit(
@@ -480,6 +541,11 @@ def main() -> int:
                  "is not applied again here. Nothing was written for the "
                  "benchmark."),
         "bucket_ranges": {k: list(v) for k, v in ranges.items()},
+        # Every exclusion, kept in the corpus file so the count is auditable
+        # without re-running the extractor.
+        "excluded": [{"arm": r["arm"], "query": r["query"], "trial": r["trial"],
+                      "words": r["words"], "reason": r["reason"],
+                      "truncated_response": r["truncated"]} for r in excluded],
         "chunks": chunks,
     }, indent=2), encoding="utf-8")
 

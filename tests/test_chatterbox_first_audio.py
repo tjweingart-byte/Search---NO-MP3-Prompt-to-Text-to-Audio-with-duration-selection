@@ -124,7 +124,7 @@ def test_the_parser_matches_the_generator_that_writes_the_file(tmp_path):
     text = " ".join(f"w{i}" for i in range(30)) + " and it ends here."
     _openings_file(tmp_path, [{"arm": "A-control", "query": "why tides", "text": text}])
 
-    chunks = extract_chunks.extract(tmp_path, words=25)
+    chunks, _ = extract_chunks.extract(tmp_path, words=25)
     assert len(chunks) == 1
     assert chunks[0]["text"] == text
     assert chunks[0]["source"].startswith("openings_by_arm.md:A-control:why tides")
@@ -144,7 +144,7 @@ def test_a_chunk_that_spans_lines_is_reconstructed_whole(tmp_path):
     assert "\n" in text and len(text.split()) == 35
     _openings_file(tmp_path, [{"arm": "A-control", "query": "f1", "text": text}])
 
-    chunks = extract_chunks.extract(tmp_path, words=25)
+    chunks, _ = extract_chunks.extract(tmp_path, words=25)
     assert len(chunks) == 1
     assert chunks[0]["words"] == 35
     # Rejoined as the model wrote it: this is the string a voice would receive.
@@ -161,7 +161,7 @@ def test_a_multi_line_chunk_does_not_swallow_the_next_row(tmp_path):
         {"arm": "A", "query": "q", "text": spanning, "index": 1},
         {"arm": "A", "query": "q", "text": plain, "index": 2}])
 
-    chunks = extract_chunks.extract(tmp_path, words=10)
+    chunks, _ = extract_chunks.extract(tmp_path, words=10)
     assert len(chunks) == 2
     assert chunks[0]["text"] == spanning
     assert chunks[1]["text"] == plain
@@ -174,7 +174,7 @@ def test_a_multi_line_chunk_at_the_end_of_an_arm_stops_at_the_heading(tmp_path):
         {"arm": "A", "query": "q", "text": spanning, "index": 1},
         {"arm": "B", "query": "q", "text": plain, "index": 1}])
 
-    chunks = extract_chunks.extract(tmp_path, words=5)
+    chunks, _ = extract_chunks.extract(tmp_path, words=5)
     by_arm = {c["source"].split(":")[1]: c for c in chunks}
     assert by_arm["A"]["text"] == spanning
     assert "## B" not in by_arm["A"]["text"]
@@ -195,17 +195,30 @@ def test_truncated_marks_the_response_not_the_chunk(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "truncated response, complete chunk 1" in out
     assert "truncated response, CUT chunk      0" in out
-    assert "The chunks themselves are intact." in out
+    assert "chunks are intact and are valid benchmark input" in out
 
 
-def test_the_audit_fails_when_a_chunk_really_was_cut(tmp_path, capsys):
-    """Otherwise the reassurance is worthless."""
+def test_the_audit_names_a_cut_chunk_and_its_cause(tmp_path, capsys):
+    """A cut chunk with a truncated response is explained by the fallback."""
     cut = " ".join(f"w{i}" for i in range(30)) + " and then it stops mid"
     _openings_file(tmp_path, [
         {"arm": "E", "query": "q", "text": cut, "truncated": True}])
 
+    assert extract_chunks.audit(tmp_path, words=25) == 0
+    out = capsys.readouterr().out
+    assert "really were cut mid-sentence" in out
+    assert "first_chunk = buffer.strip()" in out
+    assert "excluded from the corpus automatically" in out
+
+
+def test_the_audit_fails_on_a_cut_chunk_with_no_truncation_to_explain_it(
+        tmp_path, capsys):
+    """Otherwise the reassurance is worthless: that would be a parse fault."""
+    cut = " ".join(f"w{i}" for i in range(30)) + " and then it stops mid"
+    _openings_file(tmp_path, [{"arm": "A", "query": "q", "text": cut}])
+
     assert extract_chunks.audit(tmp_path, words=25) == 1
-    assert "really were cut mid-sentence" in capsys.readouterr().out
+    assert "parse fault, not a data case" in capsys.readouterr().out
 
 
 def test_extraction_refuses_a_chunk_that_is_not_sentence_ended(tmp_path):
@@ -215,7 +228,73 @@ def test_extraction_refuses_a_chunk_that_is_not_sentence_ended(tmp_path):
 
     with pytest.raises(SystemExit) as caught:
         extract_chunks.extract(tmp_path, words=25)
-    assert "do not end at a sentence boundary" in str(caught.value)
+    assert "does not end at a sentence boundary" in str(caught.value)
+
+
+def test_a_cut_chunk_is_excluded_not_benchmarked(tmp_path, capsys):
+    """harness.py records the raw buffer when the rule is never satisfied:
+
+        if first_chunk is None:
+            first_chunk = buffer.strip()
+
+    So a truncated response can leave a mid-sentence fragment in the openings
+    file. It is real pipeline behaviour and it is not what FAM would speak, so
+    it must not reach the voice - and it must not silently vanish either.
+    """
+    good = " ".join(f"w{i}" for i in range(30)) + " and it ends here."
+    cut = " ".join(f"w{i}" for i in range(30)) + " and then it just"
+    _openings_file(tmp_path, [
+        {"arm": "A-control", "query": "q", "text": good, "truncated": True},
+        {"arm": "E-max-tokens-96", "query": "q", "text": cut, "truncated": True}])
+
+    chunks, excluded = extract_chunks.extract(tmp_path, words=25)
+    assert [c["text"] for c in chunks] == [good]
+    assert all(c["ends_complete"] for c in chunks)
+    assert [(e["reason"], e["arm"]) for e in excluded] == [("cut", "E-max-tokens-96")]
+    assert "cut mid-sentence" in capsys.readouterr().out
+
+
+def test_a_complete_chunk_from_a_capped_response_is_kept(tmp_path):
+    """The 106: the response hit max_tokens long after the chunk was emitted."""
+    good = " ".join(f"w{i}" for i in range(30)) + " and it ends here."
+    _openings_file(tmp_path, [
+        {"arm": "A-control", "query": "q", "text": good, "truncated": True}])
+
+    chunks, excluded = extract_chunks.extract(tmp_path, words=25)
+    assert len(chunks) == 1
+    assert chunks[0]["truncated_response"] is True
+    assert excluded == []
+
+
+def test_a_cut_chunk_without_a_truncated_response_is_still_fatal(tmp_path):
+    """The fallback only fires on a stream that ended early.
+
+    A cut chunk from an untruncated response has no explanation, so it means
+    the parse is wrong - and excluding it would hide that.
+    """
+    cut = " ".join(f"w{i}" for i in range(30)) + " and then it just"
+    _openings_file(tmp_path, [{"arm": "A", "query": "q", "text": cut}])
+
+    with pytest.raises(SystemExit) as caught:
+        extract_chunks.extract(tmp_path, words=25)
+    assert "does not end at a sentence boundary" in str(caught.value)
+    assert "was not truncated" in str(caught.value)
+
+
+def test_every_exclusion_is_recorded_in_the_corpus_file(tmp_path):
+    """So the count is auditable without re-running the extractor."""
+    good = " ".join(f"w{i}" for i in range(30)) + " and it ends here."
+    cut = " ".join(f"w{i}" for i in range(30)) + " and then it just"
+    short = "Only a few words here."
+    _openings_file(tmp_path, [
+        {"arm": "A", "query": "q", "text": good, "index": 1},
+        {"arm": "E", "query": "q", "text": cut, "index": 2, "truncated": True},
+        {"arm": "E", "query": "q", "text": short, "index": 3, "truncated": True}])
+
+    _, excluded = extract_chunks.extract(tmp_path, words=25)
+    reasons = sorted(e["reason"] for e in excluded)
+    assert reasons == ["cut", "short"]
+    assert all(e["truncated"] for e in excluded)
 
 
 def test_sentence_end_detection_allows_closing_punctuation():
@@ -238,11 +317,10 @@ def test_short_chunks_are_named_with_their_provenance(tmp_path, capsys):
 
     extract_chunks.extract(tmp_path, words=25)
     out = capsys.readouterr().out
-    assert "2 recorded chunk(s) below the 25-word rule" in out
-    assert "E-max-tokens-96/q/1  - response hit its token cap" in out
-    assert "B-thinking-off/q/1  - UNEXPLAINED" in out
-    assert "1 are explained" in out
-    assert "1 are NOT explained" in out
+    assert "2 recorded chunk(s) excluded from the corpus" in out
+    assert "E-max-tokens-96/q/1  - below the 25-word rule" in out
+    assert "B-thinking-off/q/1  - below the 25-word rule - UNEXPLAINED" in out
+    assert "1 exclusion(s) are UNEXPLAINED" in out
 
 
 def test_the_recorded_chunk_is_taken_verbatim_not_re_chunked(tmp_path):
@@ -256,7 +334,7 @@ def test_the_recorded_chunk_is_taken_verbatim_not_re_chunked(tmp_path):
             + " ".join(f"x{i}" for i in range(20)) + " finished.")
     _openings_file(tmp_path, [{"arm": "A", "query": "q", "text": text}])
 
-    chunks = extract_chunks.extract(tmp_path, words=25)
+    chunks, _ = extract_chunks.extract(tmp_path, words=25)
     assert chunks[0]["text"] == text
     assert chunks[0]["text"].endswith("finished.")
 
@@ -267,7 +345,7 @@ def test_no_chunk_markers_never_reach_the_corpus(tmp_path):
     _openings_file(tmp_path, [
         {"arm": "A", "query": "q", "text": good, "index": 1},
         {"arm": "A", "query": "q", "text": "(no chunk)", "index": 2}])
-    chunks = extract_chunks.extract(tmp_path, words=25)
+    chunks, _ = extract_chunks.extract(tmp_path, words=25)
     assert len(chunks) == 1
     assert "(no chunk)" not in chunks[0]["text"]
 
@@ -297,7 +375,7 @@ def test_identical_openings_are_not_timed_twice(tmp_path):
     same = " ".join(f"w{i}" for i in range(30)) + " end."
     _openings_file(tmp_path, [{"arm": "A", "query": "q", "text": same},
                               {"arm": "B", "query": "q", "text": same}])
-    chunks = extract_chunks.extract(tmp_path, words=25)
+    chunks, _ = extract_chunks.extract(tmp_path, words=25)
     assert len(chunks) == 1
     assert chunks[0]["also_from"] == ["B/1"]
 
@@ -312,7 +390,7 @@ def test_buckets_split_a_real_corpus_three_ways(tmp_path):
              "text": " ".join(f"w{i}" for i in range(n)) + " end."}
             for n in range(25, 55)]
     _openings_file(tmp_path, rows)
-    chunks = extract_chunks.extract(tmp_path, words=25)
+    chunks, _ = extract_chunks.extract(tmp_path, words=25)
     ranges = extract_chunks.assign_buckets(chunks)
 
     assert set(ranges) == {"short", "medium", "long"}
