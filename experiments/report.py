@@ -510,6 +510,43 @@ def _threshold_section(spec: ExperimentSpec, analysis: dict) -> list[str]:
     return out
 
 
+def threshold_analysis_markdown(spec: ExperimentSpec, trials: list[dict]) -> str:
+    """One self-contained file: the tables and every opening, ready to hand over.
+
+    The analysis has twice failed to reach the person who needed it, because it
+    was spread across a report, a raw trials file and a candidates file. This
+    writes the whole thing once, so there is a single artefact to send.
+    """
+    import importlib.util
+    import pathlib as _pathlib
+
+    module_path = (_pathlib.Path(__file__).resolve().parent.parent
+                   / "tools" / "analyze_thresholds.py")
+    loader = importlib.util.spec_from_file_location("analyze_thresholds", module_path)
+    analyzer = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(analyzer)
+
+    good = [t for t in trials if t.get("ok")]
+    groups = analyzer.by_topic(good)
+    body = (analyzer.render_multi_topic(groups, examples=3) if len(groups) > 1
+            else analyzer.render(analyzer.analyse(good), examples=5))
+
+    return "\n".join([
+        f"# Threshold analysis — {spec.name}", "",
+        f"- Trials: {len(good)} successful of {len(trials)}",
+        f"- Topics: {len(groups)}",
+        f"- Model: {spec.arms[0].model}",
+        f"- Production rule unchanged: first_chunk_words = "
+        f"{spec.arms[0].params.get('first_chunk_words')}", "",
+        "Counted values below are measurements. The structural checks are a "
+        "filter, not a judgement of quality — the openings are printed in full "
+        "so the writing can be judged by reading it.", "",
+        "```", body, "```", "",
+        "## Every candidate opening", "",
+        candidates_markdown(spec, good),
+    ])
+
+
 def candidates_markdown(spec: ExperimentSpec, trials: list[dict]) -> str:
     """Every threshold's opening from every trial, grouped for reading.
 

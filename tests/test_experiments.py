@@ -2291,3 +2291,45 @@ def test_every_manifest_topic_appears_in_the_spec():
     assert len(categories) == len(manifest["topics"]), "each topic is a distinct shape"
     # The bridge topic keeps the new run comparable with the old ones.
     assert "founder_ceos" in mapping.values()
+
+
+def test_a_threshold_run_writes_one_self_contained_analysis():
+    """The handover file: tables and every opening, in one place."""
+    spec = ExperimentSpec.from_json(
+        (pathlib.Path(__file__).resolve().parent.parent / "experiments" / "specs"
+         / "multi_topic_thresholds.json").read_text())
+    trials = []
+    for query in spec.queries[:2]:
+        for index in range(1, 3):
+            trials.append({
+                "arm": "control-verified", "query": query, "index": index, "ok": True,
+                "simulated": False, "usage": {}, "cost": 0.0, "artifacts": [],
+                "first_chunk_text": "An opening.", "timeline": {"stages": []},
+                "threshold_texts": {
+                    "5": "Boards moved on.",
+                    "10": "Boards moved on. And then the rest of it followed on.",
+                    "15": "Boards moved on. And then the rest of it followed on.",
+                    "20": "Boards moved on. And then the rest of it followed on.",
+                    "25": "Boards moved on. And then the rest of it followed on. Plus more.",
+                },
+                "metrics": {
+                    "probe_thresholds": [5, 10, 15, 20, 25], "probe_monotonic": True,
+                    "seg_dispatch_to_first_token": 0.97, "first_chunk_words": 27,
+                    **{f"boundary_{t}_at": v for t, v in
+                       ((5, 0.12), (10, 0.54), (15, 0.54), (20, 0.54), (25, 0.80))},
+                    **{f"boundary_{t}_words": w for t, w in
+                       ((5, 3), (10, 11), (15, 11), (20, 11), (25, 13))},
+                    **{f"boundary_wait_{t}": 0.01 for t in (5, 10, 15, 20, 25)},
+                },
+            })
+
+    text = report.threshold_analysis_markdown(spec, trials)
+    assert "Threshold analysis" in text
+    assert "Production rule unchanged: first_chunk_words = 25" in text
+    assert "READY TIME" in text and "STRUCTURALLY CLEAN" in text
+    assert "earliest surviving threshold" in text
+    assert "Every candidate opening" in text
+    assert "Boards moved on." in text
+    assert "filter, not a judgement" in text
+    # Both topics present, so the per-topic view was used.
+    assert spec.queries[0] in text and spec.queries[1] in text

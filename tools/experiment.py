@@ -185,9 +185,17 @@ def cmd_run(args) -> int:
     # The openings, grouped for reading. Latency is in the report; this is the
     # half that decides whether an earlier threshold is acceptable.
     if any(t.get("threshold_texts") for t in analysis.get("_trials", [])):
+        trials_for_analysis = analysis["_trials"]
         run.write_artifact(
             "candidates.md",
-            report.candidates_markdown(spec, analysis["_trials"]).encode("utf-8"))
+            report.candidates_markdown(spec, trials_for_analysis).encode("utf-8"))
+        # One file carrying the tables and every opening. The analysis has
+        # twice failed to reach the person who needed it because it was spread
+        # across three files; this is the one to send.
+        run.write_artifact(
+            "analysis.md",
+            report.threshold_analysis_markdown(spec, trials_for_analysis).encode("utf-8"))
+        print(f"  {DIM}analysis written to {run.artifacts_dir / 'analysis.md'}{RESET}")
 
     leaks = run.verify_clean()
     if leaks:
