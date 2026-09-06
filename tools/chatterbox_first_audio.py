@@ -128,6 +128,18 @@ def preflight(chunks_path: pathlib.Path, device: str | None) -> int:
     except ImportError as exc:
         check(f"{impl.TURBO_MODULE} importable", False, str(exc))
 
+    # Importing the module is not enough. from_pretrained instantiates
+    # perth.PerthImplicitWatermarker, and perth sets that to None when its own
+    # import fails - so the failure only appears after a 4 GB download, as a
+    # TypeError with no mention of the real cause. Check the attribute itself.
+    try:
+        import perth
+        ok_perth = getattr(perth, "PerthImplicitWatermarker", None) is not None
+        check("perth watermarker is loadable", ok_perth,
+              "" if ok_perth else "it is None - run tools/diagnose_chatterbox.py")
+    except ImportError as exc:
+        check("perth watermarker is loadable", False, str(exc))
+
     # `resolve_device` honours an explicitly named device without asking the
     # machine whether it has one, which is right for the runner and wrong here:
     # naming --device mps on a box with no Metal passed this check until it was

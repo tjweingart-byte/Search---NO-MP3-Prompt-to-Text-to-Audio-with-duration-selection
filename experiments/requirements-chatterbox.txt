@@ -15,3 +15,19 @@
 chatterbox-tts
 torch
 torchaudio
+
+# Chatterbox loads a watermarker from `resemble-perth`, and perth still does
+# `from pkg_resources import resource_filename`. setuptools shipped
+# pkg_resources through 81.0.0 and removed it in 82.0.0, so a current
+# setuptools makes that import fail - and perth swallows the ImportError,
+# setting PerthImplicitWatermarker to None. Chatterbox then calls it, and you
+# get `TypeError: 'NoneType' object is not callable` from from_pretrained,
+# after a 4 GB download, with nothing naming the real cause.
+#
+# Pinning below 82 fixes it with nothing disabled. Do not stub the watermarker:
+# it runs inside every generate(), so removing it changes both the audio and
+# the latency this benchmark measures.
+#
+# tools/diagnose_chatterbox.py surfaces the real error if this is ever
+# something other than pkg_resources.
+setuptools<82

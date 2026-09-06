@@ -431,3 +431,49 @@ def test_preflight_reports_a_missing_corpus_with_the_commands_to_fix_it(
     out = capsys.readouterr().out
     assert "chunk corpus present" in out
     assert "tools/extract_chunks.py" in out
+
+
+def test_preflight_catches_a_none_watermarker_before_the_download(monkeypatch, capsys):
+    """The 4 GB failure.
+
+    `perth/__init__.py` swallows an ImportError and sets
+    PerthImplicitWatermarker to None. Chatterbox calls it inside
+    from_pretrained, so the TypeError only appears after the weights have been
+    fetched. Importing chatterbox.tts_turbo succeeds either way, so the
+    preflight has to check the attribute.
+    """
+    import pathlib as _pathlib
+    import sys as _sys
+    import types as _types
+
+    from tools import chatterbox_first_audio as runner
+
+    stub = _types.ModuleType("perth")
+    stub.PerthImplicitWatermarker = None
+    monkeypatch.setitem(_sys.modules, "perth", stub)
+
+    runner.preflight(_pathlib.Path("absent.json"), None)
+    out = capsys.readouterr().out
+    assert "FAIL  perth watermarker is loadable" in out
+    assert "diagnose_chatterbox" in out
+
+    stub.PerthImplicitWatermarker = object
+    runner.preflight(_pathlib.Path("absent.json"), None)
+    assert "ok    perth watermarker is loadable" in capsys.readouterr().out
+
+
+def test_the_diagnosis_prescribes_by_the_error_it_found(capsys):
+    """It must not prescribe a setuptools pin for a torch problem."""
+    from tools.diagnose_chatterbox import _prescribe
+
+    _prescribe(ImportError("No module named 'pkg_resources'"))
+    assert 'setuptools<82' in capsys.readouterr().out
+
+    _prescribe(ImportError("No module named 'torchaudio'"))
+    out = capsys.readouterr().out
+    assert "torch==2.6.0" in out and "setuptools" not in out
+
+    _prescribe(ImportError("something else entirely"))
+    out = capsys.readouterr().out
+    assert "does not have a prescription for" in out
+    assert "setuptools" not in out and "torch==" not in out
