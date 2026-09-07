@@ -521,3 +521,26 @@ def test_a_missing_corpus_names_the_command_that_builds_it(tmp_path, monkeypatch
     with pytest.raises(SystemExit) as caught:
         pack_for_pod.check_corpus()
     assert "tools/extract_chunks.py" in str(caught.value)
+
+
+def test_a_smoke_run_takes_from_every_bucket(tmp_path, monkeypatch, capsys):
+    """A smoke run that only sampled the first chunks would miss the long case,
+    which is the one most likely to be slow."""
+    import sys as _sys
+
+    from tools import chatterbox_first_audio as runner
+
+    corpus = tmp_path / "c.json"
+    corpus.write_text(json.dumps({"min_words": 25, "chunks": [
+        {"text": f"chunk {i} ends here.", "words": 30, "bucket": bucket}
+        for bucket in ("short", "medium", "long") for i in range(5)]}),
+        encoding="utf-8")
+
+    monkeypatch.setattr(_sys, "argv", [
+        "chatterbox_first_audio", "--simulate", "--chunks", str(corpus),
+        "--trials", "1", "--max-chunks", "2"])
+    assert runner.main() == 0
+    out = capsys.readouterr().out
+    assert "SMOKE RUN: 6 of the corpus, 2 per bucket. Not a result." in out
+    for bucket in ("short", "medium", "long"):
+        assert bucket in out

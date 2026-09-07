@@ -278,6 +278,9 @@ def main() -> int:
     where.add_argument("--simulate", action="store_true", help="fake engine; proves the harness")
     parser.add_argument("--chunks", default=DEFAULT_CHUNKS)
     parser.add_argument("--trials", type=int, default=5)
+    parser.add_argument("--max-chunks", type=int, dest="max_chunks",
+                        help="use only the first N chunks of each bucket; for a "
+                             "smoke run that proves the device before the sweep")
     parser.add_argument("--device", help="cuda / mps; never cpu unless named")
     parser.add_argument("--out", help="write rows and summary here as JSON")
     parser.add_argument("--preflight", action="store_true",
@@ -288,6 +291,18 @@ def main() -> int:
         return preflight(pathlib.Path(args.chunks), args.device)
 
     chunks = load_chunks(pathlib.Path(args.chunks))
+    if args.max_chunks:
+        # Evenly across buckets, so a smoke run still exercises the short and
+        # the long case rather than whichever happened to be first.
+        trimmed, seen = [], {}
+        for chunk in chunks:
+            bucket = chunk["bucket"]
+            if seen.get(bucket, 0) < args.max_chunks:
+                seen[bucket] = seen.get(bucket, 0) + 1
+                trimmed.append(chunk)
+        chunks = trimmed
+        print(f"SMOKE RUN: {len(chunks)} of the corpus, "
+              f"{args.max_chunks} per bucket. Not a result.")
     transport = "simulate" if args.simulate else ("local" if args.local else "http")
 
     cold = None
@@ -337,6 +352,7 @@ def main() -> int:
         path.write_text(json.dumps(
             {"label": LABEL_SIMULATED if transport == "simulate" else (
                 banner(cold["device"]) if cold else "REMOTE ENDPOINT"),
+             "smoke_run": bool(args.max_chunks),
              "transport": transport, "simulated": transport == "simulate",
              "is_production_latency": False,
              "summary": summary, "rows": rows}, indent=2), encoding="utf-8")
