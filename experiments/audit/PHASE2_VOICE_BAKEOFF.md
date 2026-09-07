@@ -47,23 +47,31 @@ beyond the three required, and both failed on licensing.
 
 ## The passages
 
-Three, in `experiments/passages/fam_voice_passages.json`, each 57-63 words —
-matched to the real FAM chunk range of 25-59 words so the test hears what the
-product would actually send. Written in FAM's register per `CLAUDE.md`.
+Three, in `experiments/passages/fam_voice_passages.json`, each **48, 48 and 46 words** —
+held to a 40-50 band inside the verified 25-59 word range of the real
+first-chunk corpus, so the test hears what the product would actually send.
+Written in FAM's register per `CLAUDE.md`.
 
-**1. Intimate / curious storytelling** — an old Babylonian lullaby that turns
-out to be a threat. Small dynamic range, a turn that needs timing, a dry
-closing line. *Does it lean in, or announce? Does the last line land or get
-flattened?*
+A test pins both the band and the features each passage exists to stress, so a
+future trim cannot quietly remove the thing being tested: the turn and the dry
+closer in one, the colon, the emphasis target and the three-verb run in two,
+and the proper nouns, decimals, spelled-out number and mid-passage turn in
+three.
 
-**2. Energetic explanatory narration** — heat pumps moving heat rather than
-making it. A colon, an em-dash, a three-verb run, and an emphasis that must
-fall on "move it". *Does the run accelerate or plod?*
+**1. Intimate / curious storytelling** (48 words) — an old Babylonian lullaby
+that turns out to be a threat. Small dynamic range, a turn that needs timing,
+and a dry four-word closer. *Does it lean in, or announce? Does "They just used
+to write it down" land, or get flattened?*
 
-**3. Authoritative / news-style** — market movement with proper nouns,
-decimals, a large number in words, percentages, and a mid-sentence turn.
-*Are "zero point four percent" and "three point eight" read naturally? Does
-"Nasdaq" survive? Does "Beneath that flatness" carry a turn?*
+**2. Energetic explanatory narration** (48 words) — heat pumps moving heat
+rather than making it. A colon, a dash, a three-verb run, and an emphasis that
+must fall on "They move it." *Does the run accelerate or plod? Is the closer
+emphatic without shouting?*
+
+**3. Authoritative / news-style** (46 words) — market movement with four proper
+nouns, three decimals, a large number in words, percentages, and a mid-passage
+turn. *Are "zero point four percent" and "three point eight" read naturally?
+Does "Nasdaq" survive? Does "Beneath that flatness" carry a turn?*
 
 **The numbers in passage 3 are synthetic**, written to exercise number prosody.
 The JSON marks them `synthetic_numbers: true`. They are not market data and
@@ -134,9 +142,10 @@ Then:
     first impressions before replays.
 3. **Only then** open `KEY.json`.
 
-Expect roughly 12 generations (4 candidates x 3 passages). On MPS the
-Chatterbox variants run near real time, so budget ten to fifteen minutes of
-generation for about three and a half minutes of audio.
+Expect 12 generations (4 candidates x 3 passages), about 142 words of speech
+per candidate. On MPS the Chatterbox variants run near real time, so budget
+roughly ten minutes of generation for about two and a half minutes of audio -
+less than the earlier draft, because the passages are shorter.
 
 ## What the result decides
 

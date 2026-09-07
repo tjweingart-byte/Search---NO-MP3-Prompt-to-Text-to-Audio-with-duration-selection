@@ -133,3 +133,56 @@ def test_the_player_loads_nothing_from_the_network():
                                        for p in PASSAGES})
     for marker in ("http://", "https://", "//cdn", "<script"):
         assert marker not in page
+
+
+def _real_passages():
+    path = (pathlib.Path(__file__).resolve().parent.parent / "experiments"
+            / "passages" / "fam_voice_passages.json")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_passages_sit_inside_the_verified_chunk_range():
+    """The test must hear what the product would actually send.
+
+    25-59 words is the measured range of the real first-chunk corpus; 40-50 is
+    the band chosen inside it. A passage outside that is testing a length FAM
+    does not produce.
+    """
+    data = _real_passages()
+    band = data["word_range"]
+    for passage in data["passages"]:
+        words = len(passage["text"].split())
+        assert words == passage["words"], passage["id"]
+        assert band["min"] <= words <= band["max"], (passage["id"], words)
+        assert band["preferred_min"] <= words <= band["preferred_max"], (
+            passage["id"], words)
+
+
+def test_each_passage_still_carries_what_it_is_meant_to_stress():
+    """A trim must not quietly remove the thing a passage exists to test."""
+    passages = {p["id"]: p["text"] for p in _real_passages()["passages"]}
+
+    intimate = passages["intimate"]
+    assert "not soothing" in intimate            # the turn
+    assert intimate.rstrip().endswith("write it down.")   # the dry closer
+
+    energetic = passages["energetic"]
+    assert ":" in energetic                      # the colon
+    assert "They move it." in energetic          # the emphasis target
+    assert energetic.count(" it,") >= 2          # the three-verb run
+    assert "-" in energetic                      # the dash
+
+    news = passages["authoritative"]
+    for name in ("Nasdaq", "Dow", "Nvidia", "Intel"):
+        assert name in news                      # proper nouns
+    assert news.count("point") >= 3              # decimals read aloud
+    assert "percent" in news
+    assert "one hundred and twelve" in news      # a large number in words
+    assert "Beneath that flatness" in news       # the mid-passage turn
+
+
+def test_the_synthetic_numbers_are_still_flagged():
+    """So passage three is never mistaken for market data."""
+    news = next(p for p in _real_passages()["passages"]
+                if p["id"] == "authoritative")
+    assert news["synthetic_numbers"] is True
