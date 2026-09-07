@@ -1,0 +1,28 @@
+{
+  "name": "FAM voice bake-off passages",
+  "note": "Three passages chosen to stress different things a FAM episode asks of a voice. Written in FAM's register per CLAUDE.md - speak from inside, every sentence carries information, land it and stop. Numbers in passage 3 are SYNTHETIC, written to exercise number prosody; they are not market data and must never be quoted as such.",
+  "passages": [
+    {
+      "id": "intimate",
+      "label": "intimate / curious storytelling",
+      "stresses": "warmth, small dynamic range, a turn that needs timing, a dry closing line that must not be over-sold",
+      "watch_for": "Does it sound like someone leaning in, or like an announcer? Does the joke in the last sentence land, or get flattened?",
+      "text": "The oldest lullaby anyone has found is about four thousand years old, written in Babylonian, and it is not soothing. It warns the baby that it has woken the house god, and that the god is angry. Parents have been bargaining with their own exhaustion for a very long time. They just used to write it down."
+    },
+    {
+      "id": "energetic",
+      "label": "energetic explanatory narration",
+      "stresses": "forward momentum, a colon and an em-dash, a three-verb run that needs rhythm, emphasis that must fall on the right word",
+      "watch_for": "Does 'move it' get the stress, or does the line go flat? Does the three-verb run accelerate, or plod? Is the last sentence emphatic without shouting?",
+      "text": "Here is the part that surprises people about heat pumps: they do not make heat at all. They move it. Even at freezing, outdoor air still holds energy, and the pump squeezes it, concentrates it, and pushes it inside - which is how it delivers three or four units of warmth for every one it uses. Nothing else in the house does that."
+    },
+    {
+      "id": "authoritative",
+      "label": "authoritative / news-style delivery",
+      "stresses": "proper nouns, decimals, a large number in words, percentages, a transition phrase, a colon mid-sentence",
+      "watch_for": "Are 'zero point four percent' and 'two point one percent' read naturally or spelled out awkwardly? Does 'Nasdaq' survive? Does 'Beneath that flatness' carry a genuine turn, or reset to a new sentence?",
+      "text": "Markets closed mixed on Thursday. The Nasdaq finished up zero point four percent, the Dow slipped one hundred and twelve points, and the S and P ended almost exactly where it started. Beneath that flatness, semiconductors moved: Nvidia rose two point one percent, while Intel fell three point eight after cutting its guidance for the fourth quarter.",
+      "synthetic_numbers": true
+    }
+  ]
+}

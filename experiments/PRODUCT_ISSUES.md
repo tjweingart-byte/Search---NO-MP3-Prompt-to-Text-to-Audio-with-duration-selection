@@ -168,16 +168,39 @@ terms of the non-commercial CPML". **Disqualifying for a commercial product
 unless a licence can be obtained**, and Coqui the company wound down, so who
 can grant one is itself unresolved. Settle this before spending GPU time.
 
-### P19. Weight licences are unverified for Chatterbox and Kokoro
-**Standing rule while this is open: no unverified weight licence is treated as
-commercially usable.** A favourable engineering result does not make an engine
-adoptable; it makes it technically adoptable pending this check.
+### P19. Weight licences — Chatterbox RESOLVED, Kokoro still open
+**Standing rule while any of this is open: no unverified weight licence is
+treated as commercially usable.** A favourable engineering result does not make
+an engine adoptable; it makes it technically adoptable pending this check.
 
-Both packages are permissively licensed as *code* - Chatterbox MIT, Kokoro
-Apache-2.0 - but a TTS model's weights carry their own terms, as XTTS proves.
-The model cards could not be reached from the build container. **Check both
-before either is adopted.** Piper is GPL-3.0-or-later, which is a deliberate
-decision for a commercial product even server-side.
+**Chatterbox: cleared.** Per Resemble AI's official documentation, Chatterbox,
+Chatterbox Multilingual and Chatterbox Turbo are **MIT-licensed and permitted
+for commercial products, self-hosting, modification and production
+deployment**. The official GitHub `LICENSE` is MIT, and the official
+`ResembleAI/chatterbox` Hugging Face distribution is marked MIT — the same
+`REPO_ID` the package resolves at `tts.py:19` and `mtl_tts.py:21`.
+(*Source: Resemble AI's official documentation, as supplied by the project
+owner. The build container cannot reach huggingface.co, so this record rests on
+that citation rather than on a fetch performed here.*)
+
+**Kokoro: still unverified.** The `kokoro` package is Apache-2.0 as *code*;
+the weights carry their own terms and the model card has not been read. Check
+before adoption, not before benchmarking — listening to it costs nothing.
+
+**Piper:** GPL-3.0-or-later. A deliberate decision for a commercial product
+even server-side.
+
+### P19b. Reference-voice rights are a separate requirement from the model licence
+An MIT model licence permits using the *software and weights*. It says nothing
+about rights in whatever audio is supplied as a **reference voice** for cloning
+(`audio_prompt_path`), nor about the default voice shipped in the checkpoint's
+`conds.pt`.
+
+If FAM ever clones a voice, the recording used needs its own clearance —
+performer consent, and a licence covering synthetic reproduction and commercial
+distribution. **This is not covered by MIT and must be established
+independently.** Open, and it becomes live the moment a reference voice is
+chosen rather than the shipped default.
 
 ---
 

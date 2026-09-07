@@ -99,7 +99,14 @@ harness unchanged.
 
 </details>
 
-## Phase 2 — the bake-off. One 4090 session, ~$0.75. A day.
+## Phase 2 — **reordered: the listening test comes first, and it is free**
+
+Phase 1 made the quality question decisive, so the blind bake-off runs *before*
+any further latency benchmark and needs no GPU. Design preserved in
+`audit/PHASE2_VOICE_BAKEOFF.md`; roster, passages and scoring fixed before any
+audio existed. The latency bake-off below follows only for whatever survives.
+
+### The latency bake-off, afterwards. One 4090 session, ~$0.75. A day.
 
 Every candidate that passed Gate 0, on the **same 106 chunks, same three
 buckets, same 3 trials, same metric definitions**, so results drop straight into

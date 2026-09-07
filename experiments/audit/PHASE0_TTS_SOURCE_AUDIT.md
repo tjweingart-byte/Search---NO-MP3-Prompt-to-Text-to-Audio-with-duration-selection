@@ -179,7 +179,7 @@ verified experimentally or from a document this audit could not reach.
 | **Expected TTFA potential** | *2.848s measured today; sub-second only via the fork* | *unmeasured, likely slower than Turbo* | *low by construction — first chunk is small; unmeasured* | *unknown, possibly very low: 82M, non-AR* | **0.5s measured** |
 | **Voice quality / expressiveness potential** | *unheard.* Expressive knobs **disabled**: CFG, `min_p`, `exaggeration` ignored (`tts_turbo.py:266`) | *unheard.* Exposes `exaggeration`, `cfg_weight`, `min_p` | *unheard.* Cloning + temperature/repetition controls | *unheard.* Fixed voice packs, `speed` only | **judged insufficient** (P2) |
 | **Voice cloning / customisation** | reference audio via `audio_prompt_path`; default `conds.pt` | reference audio + exaggeration | **zero-shot from reference audio** | blendable preset style vectors; **no arbitrary cloning** | fixed downloaded voices |
-| **Licensing** | code **MIT**; *weights licence unverified* | code **MIT**; *weights unverified* | code **MPL-2.0**; weights **CPML non-commercial, TOS-gated** — *blocker* | code **Apache-2.0**; *weights unverified* | **GPL-3.0-or-later** |
+| **Licensing** | **MIT, commercial use permitted** (P19, resolved) | **MIT, commercial use permitted** | code **MPL-2.0**; weights **CPML non-commercial, TOS-gated** — *blocker* | code **Apache-2.0**; *weights unverified* | **GPL-3.0-or-later** |
 | **Self-hostable** | yes, runs today on our 4090 | yes | yes | yes | yes, ships in-app today |
 | **Implementation difficulty** | **medium** — yield from T3, thread `finalize`/`cache_source`, solve watermarking | *unknown* | **low to integrate**; *licence may make it moot* | **low** | already integrated |
 | **Must be verified experimentally** | stage split (t3 vs flow vs hift vs watermark); per-chunk watermarking; Turbo-vs-base quality | latency and quality | first-chunk TTFA; **commercial licence availability**; quality | **TTFA on a 4090 — the key unknown**; quality; weights licence | nothing; it is the baseline |
@@ -212,8 +212,11 @@ credible path to incremental Chatterbox. Phase 1 (stage split) and Phase 2
 
 * How any of these **sound**. No audio was generated. Every quality cell above
   is a capability note, not a judgement.
-* Weight licences for Chatterbox and Kokoro — the model cards could not be
-  reached from the build container.
+* ~~Weight licences for Chatterbox and Kokoro~~ — **Chatterbox is resolved**:
+  MIT, commercial use permitted, per Resemble AI's official documentation and
+  the MIT marking on the official `ResembleAI/chatterbox` distribution (P19).
+  **Kokoro remains unverified.** Reference-voice rights are a separate
+  requirement from the model licence and remain open (P19b).
 * Whether XTTS's first chunk is actually fast in wall-clock terms.
 * Whether Kokoro's segment floor lands under or over a second.
 * Whether per-chunk watermarking is acceptable to Resemble AI's design.
