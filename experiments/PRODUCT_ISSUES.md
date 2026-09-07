@@ -96,11 +96,13 @@ JSON/base64 versus 0.190s under streaming PCM. **Only matters remotely** — the
 MPS run measured delivery at 0.000s in-process. Fix is `/synthesise/stream`,
 already built and non-production.
 
-### P12. Chatterbox on Apple silicon is 10-18s to first audio
-See `results/chatterbox_local_mps/ANALYSIS.md`. Roughly real-time generation,
-which cannot serve a streaming product. A 4090 run has been completed; the
-comparison is pending the numbers being read from the file rather than
-described (`results/chatterbox_mps_vs_4090/`).
+### P12. Chatterbox is 2.8s to first audio on a 4090 — better, still too slow
+*Updated with the measured comparison.* MPS 10.0/12.1/18.4s versus 4090
+2.181/2.848/3.610s by bucket: a 4.3-5.1x speedup, both runs verified at 318
+rows with zero failures. Against a ~1s spec and a shipped Piper build at 0.5s,
+the voice stage alone is 2.2-3.6s — four to seven times the whole budget.
+The 4090 made the words-to-latency line about six times shallower without
+making it flat. See `results/chatterbox_mps_vs_4090/ANALYSIS.md`.
 
 ### P13. A dependency can disable Chatterbox silently, after a 4 GB download
 `perth/__init__.py` swallows an ImportError and sets `PerthImplicitWatermarker`
@@ -116,14 +118,26 @@ Model load 13.9s plus warmup 12.60s. Argues for a long-lived server over
 per-request loading. Not on the request path once warm.
 
 ### P15. First-audio latency is bounded below by whole-chunk synthesis
-Independent of device. Because the path is one-shot, the listener waits for the
-**entire chunk** to be synthesised before any sound is possible - so the floor
-is `chunk_audio_seconds / realtime_factor`, and it grows with chunk length.
-Both benchmarks measured `delivery_seconds = 0.000s` in-process with
-`first_audio_bytes` and `stream_begin` collapsed onto completion, which is the
-measured signature of exactly that. Faster hardware moves the floor; it does
-not remove it. **This is the architectural finding of the whole sequence, and
-it is what the next experiment addresses.**
+Independent of device, and now measured on two. Because the path is one-shot,
+the listener waits for the **entire chunk** before any sound is possible:
+
+    first playable audio = chunk_audio_seconds / realtime_factor
+
+Both benchmarks recorded `delivery_seconds = 0.000s` with `first_audio_bytes`
+and `stream_begin` collapsed onto completion - the signature of exactly that,
+observed independently on MPS and on CUDA.
+
+Quantified: a 33-word chunk is ~13.2s of audio, so a 1.0s first-audio needs
+~13x realtime and 0.5s needs ~26x. The 4090 delivers ~4.6x. **Hardware alone
+would need roughly another 3-6x on top of a 4090**, and MPS -> 4090 was 4.6x -
+there is no comparable jump left in commodity cards, and per-listener GPU
+rental is not this product's cost model.
+
+Under incremental generation the listener waits for the first *frames*: at
+4.6x realtime, ~0.2s of audio would be ready in ~0.04s and first-audio would
+stop depending on chunk length at all. **The gap is architectural, not
+computational.** This is the finding of the whole sequence and the subject of
+the next experiment.
 
 ### P16. A RunPod PyTorch template ships a torchvision that chatterbox breaks
 Installing chatterbox downgrades torch to 2.6.0 and leaves the template's

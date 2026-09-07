@@ -67,12 +67,13 @@ connection reuse or chunk thresholds is on this scale.
 argument for a long-lived server rather than per-request loading — but it is
 not on the request path once warm, and it is excluded here.
 
-## What this does NOT say
+## What this does NOT say — now answered
 
-It does not say Chatterbox is too slow for FAM. It says *Chatterbox on Apple
-silicon* is. The recovered Runpod benchmarks ran on an RTX 4090, and a 4090 is
-expected to be very substantially faster than MPS. Whether it is fast enough is
-the next measurement, and it is unanswered until it is made.
+It does not say Chatterbox is too slow for FAM; it says *Chatterbox on Apple
+silicon* is. **The 4090 measurement has since been made:** 2.181/2.848/3.610s
+by bucket, a 4.3-5.1x speedup. Fast enough to keep ahead of a listener in
+principle, and still 2.2-3.6s for the voice stage against a ~1s spec. See
+`../chatterbox_mps_vs_4090/ANALYSIS.md`.
 
 ## Filling the diagram
 
