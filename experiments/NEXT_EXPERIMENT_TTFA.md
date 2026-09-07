@@ -54,7 +54,25 @@ the GPU with a shortlist that is known to have the interface.
 incremental interface. If none does, A is the only road and Phase 1 decides
 whether it is worth walking.
 
-## Phase 1 — the stage split. One 4090 session, ~$0.75. Hours.
+## Phase 1 — the stage split. **DONE. Verified.**
+
+**Result: T3 is 92.7% of generation time (max 93.1%); everything downstream is
+7.3%.** The pre-registered criterion was T3 above 60% means a model-level
+rewrite, and it was crossed by 32.7 points. Flow and HiFiGAN's `finalize` and
+`cache_source` are real and irrelevant - the most they could remove is 0.208s
+of a 2.848s wait.
+
+**Gate 1 outcome: t3 dominates -> option A is a deeper rewrite, not a contained
+change.** Recommendation taken: **option 3**, stop investing in the fork and
+prioritise the bake-off. See `results/chatterbox_stage_split/ANALYSIS.md`.
+
+Chatterbox stays in Phase 2 as a *quality* candidate (base vs Turbo). The fork
+reopens only if its voice wins the listening test, its weight licence checks
+out, and nothing else reaches sub-second.
+
+<details><summary>Original Phase 1 plan, kept for the record</summary>
+
+### One 4090 session, ~$0.75. Hours.
 
 Before anyone forks anything, find out whether incremental *vocoding* would
 even help. Time the two stages separately on the same 106 chunks:
@@ -78,6 +96,8 @@ existing benchmark does.
 
 This is one script, no new infrastructure, and it reuses the corpus and the
 harness unchanged.
+
+</details>
 
 ## Phase 2 — the bake-off. One 4090 session, ~$0.75. A day.
 

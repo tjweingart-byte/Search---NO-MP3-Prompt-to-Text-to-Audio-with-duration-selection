@@ -199,10 +199,12 @@ reports OK.
 
 ## Found by Phase 1 (stage split)
 
-### P21. Chatterbox latency is the autoregressive token loop, ~92-93% of it
-Measured on a 4090 across three chunk lengths. Flow, HiFiGAN, the watermark and
-text prep share the remaining 7-8%. Against the 2.848s medium-bucket figure,
-T3 is ~2.62s and everything downstream is ~0.22s.
+### P21. Chatterbox latency is the autoregressive token loop, 92.7% of it
+**Verified.** Measured on a 4090 across three chunk lengths: T3 mean **92.7%**,
+max 93.1%. Flow, HiFiGAN, the watermark and text prep share the remaining
+**7.3%**. Against the 2.848s medium-bucket figure, T3 is **2.640s** and
+everything downstream is **0.208s** - so removing the downstream cost entirely
+still leaves 2.6x the ~1s target and 5.3x the shipped Piper build.
 
 **Consequence: the `finalize` and `cache_source` primitives that motivated the
 whole investigation are irrelevant to the outcome.** They are real, and they

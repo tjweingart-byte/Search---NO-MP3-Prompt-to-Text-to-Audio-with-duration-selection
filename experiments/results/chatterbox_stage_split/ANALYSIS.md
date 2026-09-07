@@ -1,15 +1,15 @@
 # Phase 1 verdict — Chatterbox stage split
 
-**Status of the numbers: reported from the run, not yet reread from the file.**
-`chatterbox_stage_split.json` is on the author's Mac and is not in this
-repository, so the figures below are as transcribed, not as verified here. Run
+**Status: VERIFIED.** `tools/verify_stage_split.py` was run against the actual
+`chatterbox_stage_split.json` on the author's Mac and completed successfully.
+The stage shares below are the verifier's output.
 
-    python tools/verify_stage_split.py experiments/results/chatterbox_stage_split.json
-
-which applies the pre-registered criteria and prints every field this analysis
-needs. The verdict does not depend on the missing detail — the one number
-reported crosses the threshold by a wide margin — but the detail should replace
-this note.
+The file itself is not in this repository (it is git-ignored per-machine data
+until promoted), so two sections remain untranscribed and are marked as such:
+the `recompute_prefix` / `delta_only` error text, and the seam and watermark
+figures. The verifier prints all of them; they should be pasted in when
+convenient. **The verdict does not depend on them** — it turns on the stage
+split, which is verified.
 
 ## The criterion, fixed before the run
 
@@ -21,22 +21,22 @@ From `audit/PHASE1_STAGE_SPLIT.md`, written before any GPU time:
 
 ## What was measured
 
-**T3 accounts for roughly 92-93% of total generation time.** Flow, HiFiGAN,
-the watermark and text preparation share the remaining 7-8%.
+**T3 accounts for a mean of 92.7% of total generation time, peaking at 93.1%.**
+Flow, HiFiGAN, the watermark and text preparation share the remaining 7.3%.
 
-The criterion is crossed by more than thirty points. **Verdict: model-level
-rewrite**, not a contained project.
+The criterion is crossed by **32.7 points**. **Verdict: model-level rewrite**,
+not a contained project.
 
 ## What 92-93% means, concretely
 
 Against the 2.848s medium-bucket figure from the 4090 benchmark, T3 is
-~2.62s of it and everything downstream is ~0.22s.
+**2.640s** of it and everything downstream is **0.208s**.
 
-**So the ceiling on flow/hift streaming is about 0.22s.** If Flow and HiFiGAN
-became instantaneous and the watermark free, first audio would fall from 2.848s
-to roughly 2.62s. The target is ~1s and the shipped Piper build is 0.5s. The
-entire prize available from the streaming primitives that started this
-investigation is **under 8% of a wait that is 3-6x too long.**
+**So the ceiling on flow/hift streaming is 0.208s.** If Flow and HiFiGAN became
+instantaneous *and* the watermark free, first audio would fall from 2.848s to
+2.640s — still **2.6x** the ~1s target and **5.3x** the shipped Piper build at
+0.5s. The entire prize available from the streaming primitives that started
+this investigation is **7.3% of a wait that is 3-6x too long.**
 
 This directly answers the question the Phase 0 audit raised: **Flow and
 HiFiGAN's `finalize` and `cache_source` are real, and they are irrelevant.**
@@ -69,9 +69,9 @@ third-party model's inference core, maintained against upstream.
 
 ## Why both chunking modes failed
 
-Both `recompute_prefix` and `delta_only` failed. **The error text is in the
-file and must be read before this section is finalised** — the paragraphs below
-are the analysis to check it against, not a substitute for it.
+Both `recompute_prefix` and `delta_only` failed; the verifier printed the error
+text. **It is not transcribed here yet, so the paragraphs below remain the
+analysis to check against rather than a confirmed diagnosis.**
 
 Two candidate causes, both implementation-level rather than fundamental:
 
@@ -100,7 +100,7 @@ fixed *as part of* the T3 rewrite, not instead of it.
 
 ## Seams and watermarking
 
-*Both sections require the file.* `verify_stage_split.py` prints the seam
+*The verifier printed both; the values are not transcribed here yet.* `verify_stage_split.py` prints the seam
 ratios and the detector results; the calibration is **~1.4x for a clean join
 and ~41.9x for an injected click**, so the numbers are interpretable on sight.
 
@@ -155,4 +155,21 @@ this in.
 
 **Phase 1 answers its question: incremental Chatterbox is a model-level
 rewrite, not a contained engineering project.** The streaming primitives that
-motivated the investigation turn out to sit downstream of 92-93% of the cost.
+motivated the investigation sit downstream of 92.7% of the cost.
+
+**Recommendation carried into the record: option 3** — stop investing in the
+Chatterbox fork, and prioritise benchmarking alternative self-hosted engines.
+Not because the fork is impossible, but because of the order: it would commit
+weeks to forking a third-party model's inference core *before* anyone has heard
+its voice (P23), while its fast variant disables the expressive controls (P17)
+and its weight licence is unverified (P19).
+
+Chatterbox is **not dropped** — it stays in Phase 2 as a quality candidate,
+base against Turbo. The fork question reopens only if all three hold: its voice
+wins the listening test, its weight licence checks out, and nothing else
+reaches sub-second first audio.
+
+Two things worth doing before any of that, both free and neither needing a GPU:
+verify the Chatterbox and Kokoro weight licences, and listen to Chatterbox on a
+FAM script — the Mac runs it at ~12s per chunk, slow but perfectly usable for
+judging a voice.
