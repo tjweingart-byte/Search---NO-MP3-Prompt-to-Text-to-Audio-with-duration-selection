@@ -602,3 +602,64 @@ def test_the_transformers_prescription_refuses_to_guess(capsys):
     out = capsys.readouterr().out
     assert "Send it before changing any pin" in out
     assert "Do not downgrade torch" in out
+
+
+def _fake_torch(version):
+    import types
+    module = types.ModuleType("torch")
+    module.__version__ = version
+    return module
+
+
+def test_the_pairing_table_matches_the_wheels_requirements():
+    """Verified from each wheel's Requires-Dist, not from memory."""
+    from experiments.adapters import chatterbox_impl
+
+    assert chatterbox_impl.TORCHVISION_FOR_TORCH["2.6.0"] == "0.21.0"
+    assert chatterbox_impl.TORCHVISION_FOR_TORCH["2.8.0"] == "0.23.0"
+
+
+def test_a_mismatched_torchvision_is_detected(monkeypatch):
+    """The RunPod failure: torch downgraded to 2.6.0, torchvision left at 0.23.
+
+    The CUDA suffix is not part of the pairing, so it must be stripped before
+    comparing or a working +cu124 pair would read as broken.
+    """
+    import sys as _sys
+    import types as _types
+
+    from experiments.adapters import chatterbox_impl
+
+    monkeypatch.setattr(chatterbox_impl, "_torch",
+                        lambda: _fake_torch("2.6.0+cu124"))
+    vision = _types.ModuleType("torchvision")
+    vision.__version__ = "0.23.0+cu128"
+    monkeypatch.setitem(_sys.modules, "torchvision", vision)
+
+    pair = chatterbox_impl.torchvision_pairing()
+    assert pair["expected"] == "0.21.0"
+    assert pair["ok"] is False
+
+    vision.__version__ = "0.21.0+cu124"
+    assert chatterbox_impl.torchvision_pairing()["ok"] is True
+
+
+def test_an_unknown_torch_is_not_extrapolated(monkeypatch):
+    """A wrong 'expected' would send someone to reinstall a working package."""
+    from experiments.adapters import chatterbox_impl
+
+    monkeypatch.setattr(chatterbox_impl, "_torch", lambda: _fake_torch("2.99.0"))
+    pair = chatterbox_impl.torchvision_pairing()
+    assert pair["expected"] is None
+    assert pair["ok"] is None
+
+
+def test_the_prescription_repairs_torchvision_and_never_torch(capsys):
+    from tools.diagnose_chatterbox import _prescribe_transformers
+
+    _prescribe_transformers(
+        RuntimeError("operator torchvision::nms does not exist"))
+    out = capsys.readouterr().out
+    assert "torchvision==0.21.0" in out
+    assert "--no-deps" in out
+    assert "Do not downgrade torch" in out

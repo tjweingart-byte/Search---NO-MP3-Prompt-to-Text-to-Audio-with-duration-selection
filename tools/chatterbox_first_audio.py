@@ -121,6 +121,18 @@ def preflight(chunks_path: pathlib.Path, device: str | None) -> int:
         check("torch importable", False,
               "pip install -r experiments/requirements-chatterbox.txt")
 
+    # transformers reaches LlamaModel through torchvision, and torchvision pins
+    # an exact torch. A mismatch fails at register_fake("torchvision::nms")
+    # naming neither version, so check the pair before the import that trips it.
+    pair = impl.torchvision_pairing()
+    if pair["expected"]:
+        check(f"torchvision matches torch {pair['torch']}", pair["ok"] is True,
+              f"have {pair['torchvision'] or pair.get('error')}, "
+              f"need {pair['expected']}")
+    elif pair["torch"]:
+        check(f"torchvision pairing for torch {pair['torch']}", True,
+              "not in the verified table; not checked")
+
     try:
         import importlib
         importlib.import_module(impl.TURBO_MODULE)

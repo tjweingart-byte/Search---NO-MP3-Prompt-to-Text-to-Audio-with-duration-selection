@@ -106,6 +106,25 @@ def main() -> int:
     except ImportError:
         print("  torch is not installed, so the device cannot be checked")
 
+    print("\ntorch / torchvision pairing")
+    try:
+        from experiments.adapters import chatterbox_impl
+
+        pair = chatterbox_impl.torchvision_pairing()
+        print(f"  torch        {pair['torch']}")
+        print(f"  torchvision  {pair['torchvision'] or pair.get('error')}")
+        if pair["expected"] and pair["ok"] is False:
+            print(f"  MISMATCH     torch {pair['torch']} needs torchvision "
+                  f"{pair['expected']}")
+            print("               transformers imports torchvision on the way "
+                  "to LlamaModel, and a mismatched pair dies at")
+            print('               register_fake("torchvision::nms") naming '
+                  "neither version.")
+        elif pair["ok"]:
+            print("  matched")
+    except Exception as exc:
+        print(f"  could not check: {type(exc).__name__}: {exc}")
+
     print("\nweights")
     cache = hf_cache()
     turbo = cache / "models--ResembleAI--chatterbox-turbo"
@@ -207,7 +226,15 @@ def _prescribe_transformers(exc: Exception) -> int:
 
     print("\n  smallest safe fix")
     lowered = text.lower()
-    if "huggingface_hub" in lowered or "huggingface-hub" in lowered:
+    if "torchvision" in lowered or "nms" in lowered:
+        print("    torchvision is built for a different torch. transformers "
+              "imports it on the way to LlamaModel.\n"
+              "    Repair torchvision alone, with --no-deps so pip cannot "
+              "touch torch:\n"
+              "      pip install --no-deps torchvision==0.21.0 \\\n"
+              "        --index-url https://download.pytorch.org/whl/cu124\n"
+              "    (0.21.0 is the version whose metadata requires torch==2.6.0.)")
+    elif "huggingface_hub" in lowered or "huggingface-hub" in lowered:
         print("    transformers 5.2.0 needs huggingface-hub>=1.3.0,<2.0. "
               "Something installed an older one.\n"
               '      pip install "huggingface-hub>=1.3,<2"')
@@ -238,6 +265,11 @@ def _prescribe(exc: Exception) -> int:
         print("    perth imports pkg_resources, which setuptools removed in "
               "82.0.0. Reinstalling a setuptools that still ships it restores "
               "the watermarker with nothing disabled and nothing re-downloaded.")
+    elif "torchvision::nms" in text or "torchvision" in text:
+        print("    torchvision does not match torch. Repair torchvision alone, "
+              "never torch - the CUDA build is what works:\n"
+              "      pip install --no-deps torchvision==<paired version> \\\n"
+              "        --index-url https://download.pytorch.org/whl/cu124")
     elif "torchaudio" in text or "torch" in text:
         print("    A torch/torchaudio mismatch. chatterbox-tts pins "
               "torch==2.6.0 and torchaudio==2.6.0; install both at those "

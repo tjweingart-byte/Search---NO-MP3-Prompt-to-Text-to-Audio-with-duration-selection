@@ -56,6 +56,45 @@ SILENCE_SECONDS = 0.12
 #: `GPU_RATE = 0.75` - an RTX 4090 pod, dollars per hour.
 GPU_DOLLARS_PER_HOUR = 0.75
 
+#: torchvision pins an exact torch, and transformers imports torchvision on the
+#: way to LlamaModel. A mismatched pair fails at
+#: `@torch.library.register_fake("torchvision::nms")` with "operator
+#: torchvision::nms does not exist" - which names neither package's version.
+#: Verified from the wheels' own Requires-Dist, not from memory.
+TORCHVISION_FOR_TORCH = {
+    "2.6.0": "0.21.0",
+    "2.7.0": "0.22.0",
+    "2.8.0": "0.23.0",
+}
+
+
+def torchvision_pairing() -> dict:
+    """What torch and torchvision are installed, and whether they match.
+
+    Returns `expected: None` for a torch this table does not cover, rather than
+    extrapolating - a wrong "expected" would send someone to reinstall a
+    working package.
+    """
+    out = {"torch": None, "torchvision": None, "expected": None, "ok": None}
+    torch = _torch()
+    if torch is None:
+        return out
+    # "2.6.0+cu124" -> "2.6.0"; the CUDA suffix is not part of the pairing.
+    out["torch"] = str(torch.__version__)
+    base = out["torch"].split("+")[0]
+    out["expected"] = TORCHVISION_FOR_TORCH.get(base)
+    try:
+        import torchvision
+
+        out["torchvision"] = str(torchvision.__version__)
+    except Exception as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        return out
+    if out["expected"]:
+        out["ok"] = out["torchvision"].split("+")[0] == out["expected"]
+    return out
+
+
 #: The two recovered methodologies.
 SINGLE = "single"
 CHUNKED = "chunked"
