@@ -146,3 +146,31 @@ way to `LlamaModel`, and the pair dies at
 `register_fake("torchvision::nms")` naming neither version. Pinned in
 `requirements-chatterbox.txt` and checked in the preflight. *Closed for the
 experiment layer; would need the same guard anywhere Chatterbox is deployed.*
+
+---
+
+## Found during the Phase 0 source audit
+
+### P17. Chatterbox Turbo disables the expressive controls the base model has
+`tts_turbo.py:266` warns that **CFG, `min_p` and `exaggeration` are ignored**
+by Turbo. The base multilingual model exposes all three (`mtl_tts.py:249-260`).
+FAM's requirement is a natural, expressive, premium voice *and* low TTFA, and
+Turbo trades the first for the second. **Nobody has heard either variant on a
+FAM script.** Base-vs-Turbo on quality and latency is now an open comparison
+that the latency work did not anticipate.
+
+### P18. The only engine with true incremental synthesis has non-commercial weights
+XTTS-v2 (`coqui-tts`) genuinely streams intra-utterance - `xtts.py:592-676`
+yields a waveform every ~20 GPT tokens. But `manage.py:305` marks the weights
+**CPML** with `tos_required: True`, and the prompt at `manage.py:331-333` reads
+"I have purchased a commercial license from Coqui" / "Otherwise, I agree to the
+terms of the non-commercial CPML". **Disqualifying for a commercial product
+unless a licence can be obtained**, and Coqui the company wound down, so who
+can grant one is itself unresolved. Settle this before spending GPU time.
+
+### P19. Weight licences are unverified for Chatterbox and Kokoro
+Both packages are permissively licensed as *code* - Chatterbox MIT, Kokoro
+Apache-2.0 - but a TTS model's weights carry their own terms, as XTTS proves.
+The model cards could not be reached from the build container. **Check both
+before either is adopted.** Piper is GPL-3.0-or-later, which is a deliberate
+decision for a commercial product even server-side.
