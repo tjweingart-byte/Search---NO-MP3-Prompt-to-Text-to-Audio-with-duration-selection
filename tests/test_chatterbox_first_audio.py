@@ -418,7 +418,7 @@ def test_preflight_does_not_take_a_named_device_on_trust(monkeypatch, capsys):
     monkeypatch.setattr(chatterbox_impl, "available_devices",
                         lambda: {"cpu": True, "cuda": False, "mps": False})
     assert runner.preflight(_pathlib.Path("nope.json"), "mps") == 1
-    assert "device 'mps' exists on this machine" in capsys.readouterr().out
+    assert "accelerator 'mps' exists on this machine" in capsys.readouterr().out
 
 
 def test_preflight_reports_a_missing_corpus_with_the_commands_to_fix_it(
@@ -663,3 +663,53 @@ def test_the_prescription_repairs_torchvision_and_never_torch(capsys):
     assert "torchvision==0.21.0" in out
     assert "--no-deps" in out
     assert "Do not downgrade torch" in out
+
+
+def _preflight_on(monkeypatch, devices, device, corpus):
+    from experiments.adapters import chatterbox_impl
+    from tools import chatterbox_first_audio as runner
+
+    monkeypatch.setattr(chatterbox_impl, "available_devices", lambda: devices)
+    return runner.preflight(corpus, device)
+
+
+def _corpus(tmp_path):
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps({"min_words": 25, "chunks": [
+        {"text": f"chunk {i} ends here.", "words": 30, "bucket": bucket}
+        for bucket in ("short", "medium", "long") for i in range(2)]}),
+        encoding="utf-8")
+    return path
+
+
+def test_cuda_run_is_not_gated_on_mps(tmp_path, monkeypatch, capsys):
+    """The 4090 pod failed two gates about Apple silicon.
+
+    A preflight that reports failures the run does not depend on gets read
+    past, which is the opposite of what it is for.
+    """
+    _preflight_on(monkeypatch, {"cpu": True, "cuda": True, "mps": False},
+                  "cuda", _corpus(tmp_path))
+    out = capsys.readouterr().out
+    assert "ok    accelerator 'cuda' exists on this machine" in out
+    # MPS appears, but as information and never as a FAIL.
+    assert "info  other accelerators  mps=False" in out
+    assert "FAIL" not in out.split("info  other accelerators")[0].split(
+        "accelerator 'cuda'")[1]
+
+
+def test_mps_run_is_not_gated_on_cuda(tmp_path, monkeypatch, capsys):
+    """And symmetrically, so the Mac is not failed for lacking an NVIDIA card."""
+    _preflight_on(monkeypatch, {"cpu": True, "cuda": False, "mps": True},
+                  "mps", _corpus(tmp_path))
+    out = capsys.readouterr().out
+    assert "ok    accelerator 'mps' exists on this machine" in out
+    assert "info  other accelerators  cuda=False" in out
+
+
+def test_the_requested_accelerator_is_still_a_hard_gate(tmp_path, monkeypatch, capsys):
+    """Informational for the others must not mean lenient for the one asked for."""
+    code = _preflight_on(monkeypatch, {"cpu": True, "cuda": False, "mps": False},
+                         "cuda", _corpus(tmp_path))
+    assert code == 1
+    assert "FAIL  accelerator 'cuda' exists on this machine" in capsys.readouterr().out

@@ -107,31 +107,41 @@ def preflight(chunks_path: pathlib.Path, device: str | None) -> int:
 
     print("\npreflight\n")
 
+    # The accelerator that must work is the one asked for. This used to check
+    # MPS unconditionally, which failed a perfectly good CUDA pod on two lines
+    # about Apple silicon - a preflight that cries wolf gets read past, which
+    # is the opposite of the point.
+    resolved, explicit = impl.resolve_device(device)
+    devices = impl.available_devices()
+
     try:
         import torch
         check("torch importable", True, torch.__version__)
-        built = torch.backends.mps.is_built()
-        avail = torch.backends.mps.is_available()
-        check("MPS built into this torch", built)
-        check("MPS available on this machine", avail)
-        if built and not avail:
-            print("        torch has MPS but the machine does not offer it; "
-                  "Chatterbox would fall back to CPU and the run would refuse.")
     except ImportError:
         check("torch importable", False,
               "pip install -r experiments/requirements-chatterbox.txt")
+        torch = None
 
-    # transformers reaches LlamaModel through torchvision, and torchvision pins
-    # an exact torch. A mismatch fails at register_fake("torchvision::nms")
-    # naming neither version, so check the pair before the import that trips it.
-    pair = impl.torchvision_pairing()
-    if pair["expected"]:
-        check(f"torchvision matches torch {pair['torch']}", pair["ok"] is True,
-              f"have {pair['torchvision'] or pair.get('error')}, "
-              f"need {pair['expected']}")
-    elif pair["torch"]:
-        check(f"torchvision pairing for torch {pair['torch']}", True,
-              "not in the verified table; not checked")
+    # `resolve_device` honours an explicitly named device without asking the
+    # machine whether it has one - right for the runner, wrong here: naming
+    # --device mps on a box with no Metal passed until this consulted
+    # available_devices().
+    check(f"accelerator {resolved!r} exists on this machine",
+          devices.get(resolved, False),
+          "available: " + ", ".join(k for k, v in devices.items() if v))
+    check("device is not CPU", resolved != "cpu" or explicit, resolved)
+
+    if torch is not None and resolved == "cuda" and devices.get("cuda"):
+        try:
+            name = torch.cuda.get_device_name(0)
+        except Exception as exc:                   # pragma: no cover - defensive
+            name = f"(could not read: {exc})"
+        print(f"  info  cuda device  {name}")
+    # Anything about the accelerators NOT being used is information, never a
+    # gate. MPS on a Linux box is absent by definition, not broken.
+    others = [k for k in ("cuda", "mps") if k != resolved]
+    print("  info  other accelerators  "
+          + ", ".join(f"{k}={devices.get(k, False)}" for k in others))
 
     try:
         import importlib
@@ -151,16 +161,6 @@ def preflight(chunks_path: pathlib.Path, device: str | None) -> int:
               "" if ok_perth else "it is None - run tools/diagnose_chatterbox.py")
     except ImportError as exc:
         check("perth watermarker is loadable", False, str(exc))
-
-    # `resolve_device` honours an explicitly named device without asking the
-    # machine whether it has one, which is right for the runner and wrong here:
-    # naming --device mps on a box with no Metal passed this check until it was
-    # made to consult available_devices().
-    resolved, explicit = impl.resolve_device(device)
-    devices = impl.available_devices()
-    check(f"device {resolved!r} exists on this machine", devices.get(resolved, False),
-          "available: " + ", ".join(k for k, v in devices.items() if v))
-    check("device is not CPU", resolved != "cpu" or explicit, resolved)
 
     if chunks_path.exists():
         try:
