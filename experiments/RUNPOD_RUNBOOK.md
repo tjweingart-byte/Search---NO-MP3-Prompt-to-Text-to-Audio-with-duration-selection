@@ -5,53 +5,59 @@ starts, stops, resizes or pays for a pod.** Every step below is a human action.
 
 ## 1. What has to get onto the pod
 
-Three things, and only three.
+**No credentials, ever.** A rented card is somewhere to run a benchmark, not
+somewhere to leave a GitHub token or an SSH key. So nothing is cloned on the
+pod and nothing is pushed from it: one tarball goes up, one JSON comes back.
 
-**The repository**, on this branch. The local benchmark path imports nothing
-from production FAM — verified by walking the import graph:
+On the Mac:
+
+    python tools/pack_for_pod.py
+    scp fam-pod.tar.gz root@<pod>:/workspace/
+
+`pack_for_pod.py` writes `git archive` of the tracked tree at HEAD, plus the
+one git-ignored file the benchmark needs — the validated chunk corpus — and a
+`POD.txt` naming the revision and the corpus SHA-256. It **validates the corpus
+before packing** and refuses to ship one containing a chunk that does not end at
+a sentence boundary, because a wrong corpus would break comparability with the
+Mac run silently and only after the card had been paid for. About 0.5 MB.
+
+The benchmark path imports nothing from production FAM — verified by walking
+the import graph:
 
     tools/chatterbox_first_audio.py -> stdlib, torch, perth, experiments
     experiments/chatterbox_probe.py -> stdlib, experiments
     experiments/adapters/chatterbox_impl.py -> stdlib, torch
 
-No `config`, no `tts.py`, no app. A clone is simplest; a copy of those three
-files plus the corpus would also work.
+No `config`, no `tts.py`, no app.
 
-**The corpus**, `experiments/chunks/first_chunks.json` — the 106 validated
-chunks. This is **git-ignored**, so cloning does not bring it. It is
-regenerated on the pod from `experiments/results/warm_first_token/`.
+On the pod, free checks first — every preventable failure happens in seconds,
+before the install and before the 4 GB download:
 
-> **Before starting the pod, check that folder is actually pushed.** Preserving
-> a run writes it into a tracked folder but does not commit it, and it was not
-> committed the first time — only the hand-written `ANALYSIS.md` was on the
-> branch, so the clone would have carried no openings file and the extract on
-> the pod would have failed *after* the install and the 4 GB download. Verify
-> from any machine:
->
->     git ls-tree -r --name-only origin/<branch> -- experiments/results/warm_first_token/
->
-> It must list `openings_by_arm.md`. If it does not, push it from the Mac
-> first.
+    cd /workspace && tar xzf fam-pod.tar.gz && cd FAM
+    cat POD.txt
+    shasum -a 256 experiments/chunks/first_chunks.json | cut -c1-16
+    python tools/extract_chunks.py --verify
 
-Then, on the pod:
+The digest must match the one in `POD.txt`, and `--verify` must report the same
+chunk count, the same bucket ranges, and `CUT chunks included in corpus 0` as
+the Mac. If any of that differs, the pod is not running the Mac's corpus and
+the comparison is void — stop before installing anything.
 
-    python tools/extract_chunks.py experiments/results/warm_first_token
-    python tools/extract_chunks.py --verify        # expect 106, CUT included = 0
+Then the expensive parts:
 
-Regenerating is preferable to copying: it re-runs the validation on the pod and
-proves the same corpus, rather than trusting a file transfer.
-
-**Dependencies** — but *after* the corpus check below, not before. Every check
-that costs nothing runs first, so a preventable failure happens in seconds on a
-laptop rather than in minutes on a rented card:
-
+    export HF_HOME=/workspace/hf     # persistent volume, or the 4 GB is repaid
     pip install -r experiments/requirements-chatterbox.txt
 
-That file already pins `setuptools<82`, which is what stops the perth
-watermarker silently becoming `None` (P13). The ~4 GB weight download happens
-once per pod unless the HF cache is on a persistent volume — **put
-`HF_HOME` on the persistent volume if the pod has one**, or the download is
-repaid every time the pod is recreated.
+That file pins `setuptools<82`, which is what stops the perth watermarker
+silently becoming `None` (P13).
+
+Getting the result back, also without credentials — from the Mac:
+
+    scp root@<pod>:/workspace/FAM/experiments/results/chatterbox_runpod_4090.json \
+        experiments/results/
+
+Copy it **before destroying the pod**. Committing happens on the Mac, where the
+credentials already are.
 
 ## 2. Which GPU the previous test used
 
@@ -104,17 +110,21 @@ experiment, and it is the one where P11 (streamed delivery) finally matters.
 
 ## 5. Preserving the results
 
-Same path as every other run:
+On the pod:
 
     python tools/chatterbox_first_audio.py --local --device cuda --trials 3 \
       --out experiments/results/chatterbox_runpod_4090.json
 
-Then get the file **off the pod** before it is destroyed — a pod is more
-ephemeral than a laptop, and `experiments/results/` is committed, so:
+Then, from the Mac, before the pod is destroyed:
 
+    scp root@<pod>:/workspace/FAM/experiments/results/chatterbox_runpod_4090.json \
+        experiments/results/
     git add experiments/results/chatterbox_runpod_4090.json
     git commit -m "Chatterbox on a 4090: first-audio latency"
     git push
+
+The pod never authenticates to anything. A pod is more ephemeral than a laptop,
+so copy first and destroy second.
 
 The JSON carries its own label (`LOCAL CUDA / DEVELOPMENT BENCHMARK`),
 `is_production_latency: false`, the cold-start block, and every per-trial row.

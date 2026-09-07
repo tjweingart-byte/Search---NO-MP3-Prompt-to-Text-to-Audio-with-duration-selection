@@ -34,3 +34,11 @@ experiments/packets/*.json
 
 # Measured connection baselines: data, not source.
 experiments/baselines/*.json
+
+# The extracted chunk corpus: derived from a preserved run, rebuilt with
+# tools/extract_chunks.py. Not source, and machine-specific in provenance.
+experiments/chunks/*.json
+
+# The pod bundle built by tools/pack_for_pod.py: a copy of the tree, not a
+# thing to version.
+fam-pod.tar.gz

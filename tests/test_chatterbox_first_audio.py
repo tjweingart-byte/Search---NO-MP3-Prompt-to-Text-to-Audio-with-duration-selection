@@ -477,3 +477,47 @@ def test_the_diagnosis_prescribes_by_the_error_it_found(capsys):
     out = capsys.readouterr().out
     assert "does not have a prescription for" in out
     assert "setuptools" not in out and "torch==" not in out
+
+
+def test_the_pod_bundle_refuses_to_ship_a_corpus_with_a_cut_chunk(tmp_path, monkeypatch):
+    """The pod must run the corpus the Mac ran, or the comparison is void."""
+    from tools import pack_for_pod
+
+    corpus = tmp_path / "first_chunks.json"
+    corpus.write_text(json.dumps({
+        "min_words": 25,
+        "chunks": [{"text": "Cut off here", "words": 30, "bucket": "short",
+                    "ends_complete": False}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(pack_for_pod, "CORPUS", corpus)
+
+    with pytest.raises(SystemExit) as caught:
+        pack_for_pod.check_corpus()
+    assert "do not end at a sentence boundary" in str(caught.value)
+
+
+def test_the_pod_bundle_reports_a_digest_for_the_corpus(tmp_path, monkeypatch, capsys):
+    """So the pod can prove it received the same file, not a similar one."""
+    from tools import pack_for_pod
+
+    corpus = tmp_path / "first_chunks.json"
+    corpus.write_text(json.dumps({
+        "min_words": 25, "excluded": [],
+        "chunks": [{"text": "It ends here.", "words": 30, "bucket": "short",
+                    "ends_complete": True}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(pack_for_pod, "CORPUS", corpus)
+
+    summary = pack_for_pod.check_corpus()
+    assert summary["chunks"] == 1
+    assert len(summary["sha256"]) == 16
+    assert "CUT included 0" in capsys.readouterr().out
+
+
+def test_a_missing_corpus_names_the_command_that_builds_it(tmp_path, monkeypatch):
+    from tools import pack_for_pod
+
+    monkeypatch.setattr(pack_for_pod, "CORPUS", tmp_path / "absent.json")
+    with pytest.raises(SystemExit) as caught:
+        pack_for_pod.check_corpus()
+    assert "tools/extract_chunks.py" in str(caught.value)
