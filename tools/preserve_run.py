@@ -114,6 +114,13 @@ def preserve(run, slug: str | None = None) -> pathlib.Path:
     print(f"  {len(kept)} trials, {len(report.splitlines())} report lines"
           + (f", artifacts: {', '.join(copied)}" if copied else ""))
     print("  redaction re-checked on every written file: clean")
+    # experiments/results/ is tracked, but preserving does not commit. Three
+    # handovers have now been lost to a run that existed only on one machine,
+    # and the last one would have failed on a rented GPU after the install.
+    print("\n  NOT YET SHARED. This wrote files into a tracked folder; they "
+          "reach another machine only when committed:")
+    print(f"    git add {target.relative_to(RESULTS_DIR.parent.parent)}")
+    print('    git commit -m "Preserve <run>" && git push')
     return target
 
 

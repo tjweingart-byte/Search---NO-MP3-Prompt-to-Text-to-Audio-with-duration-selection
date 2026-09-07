@@ -18,9 +18,22 @@ No `config`, no `tts.py`, no app. A clone is simplest; a copy of those three
 files plus the corpus would also work.
 
 **The corpus**, `experiments/chunks/first_chunks.json` — the 106 validated
-chunks. This is **git-ignored**, so cloning does not bring it. It must be
-copied across, or regenerated on the pod from `experiments/results/
-warm_first_token/` which *is* committed:
+chunks. This is **git-ignored**, so cloning does not bring it. It is
+regenerated on the pod from `experiments/results/warm_first_token/`.
+
+> **Before starting the pod, check that folder is actually pushed.** Preserving
+> a run writes it into a tracked folder but does not commit it, and it was not
+> committed the first time — only the hand-written `ANALYSIS.md` was on the
+> branch, so the clone would have carried no openings file and the extract on
+> the pod would have failed *after* the install and the 4 GB download. Verify
+> from any machine:
+>
+>     git ls-tree -r --name-only origin/<branch> -- experiments/results/warm_first_token/
+>
+> It must list `openings_by_arm.md`. If it does not, push it from the Mac
+> first.
+
+Then, on the pod:
 
     python tools/extract_chunks.py experiments/results/warm_first_token
     python tools/extract_chunks.py --verify        # expect 106, CUT included = 0
@@ -28,7 +41,9 @@ warm_first_token/` which *is* committed:
 Regenerating is preferable to copying: it re-runs the validation on the pod and
 proves the same corpus, rather than trusting a file transfer.
 
-**Dependencies**:
+**Dependencies** — but *after* the corpus check below, not before. Every check
+that costs nothing runs first, so a preventable failure happens in seconds on a
+laptop rather than in minutes on a rented card:
 
     pip install -r experiments/requirements-chatterbox.txt
 
