@@ -194,3 +194,36 @@ now reads 1.4x and an injected click 41.9x. *Closed.*
 Recorded because it is the class of fault this project keeps paying for: a
 check that answers a cheaper question than the one being asked, and then
 reports OK.
+
+---
+
+## Found by Phase 1 (stage split)
+
+### P21. Chatterbox latency is the autoregressive token loop, ~92-93% of it
+Measured on a 4090 across three chunk lengths. Flow, HiFiGAN, the watermark and
+text prep share the remaining 7-8%. Against the 2.848s medium-bucket figure,
+T3 is ~2.62s and everything downstream is ~0.22s.
+
+**Consequence: the `finalize` and `cache_source` primitives that motivated the
+whole investigation are irrelevant to the outcome.** They are real, and they
+sit downstream of the cost. The most they could ever remove is under 8% of a
+wait that is 3-6x too long. Sub-second Chatterbox is reachable only by making
+T3 itself incremental, which is a fork of a third-party model's inference core.
+*Open; see `results/chatterbox_stage_split/ANALYSIS.md`.*
+
+### P22. Both chunked flow/hift modes failed, and the cause looks fixable
+`recompute_prefix` and `delta_only` both errored. Analysis points at
+conditioning/shape and the `flow.py:170` lookahead trim rather than anything
+fundamental - the primitives are used in production by CosyVoice-derived
+stacks, and the probe drove them from outside a streaming loop that does not
+exist. **Not a blocker in itself, and not worth fixing on its own**: it would
+have to be done as part of the T3 rewrite, and it buys at most the 7-8% those
+stages own. *Open, deprioritised.*
+
+### P23. We have still never heard Chatterbox
+Not on a FAM script, not at all. Every measurement in this sequence was
+latency. Combined with P17 (Turbo disables the expressive controls) and P19
+(weight licence unverified), this is the reason not to spend weeks forking it
+yet: the fork would be committed before knowing whether the voice is wanted or
+the weights are usable. **The listening test is now the highest-value
+outstanding action on the whole voice question.**
