@@ -544,3 +544,61 @@ def test_a_smoke_run_takes_from_every_bucket(tmp_path, monkeypatch, capsys):
     assert "SMOKE RUN: 6 of the corpus, 2 per bucket. Not a result." in out
     for bucket in ("short", "medium", "long"):
         assert bucket in out
+
+
+def test_the_diagnosis_unmasks_a_transformers_lazy_import(monkeypatch, capsys):
+    """transformers hides the cause exactly as perth does.
+
+        raise ModuleNotFoundError(f"Could not import module '{name}'. Are this
+            object's requirements defined correctly?") from e
+
+    The `from e` is the real error and is never printed, so the user sees a
+    symbol name and no cause. The diagnosis imports the implementing module
+    directly to surface it.
+    """
+    import sys as _sys
+    import types as _types
+
+    from tools import diagnose_chatterbox
+
+    for name in ("transformers", "transformers.models", "transformers.models.llama"):
+        module = _types.ModuleType(name)
+        module.__path__ = []
+        monkeypatch.setitem(_sys.modules, name, module)
+
+    class _Boom:
+        def find_module(self, name, path=None):
+            target = "transformers.models.llama.modeling_llama"
+            return self if name == target else None
+
+        def load_module(self, name):
+            raise ImportError("cannot import name 'x' from 'huggingface_hub'")
+
+    monkeypatch.setattr(_sys, "meta_path", [_Boom()] + list(_sys.meta_path))
+
+    masked = ModuleNotFoundError(
+        "Could not import module 'LlamaModel'. Are this object's requirements "
+        "defined correctly?")
+    assert diagnose_chatterbox._unmask_transformers(masked) == 1
+    out = capsys.readouterr().out
+    assert "hid the real error behind the symbol 'LlamaModel'" in out
+    # The traceback must reach stdout, or it is lost when the output is piped.
+    assert "huggingface_hub" in out
+    assert "huggingface-hub>=1.3,<2" in out
+
+
+def test_unmasking_ignores_an_error_that_is_not_a_lazy_import():
+    from tools import diagnose_chatterbox
+
+    assert diagnose_chatterbox._unmask_transformers(
+        ImportError("No module named 'chatterbox'")) is None
+
+
+def test_the_transformers_prescription_refuses_to_guess(capsys):
+    """A speculative pin could break the working CUDA build."""
+    from tools.diagnose_chatterbox import _prescribe_transformers
+
+    _prescribe_transformers(ImportError("something nobody has seen before"))
+    out = capsys.readouterr().out
+    assert "Send it before changing any pin" in out
+    assert "Do not downgrade torch" in out

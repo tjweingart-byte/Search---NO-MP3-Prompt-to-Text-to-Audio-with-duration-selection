@@ -34,6 +34,21 @@ import sys
 #: The module perth imports behind its try/except.
 WATERMARKER_MODULE = "perth.perth_net.perth_net_implicit.perth_watermarker"
 
+#: transformers hides import failures the same way, behind a lazy module:
+#: `raise ModuleNotFoundError(f"Could not import module '{name}'. Are this
+#: object's requirements defined correctly?") from e` in
+#: utils/import_utils.py. The `from e` is the real error, and it is not
+#: printed. Importing the implementing module directly surfaces it.
+LAZY_MODULES = {
+    "LlamaModel": "transformers.models.llama.modeling_llama",
+    "LlamaConfig": "transformers.models.llama.configuration_llama",
+    "LlamaPreTrainedModel": "transformers.models.llama.modeling_llama",
+    "GPT2Model": "transformers.models.gpt2.modeling_gpt2",
+    "GPT2Config": "transformers.models.gpt2.configuration_gpt2",
+    "GenerationMixin": "transformers.generation.utils",
+    "AutoTokenizer": "transformers.models.auto.tokenization_auto",
+}
+
 #: `pkg_resources` shipped with setuptools through 81.0.0 and was removed in
 #: 82.0.0. `perth` still imports it (`from pkg_resources import
 #: resource_filename`), so a current setuptools breaks perth silently.
@@ -110,6 +125,16 @@ def main() -> int:
         print(f"  setuptools {_version('setuptools')} does not ship it; it was "
               f"removed after {LAST_SETUPTOOLS_WITH_PKG_RESOURCES}.")
 
+    print("\nchatterbox")
+    try:
+        importlib.import_module("chatterbox.tts_turbo")
+        print("  chatterbox.tts_turbo imports cleanly")
+    except Exception as exc:
+        print(f"  {type(exc).__name__}: {exc}")
+        code = _unmask_transformers(exc)
+        if code is not None:
+            return code
+
     print("\nperth")
     try:
         import perth
@@ -132,6 +157,76 @@ def main() -> int:
     except Exception as exc:
         print(f"    {type(exc).__name__}: {exc}\n")
         return _prescribe(exc)
+
+
+def _unmask_transformers(exc: Exception) -> int | None:
+    """Re-raise what transformers' lazy module swallowed, if that is the fault.
+
+    Same shape as the perth failure: a real ImportError is caught and replaced
+    with a message that names the symbol and not the cause. The symbol tells
+    us which module to import directly, and that import raises the truth.
+    """
+    message = str(exc)
+    if "Could not import module" not in message:
+        return None
+
+    symbol = message.split("'")[1] if "'" in message else ""
+    target = LAZY_MODULES.get(symbol)
+    print(f"\n  transformers hid the real error behind the symbol {symbol!r}.")
+    if target is None:
+        print("    This tool does not know which module implements it. Import "
+              "it yourself to see the cause:\n"
+              "      python -c \"import transformers; transformers." + symbol + "\"")
+        return 1
+
+    print(f"    Importing {target} directly:\n")
+    try:
+        importlib.import_module(target)
+        print("    ...it imports cleanly on its own. The failure is in how "
+              "chatterbox reaches it, not in the module.")
+        return 1
+    except Exception as real:
+        import traceback
+
+        # stdout, not stderr: this output gets piped and pasted, and a
+        # traceback on stderr is the half that goes missing when it is.
+        traceback.print_exc(file=sys.stdout)
+        print()
+        return _prescribe_transformers(real)
+
+
+def _prescribe_transformers(exc: Exception) -> int:
+    """Name the version conflict, from the error and the installed versions."""
+    text = f"{type(exc).__name__}: {exc}"
+    versions = {name: _version(name) for name in
+                ("transformers", "tokenizers", "huggingface-hub", "torch",
+                 "numpy", "diffusers", "safetensors")}
+    print("  installed")
+    for name, value in versions.items():
+        print(f"    {name:<18}{value}")
+
+    print("\n  smallest safe fix")
+    lowered = text.lower()
+    if "huggingface_hub" in lowered or "huggingface-hub" in lowered:
+        print("    transformers 5.2.0 needs huggingface-hub>=1.3.0,<2.0. "
+              "Something installed an older one.\n"
+              '      pip install "huggingface-hub>=1.3,<2"')
+    elif "tokenizers" in lowered:
+        print("    transformers 5.2.0 needs tokenizers>=0.22.0,<=0.23.0.\n"
+              '      pip install "tokenizers>=0.22,<=0.23"')
+    elif "torch" in lowered:
+        print("    A torch API transformers 5.2.0 expects is missing. It "
+              "declares torch>=2.4 and chatterbox pins torch==2.6.0, so if "
+              "this is the cause the two pins disagree in practice.\n"
+              "    Report the traceback above before changing the torch "
+              "version - it is what makes the CUDA build work.")
+    else:
+        print("    The traceback above is the real error. Send it before "
+              "changing any pin; a speculative pin risks breaking the working "
+              "CUDA environment.")
+    print("\n    Do not downgrade torch to chase this without checking: "
+          "torch 2.6.0+cu124 is what makes the 4090 work here.\n")
+    return 1
 
 
 def _prescribe(exc: Exception) -> int:
