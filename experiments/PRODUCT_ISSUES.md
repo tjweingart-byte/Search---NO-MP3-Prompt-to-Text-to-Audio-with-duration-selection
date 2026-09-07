@@ -169,8 +169,28 @@ unless a licence can be obtained**, and Coqui the company wound down, so who
 can grant one is itself unresolved. Settle this before spending GPU time.
 
 ### P19. Weight licences are unverified for Chatterbox and Kokoro
+**Standing rule while this is open: no unverified weight licence is treated as
+commercially usable.** A favourable engineering result does not make an engine
+adoptable; it makes it technically adoptable pending this check.
+
 Both packages are permissively licensed as *code* - Chatterbox MIT, Kokoro
 Apache-2.0 - but a TTS model's weights carry their own terms, as XTTS proves.
 The model cards could not be reached from the build container. **Check both
 before either is adopted.** Piper is GPL-3.0-or-later, which is a deliberate
 decision for a commercial product even server-side.
+
+---
+
+## Found while building Phase 1
+
+### P20. The seam detector was reading one sample past the join
+`seam_ratios` indexed `diff[i]` for a join at sample `i`, but `diff[k]` is
+`wav[k+1] - wav[k]`, so the join is `diff[i-1]`. It stepped over the
+discontinuity and would have reported "no clicks" on genuinely clicking audio -
+a false all-clear on the exact question Phase 1 exists to answer. Fixed before
+any run, and pinned by a test that injects a step discontinuity: a clean join
+now reads 1.4x and an injected click 41.9x. *Closed.*
+
+Recorded because it is the class of fault this project keeps paying for: a
+check that answers a cheaper question than the one being asked, and then
+reports OK.
