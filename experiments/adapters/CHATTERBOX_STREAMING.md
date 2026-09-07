@@ -1,7 +1,16 @@
-# Can Chatterbox Turbo stream? No. Read this before saying otherwise.
+# Does Chatterbox Turbo expose streaming? Its API does not. Read this carefully.
 
-Settled by reading the package source, not by inference: `chatterbox-tts`
-**0.1.7**, `src/chatterbox/tts_turbo.py`.
+Two questions get conflated and they have different answers:
+
+1. **Does the shipped API expose incremental audio?** No. Settled by reading
+   the package source: `chatterbox-tts` **0.1.7**, `src/chatterbox/tts_turbo.py`.
+2. **Could the underlying architecture produce incremental audio?** *Unknown.*
+   Nobody has tried. Nothing below establishes that it cannot; it establishes
+   that the released interface does not, and names what a fork would have to
+   change.
+
+Everything in this file is evidence for (1). Statements about (2) are marked
+as open.
 
 ## The evidence
 
@@ -31,7 +40,7 @@ Even if 1 and 2 were made incremental, 3 currently operates on the whole array.
 
 | | what happens | available? |
 |---|---|---|
-| **True model streaming** | generation → incremental audio frames → playback begins while generation continues | **No.** Not in this package. |
+| **True model streaming** | generation → incremental audio frames → playback begins while generation continues | **Not through this API.** Whether the architecture could is open. |
 | **Post-generation streamed delivery** | generation → completed waveform → written to the socket in pieces, playable before the last piece lands | **Yes.** `/synthesise/stream`. |
 
 `experiments/adapters/chatterbox_server_example.py` exposes the second and says
@@ -44,13 +53,27 @@ model time and cannot reduce it. If generation takes 3 seconds, the listener
 waits at least 3 seconds — streamed delivery only stops them waiting 3 seconds
 *plus* the encode-and-transfer tail.
 
-## The route to true streaming, if it is ever wanted
+## The route to true streaming — open, and more promising than "no" suggests
 
-`s3gen/hifigan.py` takes a `cache_source` argument, which is the standard
-machinery for chunked vocoding in CosyVoice-derived stacks. Turbo does not use
-it that way and does not expose it. Making it incremental would mean forking
-the package, and the watermarker would need to move to a per-chunk basis. That
-is a project, not a configuration change, and nothing here has costed it.
+**This is the part that is unresolved, not settled.** Three observations, none
+of which have been tested:
+
+* `s3gen/hifigan.py` takes a **`cache_source`** argument — the standard
+  machinery for chunked vocoding in CosyVoice-derived stacks. Its presence
+  suggests the vocoder was designed to run incrementally, even though Turbo
+  does not call it that way.
+* `t3.inference_turbo` generates speech tokens in a **Python loop**, appending
+  to a list. A loop that appends is a loop that could yield. Nothing about the
+  token stage looks inherently batch-only.
+* The **watermarker** currently runs over the finished waveform. Whether it can
+  be applied per chunk without audible seams or detection loss is a question
+  for Resemble AI's design, not something readable from the source.
+
+So the honest position: the *interface* is one-shot, and two of the three
+stages look like they were built from streaming-capable parts. Making it
+incremental means forking the package and answering the watermarker question.
+That is a project, it has not been costed, and **it has not been shown to be
+impossible.**
 
 Until then, FAM's lever on time-to-first-audio is **chunking the text** — which
 is exactly what `fam_chunked_benchmark.py` did and what FAM's first-chunk rule

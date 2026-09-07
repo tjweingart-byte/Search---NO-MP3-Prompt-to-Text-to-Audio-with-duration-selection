@@ -74,12 +74,21 @@ handles it) but it is unexamined for Piper, and it broke a parser here.
 
 ## Found during the Chatterbox work
 
-### P10. Chatterbox Turbo cannot stream, and no configuration changes that
-`generate()` returns one completed tensor; there is **no `yield` anywhere in
-`chatterbox-tts` 0.1.7**. Tokens are accumulated in full, vocoded in one call,
-then watermarked across the whole waveform — three sequential whole-sequence
-barriers. Streamed *delivery* is possible and is built; **true model streaming
-is not available without forking the package.** See `CHATTERBOX_STREAMING.md`.
+### P10. Chatterbox Turbo's *API* is one-shot. Whether its *architecture* must
+be is an open question — **restated, the earlier wording overreached.**
+What is established from the source: `generate()` returns one completed tensor
+and there is **no `yield` anywhere in `chatterbox-tts` 0.1.7**. Tokens are
+accumulated in full, vocoded in one call, then watermarked across the whole
+waveform. Streamed *delivery* is possible and is built.
+
+What is **not** established, and what an earlier version of this entry wrongly
+implied was settled: that incremental generation is impossible. Two of the
+three stages look built from streaming-capable parts — `s3gen/hifigan.py`
+accepts a `cache_source` (the chunked-vocoding hook in CosyVoice-derived
+stacks), and `t3.inference_turbo` generates tokens in an appending Python loop.
+The open question is the watermarker, which currently runs over the finished
+waveform. See `CHATTERBOX_STREAMING.md`. **Unresolved, and it is the subject of
+the next proposed experiment.**
 
 ### P11. The JSON/base64 endpoint contract makes first-audio equal full-audio
 Measured against a local server: identical work, first playable at 0.879s under
@@ -89,7 +98,9 @@ already built and non-production.
 
 ### P12. Chatterbox on Apple silicon is 10-18s to first audio
 See `results/chatterbox_local_mps/ANALYSIS.md`. Roughly real-time generation,
-which cannot serve a streaming product. **Not yet known for a GPU.**
+which cannot serve a streaming product. A 4090 run has been completed; the
+comparison is pending the numbers being read from the file rather than
+described (`results/chatterbox_mps_vs_4090/`).
 
 ### P13. A dependency can disable Chatterbox silently, after a 4 GB download
 `perth/__init__.py` swallows an ImportError and sets `PerthImplicitWatermarker`
@@ -103,3 +114,21 @@ paying for.
 ### P14. Cold start is 26.5s on MPS
 Model load 13.9s plus warmup 12.60s. Argues for a long-lived server over
 per-request loading. Not on the request path once warm.
+
+### P15. First-audio latency is bounded below by whole-chunk synthesis
+Independent of device. Because the path is one-shot, the listener waits for the
+**entire chunk** to be synthesised before any sound is possible - so the floor
+is `chunk_audio_seconds / realtime_factor`, and it grows with chunk length.
+Both benchmarks measured `delivery_seconds = 0.000s` in-process with
+`first_audio_bytes` and `stream_begin` collapsed onto completion, which is the
+measured signature of exactly that. Faster hardware moves the floor; it does
+not remove it. **This is the architectural finding of the whole sequence, and
+it is what the next experiment addresses.**
+
+### P16. A RunPod PyTorch template ships a torchvision that chatterbox breaks
+Installing chatterbox downgrades torch to 2.6.0 and leaves the template's
+torchvision (built for 2.8.0) in place. transformers imports torchvision on the
+way to `LlamaModel`, and the pair dies at
+`register_fake("torchvision::nms")` naming neither version. Pinned in
+`requirements-chatterbox.txt` and checked in the preflight. *Closed for the
+experiment layer; would need the same guard anywhere Chatterbox is deployed.*
