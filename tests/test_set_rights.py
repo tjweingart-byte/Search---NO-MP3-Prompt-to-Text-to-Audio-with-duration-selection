@@ -130,3 +130,79 @@ def test_a_completed_record_passes_the_gate(tmp_path):
     folder = _folder(tmp_path)
     key = _write(folder, "Kennedy", "Kennedy Surname")
     assert check.check_rights(folder, key) == []
+
+
+def test_speakers_batch_parses_pairs():
+    assert set_rights.parse_speakers("Ian=Ian Solomon,TJ=TJ Weingart") == {
+        "Ian": "Ian Solomon", "TJ": "TJ Weingart"}
+    assert set_rights.parse_speakers(" Ian = Ian Solomon ") == {
+        "Ian": "Ian Solomon"}
+
+
+def test_a_malformed_pair_is_refused():
+    for bad in ("Ian", "=Ian Solomon", "Ian=", ""):
+        with pytest.raises(SystemExit):
+            set_rights.parse_speakers(bad)
+
+
+def test_the_batch_writes_every_record_to_the_right_reference(tmp_path,
+                                                              monkeypatch):
+    folder = _folder(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["equalise", str(folder)])
+    eq.main()
+
+    monkeypatch.setattr(sys, "argv", [
+        "set_rights", str(folder), "--speakers",
+        "Ian=Ian Solomon,Kennedy=Kennedy Merrikan,TJ=TJ Weingart",
+        "--recorded-for", "recorded for the experiment",
+        "--consent", "yes", "--commercial-use", "yes",
+        "--synthetic-voice-cleared", "yes", "--notes", "written and verbal"])
+    assert set_rights.main() == 0
+
+    manifest = json.loads(
+        (folder / eq.WORKING / "MANIFEST.json").read_text())["references"]
+    expected = {"Ian.wav": "Ian Solomon", "Kennedy.wav": "Kennedy Merrikan",
+                "TJ.wav": "TJ Weingart"}
+    for key, entry in manifest.items():
+        record = json.loads((folder / f"{key}.rights.json").read_text())
+        assert record["speaker"] == expected[entry["source"]]
+        assert check.check_rights(folder, key) == []
+
+
+def test_a_typo_in_the_batch_writes_nothing(tmp_path, monkeypatch):
+    """Half a set written is worse than none: it looks finished."""
+    folder = _folder(tmp_path)
+    before = {key: (folder / f"{key}.rights.json").read_text()
+              for key in check.neutral_ids()}
+
+    monkeypatch.setattr(sys, "argv", [
+        "set_rights", str(folder), "--speakers",
+        "Ian=Ian Solomon,Kenendy=Kennedy Merrikan,TJ=TJ Weingart",
+        "--recorded-for", "x", "--consent", "yes", "--commercial-use", "yes",
+        "--synthetic-voice-cleared", "yes", "--notes", "y"])
+    with pytest.raises(SystemExit) as caught:
+        set_rights.main()
+    assert "Kenendy" in str(caught.value)
+    for key, blob in before.items():
+        assert (folder / f"{key}.rights.json").read_text() == blob
+
+
+def test_source_and_speakers_are_mutually_exclusive(tmp_path, monkeypatch):
+    folder = _folder(tmp_path)
+    monkeypatch.setattr(sys, "argv", [
+        "set_rights", str(folder), "--source", "Ian", "--speaker", "Ian S",
+        "--speakers", "Ian=Ian Solomon", "--recorded-for", "x",
+        "--consent", "yes", "--commercial-use", "yes",
+        "--synthetic-voice-cleared", "yes", "--notes", "y"])
+    with pytest.raises(SystemExit):
+        set_rights.main()
+
+
+def test_the_batch_still_has_no_default_clearances(monkeypatch, tmp_path):
+    """Batch mode must not become a way to skip stating permission."""
+    folder = _folder(tmp_path)
+    monkeypatch.setattr(sys, "argv", [
+        "set_rights", str(folder), "--speakers", "Ian=Ian Solomon",
+        "--recorded-for", "x", "--notes", "y"])
+    with pytest.raises(SystemExit):
+        set_rights.main()

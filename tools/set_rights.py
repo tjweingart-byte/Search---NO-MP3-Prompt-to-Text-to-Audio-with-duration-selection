@@ -86,9 +86,14 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("folder", nargs="?", default="experiments/references")
-    parser.add_argument("--source", required=True,
+    parser.add_argument("--source",
                         help="the name the recording arrived under, e.g. Ian")
-    parser.add_argument("--speaker", required=True)
+    parser.add_argument("--speaker")
+    parser.add_argument("--speakers",
+                        help="all of them at once, as "
+                             "'Ian=Ian Solomon,TJ=TJ Weingart'. The clearances "
+                             "below then apply to every named recording, so use "
+                             "it only when they really are the same.")
     parser.add_argument("--recorded-for", required=True, dest="recorded_for",
                         help="goes into 'source': where the recording came "
                              "from and what it was made for")
@@ -102,31 +107,74 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def parse_speakers(text: str) -> dict:
+    """'Ian=Ian Solomon,TJ=TJ Weingart' -> {'Ian': 'Ian Solomon', ...}"""
+    pairs = {}
+    for chunk in text.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "=" not in chunk:
+            raise SystemExit(
+                f"{chunk!r} is not 'recording=Speaker Name'. Expected "
+                "something like 'Ian=Ian Solomon,TJ=TJ Weingart'.")
+        source, speaker = chunk.split("=", 1)
+        source, speaker = source.strip(), speaker.strip()
+        if not source or not speaker:
+            raise SystemExit(f"{chunk!r} has an empty side")
+        pairs[source] = speaker
+    if not pairs:
+        raise SystemExit("--speakers is empty")
+    return pairs
 
-    folder = pathlib.Path(args.folder)
-    key = find(folder, args.source)
-    path = folder / f"{key}.rights.json"
+
+def write_record(folder: pathlib.Path, source: str, speaker: str,
+                 args) -> tuple:
+    key = find(folder, source)
     record = {
         "source": args.recorded_for,
-        "speaker": args.speaker,
+        "speaker": speaker,
         "consent": args.consent,
         "commercial_use": args.commercial_use,
         "synthetic_voice_cleared": args.synthetic_voice_cleared,
         "notes": args.notes,
     }
-    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    (folder / f"{key}.rights.json").write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    return key, record
 
-    print(f"\nwrote {path.name}  ({key})")
-    for field, value in record.items():
-        print(f"  {field:<26}{value}")
-    blocked = [f for f in ("consent", "commercial_use",
-                           "synthetic_voice_cleared") if not record[f]]
-    if blocked:
-        print(f"\n  This voice is BLOCKED: {', '.join(blocked)} is false.\n")
-    else:
-        print()
+
+def main() -> int:
+    args = build_parser().parse_args()
+    if bool(args.speakers) == bool(args.source):
+        raise SystemExit("give either --source with --speaker, or --speakers")
+    if args.source and not args.speaker:
+        raise SystemExit("--source needs --speaker")
+
+    folder = pathlib.Path(args.folder)
+    people = (parse_speakers(args.speakers) if args.speakers
+              else {args.source: args.speaker})
+
+    # Resolve every recording before writing any file: a typo in the third
+    # name should not leave the first two written and the set half-done.
+    resolved = {source: find(folder, source) for source in people}
+    if len(set(resolved.values())) != len(resolved):
+        raise SystemExit(f"two names resolved to the same recording: {resolved}")
+
+    written = []
+    for source, speaker in people.items():
+        written.append((*write_record(folder, source, speaker, args), source))
+
+    print()
+    for key, record, source in written:
+        print(f"  {key}  <-  {source:<12}  {record['speaker']}")
+        blocked = [f for f in ("consent", "commercial_use",
+                               "synthetic_voice_cleared") if not record[f]]
+        if blocked:
+            print(f"      BLOCKED: {', '.join(blocked)} is false")
+    print(f"\n  wrote {len(written)} rights record(s)")
+    print(f"  source: {args.recorded_for}")
+    print(f"  notes:  {args.notes}\n")
     return 0
 
 
