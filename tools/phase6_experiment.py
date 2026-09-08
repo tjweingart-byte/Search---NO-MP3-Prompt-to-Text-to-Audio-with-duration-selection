@@ -222,7 +222,6 @@ def build_parser() -> argparse.ArgumentParser:
                         dest="queue_depth")
     parser.add_argument("--buffer-chars", type=int, default=dp.SCRIPT_BUFFER_CHARS,
                         dest="buffer_chars")
-    parser.add_argument("--first-min-words", type=int, dest="first_min_words")
     parser.add_argument("--min-words", type=int, dest="min_words")
     parser.add_argument("--target-words", type=int, dest="target_words")
     parser.add_argument("--max-words", type=int, dest="max_words")
@@ -244,8 +243,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def policy_from(args) -> AssemblyPolicy:
+    # The opening chunk is deliberately absent from this list: it has no size
+    # rule to override.
     given = {name: getattr(args, name) for name in
-             ("first_min_words", "min_words", "target_words", "max_words")
+             ("min_words", "target_words", "max_words")
              if getattr(args, name, None)}
     return AssemblyPolicy(**given)
 
@@ -453,12 +454,21 @@ def _verdicts(results: dict) -> list:
         f"{phase5['claude_reader_blocked_seconds']:.3f}s backpressure.")
 
     stalls = playback["playback_stalls"]
+    handoff = playback.get("first_handoff", {})
+    opening = ""
+    if handoff.get("applicable"):
+        opening = (
+            f" The opening chunk was {handoff['first_chunk_words']} words - "
+            f"released with no word floor, as instructed - buying "
+            f"{handoff['first_chunk_audio_seconds']:.2f}s of playback against "
+            f"{handoff['second_chunk_generate_seconds']:.2f}s needed for the "
+            f"second: {handoff['note']}.")
     lines.append(
         f"4. **Playback stalls: {stalls}** "
         f"({playback['total_stall_seconds']:.2f}s of dead air). Minimum "
         f"headroom {playback['minimum_playback_headroom']:.2f}s, median "
         f"{playback['median_playback_headroom']:.2f}s, maximum "
-        f"{playback['maximum_playback_headroom']:.2f}s.")
+        f"{playback['maximum_playback_headroom']:.2f}s." + opening)
 
     lines.append(
         f"5. **Batching: {chunking['raw_sentences']} sentences became "
@@ -468,7 +478,14 @@ def _verdicts(results: dict) -> list:
         f"five words, {chunking['chunks_under_10_words']} under ten. Aggregate "
         f"{chunking['aggregate_realtime_factor']:.2f}x realtime over "
         f"{chunking['total_tts_compute_seconds']:.1f}s of compute for "
-        f"{chunking['audio_seconds']:.1f}s of audio.")
+        f"{chunking['audio_seconds']:.1f}s of audio."
+        + (f" {chunking['chunks_forced_by_headroom']} of those were short "
+           f"because headroom was thin, recovering after chunk "
+           f"{chunking['headroom_recovered_after_chunk']:02d} - the cost of "
+           "an opening released with no word floor, paid in the chunks just "
+           "after it rather than in first-listen."
+           if chunking["chunks_forced_by_headroom"] else
+           " No chunk was forced short by low headroom."))
 
     improved = (blocked <= dp.BLOCKED_EPSILON and stalls == 0 and not run["problems"]
                 and chunking["tts_invocations"] < chunking["raw_sentences"])
@@ -562,6 +579,18 @@ def _analysis(results: dict) -> str:
                   else "- headroom at Claude complete: -",
                   f"- headroom at final synthesis: "
                   f"{playback['headroom_at_final_tts']:.2f}s", ""]
+        handoff = playback.get("first_handoff", {})
+        if handoff.get("applicable"):
+            lines += ["**The first handoff.** The opening chunk carries no "
+                      "word floor, so the cover it buys is measured rather "
+                      "than enforced:", "",
+                      f"- opening: {handoff['first_chunk_words']} words, "
+                      f"{handoff['first_chunk_audio_seconds']:.2f}s of audio",
+                      f"- second chunk: {handoff['second_chunk_words']} words, "
+                      f"{handoff['second_chunk_generate_seconds']:.2f}s to "
+                      "synthesise",
+                      f"- margin: {handoff['margin_seconds']:+.2f}s - "
+                      f"{handoff['note']}", ""]
         if playback["stalls"]:
             lines += ["| chunk | needed at | ready at | stall |",
                       "|---|---|---|---|"]
@@ -587,6 +616,8 @@ def _analysis(results: dict) -> str:
                   f"{chunking['chunks_under_5_words']} |",
                   f"| under 10 words | not reported | "
                   f"{chunking['chunks_under_10_words']} |",
+                  f"| forced short by low headroom | not reported | "
+                  f"{chunking['chunks_forced_by_headroom']} |",
                   f"| mean generation | not reported | "
                   f"{chunking['mean_generate_seconds']:.3f}s |",
                   f"| total TTS compute | not reported | "

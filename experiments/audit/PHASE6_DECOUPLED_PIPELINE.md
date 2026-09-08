@@ -84,31 +84,62 @@ Two consequences, and the first is uncomfortable:
 own timings**, reports the measured distribution, and replays the assembler
 over the same sentences to show what it would have produced.
 
-### The first chunk: a floor, never a target
+### The first chunk: a latency path with no size rule at all
 
-Latency is king, so the opening is released the instant a speakable thought
-exists. But it cannot be *arbitrarily* short, and the reason is headroom rather
-than efficiency. One TTS worker means chunk 2 is synthesised while chunk 1
-plays:
+**No word floor.** The first complete, speakable thought `stream_sentences`
+produces goes to Chatterbox on the offer that produced it, at eight words or at
+twenty. Time to first listen is the highest-priority metric and no batching
+consideration outranks it. The minimum, target and cap begin only *after* that
+first release.
 
-    audio(chunk 1)  >=  generate(chunk 2)
+The single safeguard is semantic rather than dimensional: the pending text must
+end on terminal punctuation - `.`, `!` or `?`, optionally inside a closing quote
+or bracket, the same shape production's `_SENTENCE_END` looks for. A half-written
+clause is not a speakable thought. In practice `stream_sentences` yields only
+complete sentences, so this fires approximately never; it exists for the
+degenerate stream, and even then the wait timer and the end-of-script flush
+still release the text rather than holding it.
 
-At `TARGET_WPM = 150`, audio is `words / 2.5` seconds. Worst case for chunk 2
-is `max_words`:
+There is deliberately **no first-chunk word knob**, not even one defaulting to
+zero. A knob left behind is an invitation to turn it back on.
 
-    generate(45 words) ~= 4.07s   ->   chunk 1 needs >= 10.2 words
+#### What the removed floor was protecting, now measured instead
 
-Hence **`first_min_words = 12`**, with margin. A first sentence already past it
-goes out untouched, immediately; the floor only ever merges the opening
-sentence with the next one.
+An earlier draft held the opening to twelve words, from a real constraint: one
+TTS worker means chunk 2 is synthesised while chunk 1 plays, so
+`audio(chunk 1) >= generate(chunk 2)`.
 
-**A prediction, made before the run.** Phase 5's first chunk took 2.757s to
-synthesise, which the curve puts at about 33 words. The floor would not have
-fired. So Phase 6 predicts **no change to first-listen latency**. If the run
-regresses there, this prediction was wrong, and the report says so on its first
-page rather than averaging it away.
+The band where that actually bites is narrower than it looks. At
+`TARGET_WPM = 150` break-even is about **5.6 words** against a target-sized
+follower (28 words, ~2.23s) and about **10.2 words** against the largest allowed
+(45 words, ~4.07s). It takes an opening under roughly six words - or under
+eleven against a cap-sized second chunk - to stall the first handoff at all.
+
+The constraint has not gone away, so the run reports it rather than enforcing
+it. `playback_report()["first_handoff"]` gives the opening's audio duration
+against the second chunk's generation time, with the margin and a plain verdict,
+and the executive summary states it. **A risk that is measured and named is a
+decision; a risk silently designed out is a different product.**
+
+#### The cost it does have, and where it shows up
+
+On the calibrated stub, a nine-word opening covers the second chunk by 0.08s -
+but leaves headroom so thin that the assembler's headroom rule fires for the
+next five chunks, shipping 9-14 word chunks until it recovers at chunk seven.
+So the fragmentation batching was meant to remove is not eliminated by removing
+the floor; it moves from chunk 0 into the chunks just after it, and is paid in
+delivery rather than in first-listen. That is the trade the hierarchy asks for,
+and `chunks_forced_by_headroom` and `headroom_recovered_after_chunk` are
+reported so it can be seen rather than inferred.
+
+Read against Phase 5: its first chunk took 2.757s to synthesise, which the curve
+puts at about 33 words. Nothing here would have changed it, so this still
+predicts **no change to Phase 5's first-listen latency** - and now it cannot
+lengthen it either, because there is nothing left to wait for.
 
 ### Later chunks
+
+These begin only after the first chunk has been released.
 
 | knob | default | why |
 |---|---|---|
@@ -232,7 +263,10 @@ convert one sample into a trend.
 ## Validated before renting
 
 `python3 -m pytest tests/test_speech_assembler.py tests/test_decoupled_pipeline.py tests/test_phase6_runner.py -q`
-— 50 tests, no GPU, no key, no network. Among them: a slow voice that does not
+— 62 tests, no GPU, no key, no network. Among them: a complete first sentence
+of two, five, eight, nine and fifteen words each released on the offer that
+produced it, with nothing waited for; the same short opening reaching the voice
+un-merged through the whole pipeline; a slow voice that does not
 stop the reader; the coupled fixture being rejected; decoupling reported as
 *untested* when Chatterbox never falls behind; a stall detected when it should
 be; text loss, duplication and reordering each detected; nothing held

@@ -183,6 +183,34 @@ def test_headroom_is_recorded_at_claude_complete():
     assert dp.playback_report(run)["headroom_at_claude_complete"] is not None
 
 
+def test_a_short_opening_reaches_the_voice_without_being_merged():
+    """End to end, through the real pipeline: a five-word opening sentence is
+    the first TTS payload on its own, not glued to the sentence after it."""
+    script = ["It was built to ring."] + SCRIPT
+    run = _run(stream=_stream(script))
+    assert run.chunks[0].chunk.text == "It was built to ring."
+    assert run.chunks[0].chunk.sentences == 1
+    assert run.chunks[0].chunk.words == 5
+    assert dp.phase6_problems(run) == []
+
+
+def test_the_first_handoff_cover_is_measured_rather_than_enforced():
+    """The opening carries no word floor, so what it cost is reported."""
+    handoff = dp.playback_report(_run())["first_handoff"]
+    assert handoff["applicable"] is True
+    assert handoff["first_chunk_words"] > 0
+    assert handoff["margin_seconds"] == pytest.approx(
+        handoff["first_chunk_audio_seconds"]
+        - handoff["second_chunk_generate_seconds"])
+    assert handoff["covered"] is (handoff["margin_seconds"] >= 0)
+
+
+def test_a_single_chunk_run_reports_no_handoff_rather_than_a_zero():
+    handoff = dp.playback_report(
+        _run(stream=_stream(["Only the one sentence here."])))["first_handoff"]
+    assert handoff["applicable"] is False and "no handoff" in handoff["why"]
+
+
 # --------------------------------------------------------------------------
 # the five timing concepts must stay distinguishable
 # --------------------------------------------------------------------------

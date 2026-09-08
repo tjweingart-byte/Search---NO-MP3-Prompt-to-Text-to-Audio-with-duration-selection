@@ -460,9 +460,42 @@ def decoupling_evidence(run: DecoupledRun) -> dict:
 # --------------------------------------------------------------------------
 # reporting
 # --------------------------------------------------------------------------
+def first_handoff(run: DecoupledRun) -> dict:
+    """Did the opening chunk buy enough playback to cover the second one?
+
+    The first chunk has no word floor - time to first listen outranks
+    everything - so the constraint the floor used to enforce is measured here
+    instead. One TTS worker means chunk 2 is synthesised while chunk 1 plays:
+
+        audio(chunk 1)  >=  generate(chunk 2)
+
+    A short opening is a deliberate trade, not a bug. This says what it cost.
+    """
+    if len(run.chunks) < 2:
+        return {"applicable": False,
+                "why": "fewer than two chunks; there was no handoff"}
+    first, second = run.chunks[0], run.chunks[1]
+    cover = first.audio_seconds
+    needed = second.generate_seconds
+    return {
+        "applicable": True,
+        "first_chunk_words": first.chunk.words,
+        "first_chunk_audio_seconds": cover,
+        "second_chunk_words": second.chunk.words,
+        "second_chunk_generate_seconds": needed,
+        "margin_seconds": cover - needed,
+        "covered": cover >= needed,
+        "note": ("the opening covered the second chunk's synthesis"
+                 if cover >= needed else
+                 f"the opening was {needed - cover:.2f}s short of covering the "
+                 "second chunk - the cost of releasing it without a word floor"),
+    }
+
+
 def playback_report(run: DecoupledRun) -> dict:
     if not run.chunks:
-        return {"chunks": 0, "stalls": [], "total_stall_seconds": 0.0}
+        return {"chunks": 0, "stalls": [], "total_stall_seconds": 0.0,
+                "first_handoff": first_handoff(run)}
     headrooms = [row["headroom"] for row in run.playback.series]
     at_claude = [row["headroom"] for row in run.playback.series
                  if row["note"] == "claude_complete"]
@@ -484,6 +517,7 @@ def playback_report(run: DecoupledRun) -> dict:
         "headroom_at_final_tts": run.chunks[-1].headroom_after,
         "headroom_series": run.playback.series,
         "listening_finishes_at": run.playback.plays_until,
+        "first_handoff": first_handoff(run),
     }
 
 
@@ -511,6 +545,21 @@ def chunk_report(run: DecoupledRun) -> dict:
                                         if s.chunk.reason == reason)
                             for reason in
                             sorted({s.chunk.reason for s in run.chunks})},
+        # The opening carries no word floor, so it can buy little playback and
+        # leave the assembler in its emergency path for a while - shipping
+        # short chunks to protect continuity. That is the trade working as
+        # intended, and it is worth seeing rather than only its outcome.
+        **_headroom_recovery(run),
+    }
+
+
+def _headroom_recovery(run: DecoupledRun) -> dict:
+    forced = [index for index, spoken in enumerate(run.chunks)
+              if "headroom" in spoken.chunk.reason]
+    return {
+        "chunks_forced_by_headroom": len(forced),
+        "headroom_recovered_after_chunk": (max(forced) if forced else None),
+        "words_while_recovering": [run.chunks[i].chunk.words for i in forced],
     }
 
 

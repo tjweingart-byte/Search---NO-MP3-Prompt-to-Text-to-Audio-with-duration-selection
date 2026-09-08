@@ -105,8 +105,10 @@ def replay(sentences: list, policy: AssemblyPolicy) -> dict:
     """What the assembler would have produced from the same sentences.
 
     No clock and no headroom: this is the word-threshold behaviour alone. The
-    timer and headroom rules only ever release *earlier*, so this is the
-    upper bound on chunk size and the lower bound on call count.
+    timer and headroom rules only ever release *earlier*, so this is the upper
+    bound on chunk size and the lower bound on call count. The opening chunk
+    has no size rule either way - it is whatever the first complete sentence
+    was - so a short first entry here is the policy working, not a miss.
     """
     assembler = SpeechAssembler(policy=policy, clock=lambda: 0.0)
     released = []
@@ -160,7 +162,7 @@ def main(argv=None) -> int:
     parser.add_argument("results", help="a results.json from Phase 5 or 6")
     parser.add_argument("--compare", default="",
                         help="a second results.json to put beside it")
-    parser.add_argument("--first-min-words", type=int, dest="first_min_words")
+    # No first-chunk knob: the opening has no size rule to sweep.
     parser.add_argument("--min-words", type=int, dest="min_words")
     parser.add_argument("--target-words", type=int, dest="target_words")
     parser.add_argument("--max-words", type=int, dest="max_words")
@@ -168,7 +170,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     given = {name: getattr(args, name) for name in
-             ("first_min_words", "min_words", "target_words", "max_words")
+             ("min_words", "target_words", "max_words")
              if getattr(args, name, None)}
     policy = AssemblyPolicy(**given)
     print(f"\npolicy under test: {vars(policy)}")

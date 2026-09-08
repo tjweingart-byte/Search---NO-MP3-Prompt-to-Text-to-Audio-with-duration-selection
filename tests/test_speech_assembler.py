@@ -30,7 +30,7 @@ def _assembler(**overrides):
 # --------------------------------------------------------------------------
 # the first chunk: latency is king
 # --------------------------------------------------------------------------
-def test_an_opening_sentence_past_the_floor_goes_straight_out():
+def test_an_opening_sentence_goes_straight_out():
     """Phase 5's first chunk was about 33 words. Nothing should hold it."""
     assembler, _ = _assembler()
     out = assembler.offer(words(33))
@@ -39,22 +39,70 @@ def test_an_opening_sentence_past_the_floor_goes_straight_out():
     assert out[0].held_seconds == 0.0
 
 
-def test_a_tiny_opening_sentence_waits_only_for_the_floor():
-    """A two-word opening buys 0.8s of playback; the second chunk needs longer
-    than that to synthesise, so playback would stall on the first handoff."""
+@pytest.mark.parametrize("sentence", [
+    "It happened.",                                        # 2 words
+    "The clock has no face.",                              # 5
+    "It was built to ring, not to be read.",               # 9
+    "Salisbury has kept it turning since thirteen eighty-six now.",   # 8
+    "Nobody there needed the minute, only the hour of prayer, and that was enough.",
+])
+def test_a_short_but_complete_first_sentence_is_released_immediately(sentence):
+    """The regression test for the rule this policy exists to hold.
+
+    Time to first listen outranks batching. A complete natural sentence goes to
+    the voice on the offer that produced it - at two words or at fifteen - and
+    is never held for a second sentence, a word count or a preferred size.
+    """
+    assembler, clock = _assembler()
+    out = assembler.offer(sentence)
+    assert len(out) == 1, f"{sentence!r} was held instead of released"
+    assert out[0].index == 0 and out[0].sentences == 1
+    assert out[0].text == sentence
+    assert out[0].held_seconds == 0.0
+    assert clock.t == 0.0          # nothing waited for anything
+    assert out[0].words < 18       # and it was below every later threshold
+
+
+def test_the_first_chunk_has_no_word_rule_to_override():
+    """There is deliberately no first-chunk size knob: one left behind with a
+    default of zero is an invitation to raise it again."""
+    assert not any("first_min" in name for name in vars(AssemblyPolicy()))
+    assert AssemblyPolicy().first_chunk_needs_terminal_punctuation is True
+
+
+def test_the_only_first_chunk_gate_is_completeness_not_size():
+    """A half-written clause is not a speakable thought. That is the whole
+    safeguard, and it is semantic rather than dimensional."""
     assembler, _ = _assembler()
-    assert assembler.offer("It happened.") == []
-    out = assembler.offer(words(12))
+    assert assembler.offer("It was built to") == []
+    out = assembler.offer("ring the hours.")
     assert len(out) == 1 and out[0].sentences == 2
-    assert out[0].words >= AssemblyPolicy().first_min_words
+    assert out[0].reason == "first chunk, released on the first complete thought"
 
 
-def test_the_floor_is_covered_by_the_arithmetic_that_set_it():
-    """audio(first chunk) must exceed generate(max chunk) or the first handoff
-    stalls. 0.1086 s/word from the 4090 curve, at TARGET_WPM."""
+def test_an_incomplete_opening_is_still_never_held_indefinitely():
+    assembler, clock = _assembler()
+    assert assembler.offer("A clause with no ending") == []
+    clock.advance(AssemblyPolicy().max_wait_seconds + 0.01)
+    out = assembler.due()
+    assert out and "held long enough" in out[0].reason
+
+
+def test_the_first_handoff_risk_the_removed_floor_used_to_prevent():
+    """Kept as arithmetic, because it is measured now rather than enforced.
+
+    The band where a short opening fails to cover the second chunk's synthesis
+    is narrower than it first looks: break-even is about 5.6 words against a
+    target-sized follower and about 10.2 against the largest one allowed.
+    """
     policy = AssemblyPolicy()
-    worst_case_generate = 0.10856 * policy.max_words - 0.8113
-    assert audio_seconds_for(policy.first_min_words) > worst_case_generate
+    against_target = 0.10856 * policy.target_words - 0.8113      # ~2.23s
+    against_cap = 0.10856 * policy.max_words - 0.8113            # ~4.07s
+
+    assert audio_seconds_for(5) < against_target       # a 5-word opening stalls
+    assert audio_seconds_for(6) > against_target       # a 6-word one does not
+    assert audio_seconds_for(10) < against_cap         # worst case is stricter
+    assert audio_seconds_for(11) > against_cap
 
 
 def test_the_first_chunk_is_never_held_for_the_later_target():
@@ -185,10 +233,12 @@ def test_reordered_text_is_detected():
 # the policy itself
 # --------------------------------------------------------------------------
 def test_an_incoherent_policy_is_refused_at_construction():
-    with pytest.raises(ValueError, match="first_min <= min <= target <= max"):
+    with pytest.raises(ValueError, match="min <= target <= max"):
         AssemblyPolicy(min_words=40, target_words=20)
     with pytest.raises(ValueError):
-        AssemblyPolicy(first_min_words=0)
+        AssemblyPolicy(min_words=0)
+    with pytest.raises(ValueError):
+        AssemblyPolicy(target_words=60, max_words=45)
 
 
 def test_the_defaults_stay_inside_the_measured_range():

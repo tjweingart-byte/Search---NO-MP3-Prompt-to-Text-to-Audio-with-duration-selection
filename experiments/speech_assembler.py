@@ -37,33 +37,62 @@ and there is no 4090 measurement of a tiny chunk anywhere in this repository,
 because the benchmark corpus was built with a 25-word floor. Small-chunk cost
 is an open question, and `tools/fit_chunk_policy.py` answers it from a real run.
 
-## Why the first chunk has a floor at all
+## The first chunk is a latency path, not a batch
 
-Not for efficiency. For headroom. One TTS worker means chunk 2 is synthesised
-while chunk 1 is playing, so:
+**No word floor. None.** The first complete, speakable thought
+`stream_sentences` produces goes to Chatterbox immediately, whether it is
+eight words or twenty. Time to first listen is the highest-priority metric and
+nothing about batching outranks it. The assembler's minimum, target and cap
+apply only *after* that first release.
+
+The one safeguard kept is semantic, not dimensional: the pending text must end
+on terminal punctuation - `.`, `!` or `?`, optionally followed by a closing
+quote or bracket, the same shape production's `_SENTENCE_END` looks for. A
+half-written clause is not a speakable thought, and shipping one to save
+milliseconds would buy a fragment. In practice `stream_sentences` only ever
+yields complete sentences, so this fires approximately never; it exists for the
+degenerate stream, and even then the wait timer and end-of-script flush still
+release the text rather than holding it.
+
+### The risk this accepts, and how it is reported rather than prevented
+
+An earlier draft held the first chunk to twelve words, derived from a real
+constraint: one TTS worker means chunk 2 is synthesised while chunk 1 plays, so
 
     audio(chunk 1)  >=  generate(chunk 2)
 
-Otherwise playback stalls immediately, which is worse than starting a moment
-later. At FAM's `TARGET_WPM = 150`, audio is `words / 2.5` seconds, and the
-worst case for chunk 2 is `max_words`:
+At `TARGET_WPM = 150` the break-even is about **5.6 words** against a
+target-sized follower (28 words, ~2.23s to synthesise) and about **10.2 words**
+against the largest one allowed (45 words, ~4.07s). So the band where a short
+opening actually stalls the first handoff is narrow - it takes an opening under
+roughly six words, or under eleven if the second chunk is at the cap. Worth
+knowing before treating the removed floor as a large risk: mostly it was
+insurance against a case that rarely arises.
 
-    generate(45 words) ~= 4.07s   ->   chunk 1 needs >= 10.2 words
-
-Hence `first_min_words = 12`, with margin. It is a floor, not a target: a
-first sentence already past it is released untouched, immediately.
+That floor is gone, deliberately. The constraint has not gone with it, so the
+run **measures** it: `playback_report()["first_handoff"]` reports the opening
+chunk's audio duration against the second chunk's generation time, and the
+executive summary flags it when the cover was not there. A risk that is
+measured and named is a decision; a risk that is silently designed out is a
+different product.
 
 Read against Phase 5: its first chunk took 2.757s to synthesise, which the
-curve puts at about 33 words. The floor would not have fired, so this policy
-predicts **no change to Phase 5's first-listen latency**. If Phase 6 regresses
-there, that prediction was wrong and the run says so rather than averaging it
-away.
+curve puts at about 33 words. Nothing here would have changed it, so this
+policy still predicts **no change to Phase 5's first-listen latency** - and now
+it cannot lengthen it either, because there is nothing left to wait for.
 """
 from __future__ import annotations
 
 import time
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+
+#: A complete thought ends on terminal punctuation, optionally inside a closing
+#: quote or bracket. The character class is production's, from
+#: `script_generator._SENTENCE_END` - the same boundary, asked as a question
+#: about the end of a string rather than used to split one.
+_COMPLETE_THOUGHT = re.compile(r"""[.!?]["')\]]*$""")
 
 #: FAM's planned speaking rate, from `config.settings.target_wpm`. Imported
 #: rather than copied where the app is importable.
@@ -88,9 +117,11 @@ class AssemblyPolicy:
     them against a real run rather than leaving them as somebody's guess.
     """
 
-    #: Floor for the opening chunk, derived from `audio(1) >= generate(2)`.
-    #: Latency is king here, so it is a floor and never a target.
-    first_min_words: int = 12
+    #: The opening chunk has no size rule at all - see the module docstring.
+    #: Its only gate is that the text is a complete thought, and that gate is
+    #: semantic. There is deliberately no word knob here: a floor left behind
+    #: with a default of zero is an invitation to raise it again.
+    first_chunk_needs_terminal_punctuation: bool = True
     #: Below this, a chunk is a fragment. Above it, a boundary may end a chunk.
     min_words: int = 18
     #: Where later chunks aim. Near the bottom of the measured range, because
@@ -108,12 +139,10 @@ class AssemblyPolicy:
     prefer_break_after: tuple = ("?", "!")
 
     def __post_init__(self) -> None:
-        if not (0 < self.first_min_words <= self.min_words <= self.target_words
-                <= self.max_words):
+        if not (0 < self.min_words <= self.target_words <= self.max_words):
             raise ValueError(
-                "policy must satisfy 0 < first_min <= min <= target <= max; got "
-                f"{self.first_min_words}, {self.min_words}, "
-                f"{self.target_words}, {self.max_words}")
+                "policy must satisfy 0 < min <= target <= max; got "
+                f"{self.min_words}, {self.target_words}, {self.max_words}")
 
 
 @dataclass
@@ -175,8 +204,24 @@ class SpeechAssembler:
         return sum(len(s) for s in self.pending)
 
     def _floor(self) -> int:
-        return (self.policy.first_min_words if self.released == 0
-                else self.policy.min_words)
+        """The size below which a chunk will not be shipped early.
+
+        One for the opening chunk: it has no size rule, so anything speakable
+        goes now rather than being merged past the cap with what follows.
+        """
+        return 1 if self.released == 0 else self.policy.min_words
+
+    def _is_complete_thought(self, text: str) -> bool:
+        """Ends on terminal punctuation, and has something in it.
+
+        The only gate on the first chunk, and it is about meaning rather than
+        size: a half-written clause is not a speakable thought.
+        """
+        text = text.strip()
+        if not text.split():
+            return False
+        return bool(_COMPLETE_THOUGHT.search(text)
+                    or not self.policy.first_chunk_needs_terminal_punctuation)
 
     # ---- the decision ----------------------------------------------------
     def _reason_to_release(self, headroom: Optional[float]) -> Optional[str]:
@@ -186,10 +231,21 @@ class SpeechAssembler:
         policy = self.policy
 
         if self.released == 0:
-            # Latency is king. The floor is the only thing held for, and it
-            # exists so the second chunk can be synthesised before the first
-            # one runs out - not to make the opening a nicer size.
-            return "first chunk, floor reached" if words >= policy.first_min_words else None
+            # The latency path. No word floor, no target, no preferred size:
+            # the first complete speakable thought goes now, at eight words or
+            # at twenty. The only question asked is whether it is complete.
+            if self._is_complete_thought(" ".join(self.pending)):
+                return "first chunk, released on the first complete thought"
+            # Not complete. Batching rules still do not apply to the opening,
+            # but the safety rules below must, or a degenerate stream could
+            # hold the first chunk forever.
+            if headroom is not None and headroom <= policy.headroom_floor_seconds:
+                return f"first chunk, headroom {headroom:.2f}s at the floor"
+            if (self.first_pending_at is not None
+                    and self.clock() - self.first_pending_at
+                    >= policy.max_wait_seconds):
+                return "first chunk, held long enough without a complete thought"
+            return None
 
         if words >= policy.max_words:
             return "at the cap"

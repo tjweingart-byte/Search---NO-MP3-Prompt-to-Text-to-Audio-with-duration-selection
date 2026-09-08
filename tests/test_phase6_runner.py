@@ -70,9 +70,18 @@ def test_the_coupled_fixture_makes_the_phase_5_mistake_visible(tmp_path):
     assert bad["chunking"]["tts_invocations"] == bad["chunking"]["raw_sentences"]
     assert good["chunking"]["tts_invocations"] < good["chunking"]["raw_sentences"]
     assert bad["chunking"]["chunks_under_10_words"] > 0
-    assert good["chunking"]["chunks_under_10_words"] == 0
     assert (bad["timing"]["claude_stream_seconds"]
             > good["timing"]["claude_stream_seconds"])
+
+    # The decoupled run may still emit short chunks - the opening has no word
+    # floor, the last one flushes, and low headroom forces the rest. What it
+    # must never do is emit a short chunk under a *batching* rule.
+    for chunk in good["chunks"]:
+        if chunk["words"] < AssemblyPolicy().min_words:
+            assert (chunk["reason"].startswith("first chunk")
+                    or chunk["reason"] == "end of script"
+                    or "headroom" in chunk["reason"]), chunk
+    assert good["chunks"][0]["reason"].startswith("first chunk")
 
 
 # --------------------------------------------------------------------------
@@ -121,6 +130,25 @@ def test_the_artefacts_a_run_must_leave_behind(tmp_path):
     assert len(chunks["raw_sentences"]) > len(chunks["chunks"])
 
 
+def test_the_report_names_what_the_missing_floor_cost(tmp_path):
+    """The opening has no word rule, so the risk it used to prevent has to be
+    visible in the report rather than absent from it."""
+    out, _ = _run(tmp_path)
+    record = json.loads((out / "results.json").read_text())["runs"][0]
+    handoff = record["playback"]["first_handoff"]
+    assert handoff["applicable"] is True
+    report = (out / "ANALYSIS.md").read_text()
+    assert "no word floor" in report
+    assert "The first handoff" in report
+
+
+def test_the_runner_offers_no_way_to_reinstate_a_first_chunk_floor(tmp_path):
+    """A knob left behind is an invitation to turn it back on."""
+    options = runner.build_parser().format_help()
+    assert "--first-min-words" not in options
+    assert "--min-words" in options
+
+
 def test_a_real_run_needs_the_selected_reference_voice():
     with pytest.raises(SystemExit, match="reference"):
         runner.main(["--runs", "1"])
@@ -143,7 +171,12 @@ def test_the_fitter_replays_the_assembler_over_a_real_run(tmp_path):
     found = fit_chunk_policy.report(coupled / "results.json", AssemblyPolicy())
     body = found["runs"]["cold"]
     assert body["as_run"]["under_10_words"] > 0
-    assert body["assembler_would_produce"]["under_10_words"] == 0
+    # The replay has no clock and no headroom, so the only chunks it may leave
+    # short are the opening - which carries no word floor by design - and the
+    # end-of-script flush.
+    assert body["assembler_would_produce"]["under_10_words"] <= 2
+    assert (body["assembler_would_produce"]["under_10_words"]
+            < body["as_run"]["under_10_words"])
     assert body["assembler_would_produce"]["chunks"] < body["as_run"]["chunks"]
     assert body["assembler_would_produce"]["text_integrity"].startswith("exact")
 
