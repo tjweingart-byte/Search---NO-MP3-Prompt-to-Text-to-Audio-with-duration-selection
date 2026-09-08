@@ -30,6 +30,7 @@ ENV CACHE_PATH=/data/scripts.db \
     MIXES_DB=/data/mixes.db \
     SOCIAL_DB=/data/social.db \
     ATTACHMENTS_PATH=/data/attachments.db \
+    ACCOUNTS_DB=/data/accounts.db \
     PORT=8000
 RUN mkdir -p /data
 

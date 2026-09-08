@@ -2950,3 +2950,79 @@ happened while writing the fix for it.
 `writable` is `os.access`, and is labelled a permission check rather than
 dressed up as a performed action - writing on every health poll would cost more
 than it tells anyone. 392 pass.
+
+## 66. Accounts, and the shape that kept the app usable without one
+
+A listener was whatever id the browser sent. `famUserId()` made one up with
+`Math.random()`, kept it in localStorage and put it in the query string of
+every request; nothing checked it. So `?user=<someone else>` read their
+profile, renamed them, deleted their mixes and echoed as them. That was
+defensible while everything was stateless. §49 keyed a durable listener table
+on that id, which made it a real hole rather than a theoretical one.
+
+**The shape of the fix mattered more than the fix.** "Add accounts" reads as
+"put a login in front of the app", and that is wrong twice: it puts a form in
+front of the first word, which the one-sentence spec forbids, and it discards
+the history of everyone who has used the app so far. So:
+
+> An identity is a **session**. An account is **credentials attached to a
+> session's identity**.
+
+Every request resolves a session from an HttpOnly cookie. With no cookie the
+server *mints* one - `secrets.token_urlsafe`, high entropy, never chosen by the
+client. That listener is anonymous and everything works for them: search,
+myFAM, Go Deeper, mixes, echoes. Signing up attaches an email and password to
+the id they already have, so there is **no migration and nothing to claim** -
+it is the same `user_id`, and their history is simply theirs now, on any device
+they log in from. Logging out drops the session and the next request mints a
+fresh anonymous one.
+
+That gets the property that actually matters - an id can no longer be forged -
+without a login screen in front of anybody.
+
+**Its own database.** `accounts.db` rather than a table in social.db, because
+it is the only store holding secrets; mixing password hashes into the file that
+holds echoes would give the whole thing the strictest of those properties by
+accident. The §64 guard earned its keep here: adding a sixth store made
+`test_the_dockerfile_puts_every_database_on_the_mounted_disk` fail until the
+Dockerfile pinned it to the mounted disk, which is exactly the redeploy
+data-loss bug §64 found, caught before it happened this time.
+
+Details worth keeping:
+
+* `hashlib.scrypt`, standard library, no new dependency. ~47 ms per attempt.
+  Parameters travel with each hash so the cost can be raised later.
+* **The session token is never stored** - only its SHA-256 - so a leaked
+  database yields no live sessions.
+* Login mints a *fresh* token rather than repointing the current one, or a
+  token captured before login would keep working after it (session fixation).
+* Wrong password and unknown address return the identical message, and the
+  unknown-address path still pays the hashing cost. Otherwise the form is an
+  account-enumeration oracle.
+* Changing a password ends every session, including the one that changed it.
+
+**Two mistakes worth recording, both caught by tests.**
+
+The first was mine in the test rather than the code: an expiry test asserted a
+session was dead past its TTL, but the earlier assertion in the same test had
+*used* the session, which slides the expiry forward by design. Split into two
+tests - one for an unused session expiring, one documenting the slide.
+
+The second was a real gap in §65's own fix. `_ensure_parent` covered the env
+var and the default but not a path passed directly to a store, so the moment a
+fixture pointed at a new subdirectory it failed with the exact `unable to open
+database file` that §65 exists to prevent. `data_path` now takes the explicit
+path as an `override` and gives it the same guarantee, so there is one function
+that owns every path decision instead of two routes with different promises.
+
+**Known gaps, named rather than discovered later.** There is no password reset,
+because it needs email delivery the app has no route to - a forgotten password
+today is a lost account, and that must be said before anyone relies on it.
+There is no admin, no email verification, and nothing is *gated* on having an
+account: it buys you your data on a second device, and nothing else yet.
+
+Verified on a running server, not just in tests: an anonymous listener finished
+an episode, signed up, and kept the same id and their history; a second cookie
+jar logged in and saw that history; `?user=<their id>` returned an empty
+profile and failed to rename them; and the cookie came back
+`HttpOnly; SameSite=lax`. 426 pass.

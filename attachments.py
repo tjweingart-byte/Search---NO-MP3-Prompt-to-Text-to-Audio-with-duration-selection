@@ -252,7 +252,7 @@ class AttachmentStore:
     """Short-lived, per-listener. Not a document store - context for a search."""
 
     def __init__(self, path: str | None = None) -> None:
-        self.path = path or data_path("ATTACHMENTS_PATH", "attachments.db")
+        self.path = data_path("ATTACHMENTS_PATH", "attachments.db", path)
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(

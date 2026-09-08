@@ -186,30 +186,41 @@ def test_building_the_feed_does_not_write(store):
     assert store.impressions_for("u") == []
 
 
+def who_is(client) -> str:
+    """The listener id this cookie jar resolves to. There is no other way to
+    ask - the id is minted by the server and kept out of the page's reach."""
+    return client.get("/api/auth/me").json()["user_id"]
+
+
 def test_the_endpoint_logs_one_impression_per_tile_it_returned(client):
-    feed = client.get("/api/myfam", params={"user": "u1"}).json()
+    feed = client.get("/api/myfam").json()
     tiles = [(s["key"], t["id"]) for s in feed["sections"] for t in s["topics"]]
     assert tiles, "nothing was shown, so this proves nothing"
     assert feed["algo"] == T.ALGO_VERSION
-    logged = appmod.EVENTS.impressions_for("u1")
+    logged = appmod.EVENTS.impressions_for(who_is(client))
     assert sorted((e.section, e.topic_id) for e in logged) == sorted(tiles)
 
 
-def test_an_anonymous_feed_logs_nothing(client):
-    """No listener id, no row to attribute it to - and no empty-string user."""
+def test_no_impression_is_ever_attributed_to_an_empty_listener(client):
+    """Every request now has a session, so nothing should land under "".
+
+    This replaces a test that asserted an id-less request logged nothing. There
+    is no such request any more: the server mints an identity rather than
+    accepting one, which is the whole point of the change.
+    """
     client.get("/api/myfam")
     assert appmod.EVENTS.impressions_for("") == []
+    assert appmod.EVENTS.impressions_for(who_is(client)), "the feed logged nothing"
 
 
 def test_the_feed_endpoint_notes_the_listener(client):
-    client.get("/api/myfam", params={"user": "u2"})
-    assert appmod.SOCIAL.person("u2")["known"] is True
+    client.get("/api/myfam")
+    assert appmod.SOCIAL.person(who_is(client))["known"] is True
 
 
 def test_recording_an_event_notes_the_listener(client):
-    client.post("/api/event", json={"user": "u3", "kind": "play",
-                                    "topic_id": "golf-evolution"})
-    assert appmod.SOCIAL.person("u3")["known"] is True
+    client.post("/api/event", json={"kind": "play", "topic_id": "golf-evolution"})
+    assert appmod.SOCIAL.person(who_is(client))["known"] is True
 
 
 def test_an_unknown_kind_is_still_refused(store):

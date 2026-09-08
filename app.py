@@ -31,6 +31,7 @@ from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import attachments as attachments_mod
 import topics as topics_mod
+import accounts as accounts_mod
 from paths import PROJECT_ROOT
 import mixes as mixes_mod
 import social as social_mod
@@ -217,6 +218,7 @@ def _database_report() -> list[dict]:
         ("social", "SOCIAL_DB", SOCIAL.path),
         ("mixes", "MIXES_DB", MIXES.path),
         ("attachments", "ATTACHMENTS_PATH", ATTACHMENTS.path),
+        ("accounts", "ACCOUNTS_DB", ACCOUNTS.path),
     ]
     report = []
     for name, env_var, path in stores:
@@ -337,6 +339,87 @@ async def health() -> dict:
     }
 
 
+class CredentialsRequest(BaseModel):
+    email: str = Field(..., max_length=accounts_mod.MAX_EMAIL)
+    password: str = Field(..., max_length=accounts_mod.MAX_PASSWORD)
+
+
+class PasswordChangeRequest(BaseModel):
+    current: str = Field(..., max_length=accounts_mod.MAX_PASSWORD)
+    new: str = Field(..., max_length=accounts_mod.MAX_PASSWORD)
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request) -> dict:
+    """Who the server thinks is asking. Cheap, and the only way to find out -
+    the id is not in the page's reach, which is the point of the cookie."""
+    listener = getattr(request.state, "listener", None)
+    if listener is None:
+        return {"user_id": "", "email": "", "authenticated": False}
+    return listener.as_dict()
+
+
+@app.post("/api/auth/signup")
+async def auth_signup(req: CredentialsRequest, request: Request) -> dict:
+    """Attach an account to the identity this listener already has.
+
+    Not "create a user": they exist already, with a history and possibly mixes
+    and echoes. Signing up claims that identity rather than starting a second
+    one, which is why nothing has to be migrated.
+    """
+    _rate_limit(request)
+    try:
+        listener = ACCOUNTS.sign_up(_require_listener(request), req.email, req.password)
+    except accounts_mod.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return listener.as_dict()
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: CredentialsRequest, request: Request) -> dict:
+    """Verify credentials and move this browser onto that account's identity.
+
+    A fresh session token is minted rather than the current one being
+    repointed: reusing it would let a token captured before login keep working
+    after it, which is the session-fixation bug.
+    """
+    _rate_limit(request)
+    try:
+        listener = ACCOUNTS.log_in(req.email, req.password)
+    except accounts_mod.AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    old = request.cookies.get(accounts_mod.COOKIE_NAME, "")
+    token, _user_id = ACCOUNTS.new_session(listener.user_id)
+    if old:
+        # The anonymous session this browser was carrying is finished with.
+        ACCOUNTS.end_session(old)
+    request.state.set_session = token
+    return listener.as_dict()
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request) -> dict:
+    """Drop the session. The next request mints a fresh anonymous one, so the
+    app keeps working - as a different listener, with nothing of theirs."""
+    _read_limit(request)
+    ACCOUNTS.end_session(request.cookies.get(accounts_mod.COOKIE_NAME, ""))
+    request.state.set_session = ""
+    return {"ok": True}
+
+
+@app.post("/api/auth/password")
+async def auth_password(req: PasswordChangeRequest, request: Request) -> dict:
+    """Change it, and log every device out - including this one. A password
+    change that leaves old sessions alive does not do what people believe."""
+    _rate_limit(request)
+    try:
+        ACCOUNTS.change_password(_require_listener(request), req.current, req.new)
+    except accounts_mod.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    request.state.set_session = ""
+    return {"ok": True}
+
+
 @app.get("/api/voices")
 async def voices() -> dict:
     """Voices this server can speak in, best first."""
@@ -370,10 +453,89 @@ async def script(req: ScriptRequest, request: Request) -> dict:
 EVENTS = topics_mod.EventStore()
 MIXES = mixes_mod.MixStore()
 SOCIAL = social_mod.SocialStore()
+ACCOUNTS = accounts_mod.AccountStore()
+
+
+@app.middleware("http")
+async def carry_the_session(request: Request, call_next):
+    """Resolve who is asking, from a cookie the client cannot forge.
+
+    This is where the old hole is closed. The listener id used to arrive as
+    `?user=` - chosen by the browser, checked by nobody - so anyone who guessed
+    one could act as that listener. It is now read from an HttpOnly session
+    cookie and, when there is no cookie, minted here with `secrets`.
+
+    Minting rather than demanding a login is the point: an anonymous listener
+    still gets a real, unforgeable identity, so search, myFAM and Go Deeper
+    work exactly as before for someone who has never signed up. Signing up
+    later attaches an email to the id they already have, which is why no data
+    has to move.
+
+    Only paths that need identity mint one, so a monitoring poll on
+    /api/health does not accumulate a session row per request.
+    """
+    path = request.url.path
+    wants_identity = path == "/" or (
+        path.startswith("/api/") and path != "/api/health"
+    )
+    token = request.cookies.get(accounts_mod.COOKIE_NAME, "")
+    listener = ACCOUNTS.listener_for(token) if token else None
+    minted = ""
+    if listener is None and wants_identity:
+        try:
+            minted, user_id = ACCOUNTS.new_session()
+            listener = accounts_mod.Listener(user_id)
+        except Exception:
+            # Never fail a request because a session could not be written; the
+            # listener is simply anonymous-and-unrecorded for this one.
+            log.exception("could not mint a session; continuing without one")
+    request.state.listener = listener
+
+    response = await call_next(request)
+
+    # An endpoint that changes who you are (log in, log out, sign up) says so
+    # here rather than building its own response.
+    new_token = getattr(request.state, "set_session", None)
+    if new_token is not None:
+        if new_token:
+            _set_session_cookie(response, request, new_token)
+        else:
+            response.delete_cookie(accounts_mod.COOKIE_NAME, path="/")
+    elif minted:
+        _set_session_cookie(response, request, minted)
+    return response
+
+
+def _set_session_cookie(response, request: Request, token: str) -> None:
+    """HttpOnly so page scripts cannot read it, which is what makes an XSS
+    unable to walk off with someone's identity. Secure only over https, or the
+    cookie would be dropped on the http://<lan-ip> address a phone uses."""
+    response.set_cookie(
+        accounts_mod.COOKIE_NAME,
+        token,
+        max_age=accounts_mod.SESSION_TTL,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path="/",
+    )
+
+
+def _listener(request: Request) -> str:
+    """The id every store keys on, or "" when there is no session."""
+    listener = getattr(request.state, "listener", None)
+    return listener.user_id if listener else ""
+
+
+def _require_listener(request: Request) -> str:
+    user = _listener(request)
+    if not user:
+        raise HTTPException(status_code=503, detail="Could not start a session.")
+    return user
 
 
 class MixRequest(BaseModel):
-    user: str = Field(..., max_length=64)
+    # No `user` field: identity comes from the session cookie, never the body.
     name: Optional[str] = Field(None, max_length=mixes_mod.MAX_NAME)
     #: Bank ids as strings, or {"query": "..."} for a topic the listener typed.
     #: Validated in mixes.clean_items rather than here, so one place owns the
@@ -403,7 +565,6 @@ def _attachments_for(user: str, ids: str) -> tuple:
 
 
 class AttachRequest(BaseModel):
-    user: str = Field("", max_length=64)
     kind: str = Field(..., pattern="^(document|image|link)$")
     name: str = Field("", max_length=300)
     data: str = Field("", description="Base64 file contents; documents and photos")
@@ -424,15 +585,14 @@ async def attach(req: AttachRequest, request: Request) -> dict:
         item = attachments_mod.build(req.kind, req.name, req.data, req.url)
     except attachments_mod.AttachmentError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ATTACHMENTS.put(req.user, item)
+    ATTACHMENTS.put(_listener(request), item)
     return item.as_dict()
 
 
 @app.delete("/api/attach")
-async def detach(request: Request, user: str = Query("", max_length=64),
-                 id: str = Query(..., max_length=64)) -> dict:
+async def detach(request: Request, id: str = Query(..., max_length=64)) -> dict:
     _read_limit(request)
-    return {"ok": ATTACHMENTS.delete(user, id)}
+    return {"ok": ATTACHMENTS.delete(_listener(request), id)}
 
 
 @app.get("/api/topics")
@@ -443,9 +603,10 @@ async def bank(request: Request):
 
 
 @app.get("/api/mixes")
-async def list_mixes(request: Request, user: str = Query("", max_length=64)):
+async def list_mixes(request: Request):
     """This listener's playFAM mixes, each with its topics resolved."""
     _read_limit(request)
+    user = _listener(request)
     return {
         "mixes": [m.as_dict() for m in MIXES.list_for_user(user)],
         "starters": [
@@ -459,7 +620,7 @@ async def list_mixes(request: Request, user: str = Query("", max_length=64)):
 async def create_mix(req: MixRequest, request: Request):
     _read_limit(request)
     try:
-        mix = MIXES.create(req.user, req.name or "", req.topic_ids or [])
+        mix = MIXES.create(_listener(request), req.name or "", req.topic_ids or [])
     except mixes_mod.MixError as exc:
         # Phrased for the listener: these are things they did, not faults.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -470,22 +631,21 @@ async def create_mix(req: MixRequest, request: Request):
 async def update_mix(mix_id: str, req: MixRequest, request: Request):
     _read_limit(request)
     try:
-        mix = MIXES.update(req.user, mix_id, req.name, req.topic_ids, req.public)
+        mix = MIXES.update(_listener(request), mix_id, req.name, req.topic_ids, req.public)
     except mixes_mod.MixError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return mix.as_dict()
 
 
 @app.delete("/api/mixes/{mix_id}")
-async def delete_mix(mix_id: str, request: Request, user: str = Query("", max_length=64)):
+async def delete_mix(mix_id: str, request: Request):
     _read_limit(request)
-    if not MIXES.delete(user, mix_id):
+    if not MIXES.delete(_listener(request), mix_id):
         raise HTTPException(status_code=404, detail="That mix no longer exists.")
     return {"ok": True}
 
 
 class EventRequest(BaseModel):
-    user: str = Field(..., max_length=64)
     kind: str = Field(..., max_length=16)
     topic_id: str = Field("", max_length=64)
     text: str = Field("", max_length=300)
@@ -495,7 +655,7 @@ class EventRequest(BaseModel):
 
 
 @app.get("/api/myfam")
-async def myfam(request: Request, user: str = Query("", max_length=64)):
+async def myfam(request: Request):
     """The four myFAM sections, ranked for this listener.
 
     Costs no model call: the topic bank is fixed and this only orders it.
@@ -505,6 +665,7 @@ async def myfam(request: Request, user: str = Query("", max_length=64)):
     # A cheap read: ranking a fixed bank costs no model call, so it takes the
     # reader's limit rather than the generation one.
     _read_limit(request)
+    user = _listener(request)
     feed = topics_mod.build_feed(EVENTS, user)
     # Logged here rather than inside build_feed, which stays a pure function of
     # the log - the whole ranking design is "computed on read, never stored",
@@ -530,21 +691,19 @@ async def record_event(req: EventRequest, request: Request):
     elif req.text:
         tags = topics_mod.tags_for_text(req.text)
     EVENTS.record(
-        topics_mod.Event(req.user, req.kind, req.topic_id, req.text, tags,
+        topics_mod.Event(_listener(request), req.kind, req.topic_id, req.text, tags,
                          thread=req.thread)
     )
-    SOCIAL.seen(req.user)
+    SOCIAL.seen(_listener(request))
     return {"ok": True}
 
 
 class PersonRequest(BaseModel):
-    user: str = Field(..., max_length=64)
     name: str = Field("", max_length=social_mod.MAX_NAME)
     handle: str = Field("", max_length=social_mod.MAX_HANDLE + 1)
 
 
 class EchoRequest(BaseModel):
-    user: str = Field(..., max_length=64)
     query: str = Field(..., max_length=300)
     title: str = Field("", max_length=200)
     minutes: int = Field(3, ge=1, le=10)
@@ -556,7 +715,7 @@ async def set_me(req: PersonRequest, request: Request):
     """Name and handle for this device. Not an account - see /api/profile."""
     _read_limit(request)
     try:
-        return SOCIAL.set_person(req.user, req.name, req.handle)
+        return SOCIAL.set_person(_listener(request), req.name, req.handle)
     except social_mod.SocialError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -570,24 +729,24 @@ async def post_echo(req: EchoRequest, request: Request):
     """
     _read_limit(request)
     try:
-        echo = SOCIAL.echo(req.user, req.query, req.title, req.minutes, req.thread)
+        echo = SOCIAL.echo(_listener(request), req.query, req.title, req.minutes, req.thread)
     except social_mod.SocialError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return echo.as_dict()
 
 
 @app.delete("/api/echo")
-async def delete_echo(request: Request, user: str = Query("", max_length=64),
-                      q: str = Query("", max_length=300),
+async def delete_echo(request: Request, q: str = Query("", max_length=300),
                       minutes: int = Query(3, ge=1, le=10)):
     _read_limit(request)
-    return {"ok": SOCIAL.unecho(user, q, minutes)}
+    return {"ok": SOCIAL.unecho(_listener(request), q, minutes)}
 
 
 @app.get("/api/profile")
-async def profile(request: Request, user: str = Query("", max_length=64)):
+async def profile(request: Request):
     """Counts and subjects from this listener's own event log. No model call."""
     _read_limit(request)
+    user = _listener(request)
     body = topics_mod.summary(EVENTS, user)
     SOCIAL.seen(user)
     person = SOCIAL.person(user)
@@ -607,7 +766,7 @@ async def profile(request: Request, user: str = Query("", max_length=64)):
 
 
 @app.get("/api/godeeper")
-async def go_deeper(request: Request, user: str = Query("", max_length=64)):
+async def go_deeper(request: Request):
     """Follow-ups predicted for the episodes this listener finished.
 
     Costs nothing: the model named it on the episode's trailing marker line,
@@ -616,12 +775,11 @@ async def go_deeper(request: Request, user: str = Query("", max_length=64)):
     to keep going.
     """
     _read_limit(request)
-    return {"threads": EVENTS.open_threads(user)}
+    return {"threads": EVENTS.open_threads(_listener(request))}
 
 
 @app.get("/api/explore")
-async def explore(request: Request, limit: int = Query(30, ge=1, le=60),
-                  user: str = Query("", max_length=64)):
+async def explore(request: Request, limit: int = Query(30, ge=1, le=60)):
     """Episodes other listeners have already generated, newest first.
 
     This endpoint costs nothing and, by design, can cause nothing to be
@@ -637,7 +795,7 @@ async def explore(request: Request, limit: int = Query(30, ge=1, le=60),
     # Who echoed what. An echo does not create an episode - the script was
     # already here - it changes what the card says, from "someone asked this"
     # to "Rachel sent you this", which is a different reason to press play.
-    labels = SOCIAL.recent_echoes(exclude_user=user)
+    labels = SOCIAL.recent_echoes(exclude_user=_listener(request))
     episodes = [
         {
             "query": entry["query"],
@@ -700,7 +858,6 @@ async def audio(
     # search=1 / search=0 still win, which is what opt-in means.
     search: bool | None = Query(None, description="Force research on (1) or off (0); "
                                                   "omit to let the question decide"),
-    user: str = Query("", max_length=64, description="Anonymous listener id, for myFAM"),
     cached_only: bool = Query(False, description="Replay only; never generate. Used by Explore"),
     topic_id: str = Query("", max_length=64, description="Bank topic id, when played from myFAM"),
     attach: str = Query("", max_length=400, description="Attachment ids from /api/attach"),
@@ -716,6 +873,7 @@ async def audio(
     # only stops someone swiping a feed at a normal speed, which is exactly
     # what the feed is for.
     (_read_limit if cached_only else _rate_limit)(request)
+    user = _listener(request)
     plan = _validated_plan(q, minutes, context, search, cached_only,
                            _attachments_for(user, attach))
 

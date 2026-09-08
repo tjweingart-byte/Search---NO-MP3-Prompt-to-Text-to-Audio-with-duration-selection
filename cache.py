@@ -30,6 +30,7 @@ import time
 from typing import Optional, Protocol
 
 from config import settings
+from paths import data_path
 
 log = logging.getLogger(__name__)
 
@@ -290,7 +291,9 @@ class SqliteScriptCache:
     """
 
     def __init__(self, path: str | None = None) -> None:
-        self.path = path or settings.cache_path
+        # Through data_path so an explicit path gets the same directory
+        # guarantee as the configured one.
+        self.path = data_path("CACHE_PATH", "scripts.db", path or settings.cache_path)
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(

@@ -79,7 +79,7 @@ def clean_handle(handle: str) -> str:
 
 class SocialStore:
     def __init__(self, path: str | None = None) -> None:
-        self.path = path or data_path("SOCIAL_DB", "social.db")
+        self.path = data_path("SOCIAL_DB", "social.db", path)
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(

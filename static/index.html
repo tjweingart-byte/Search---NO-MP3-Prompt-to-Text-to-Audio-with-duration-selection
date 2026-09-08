@@ -1489,8 +1489,7 @@
     var gone = ATTACHED.splice(i, 1)[0];
     renderAttachments();
     if(gone && gone.id){
-      fetch("/api/attach?user=" + encodeURIComponent(famUserId())
-            + "&id=" + encodeURIComponent(gone.id), { method: "DELETE" })
+      fetch("/api/attach?id=" + encodeURIComponent(gone.id), { method: "DELETE" })
         .catch(function(){ /* the server expires it anyway */ });
     }
   }
@@ -1538,7 +1537,6 @@
     var slot = { name: label, pending: true, kind: body.kind };
     ATTACHED.push(slot);
     renderAttachments();
-    body.user = famUserId();
     fetch("/api/attach", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -1969,8 +1967,7 @@
     var ep = currentEpisode();
     if(!ep){ toast("Play something first"); return; }
     if(echoedNow){
-      fetch("/api/echo?user=" + encodeURIComponent(famUserId())
-            + "&q=" + encodeURIComponent(ep.query) + "&minutes=" + ep.minutes,
+      fetch("/api/echo?q=" + encodeURIComponent(ep.query) + "&minutes=" + ep.minutes,
             { method: "DELETE" })
         .then(function(){ setEchoed(false); toast("Echo taken back"); })
         .catch(function(){ toast("Could not take that back"); });
@@ -1978,7 +1975,7 @@
     }
     fetch("/api/echo", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ user: famUserId(), query: ep.query, title: ep.title,
+      body: JSON.stringify({ query: ep.query, title: ep.title,
                              minutes: ep.minutes,
                              thread: episodeThread || "" })
     }).then(function(r){
@@ -2047,7 +2044,7 @@
         onGenerationFailed(err && err.message);
       }
     }, context, selectedVoice, {
-      user: famUserId(), topicId: episodeTopicId, cachedOnly: !!opts.cachedOnly,
+      topicId: episodeTopicId, cachedOnly: !!opts.cachedOnly,
       attach: opts.attach || ""
     });
 
@@ -2295,6 +2292,9 @@
     var input = document.getElementById("modalInput");
     input.placeholder = opts.placeholder || "";
     input.value = opts.value || "";
+    // Passwords are masked and kept out of autofill's way. Reset every time,
+    // or a password modal would leave the next text modal masked.
+    input.type = opts.inputType || "text";
     document.getElementById("modalConfirmBtn").textContent = opts.confirmLabel || "Save";
     _modalConfirmHandler = opts.onConfirm;
     document.getElementById("modalOverlay").classList.add("active");
@@ -2754,7 +2754,7 @@
     var el = document.getElementById("mixList");
     if(!el) return;
     Promise.all([
-      fetch("/api/mixes?user=" + encodeURIComponent(famUserId())).then(function(r){
+      fetch("/api/mixes").then(function(r){
         if(!r.ok) throw new Error("mixes unavailable"); return r.json();
       }),
       topicBank.length ? Promise.resolve({topics: topicBank})
@@ -2931,7 +2931,7 @@
 
   function deleteMix(){
     var m = mixById(currentMixId);
-    fetch("/api/mixes/" + m.id + "?user=" + encodeURIComponent(famUserId()), { method: "DELETE" })
+    fetch("/api/mixes/" + m.id, { method: "DELETE" })
       .then(function(r){
         if(!r.ok) throw new Error();
         toast("Deleted " + m.name);
@@ -3117,7 +3117,6 @@
   // way. The server owns the rules (duplicate names, unknown topics); the
   // interface just shows what it says rather than guessing at them twice.
   function saveMix(method, url, body, done){
-    body.user = famUserId();
     fetch(url, {
       method: method,
       headers: {"Content-Type": "application/json"},
@@ -3167,17 +3166,15 @@
   // bank means the second person to tap a tile gets the first person's script
   // for free. Personalisation is in the ordering, not the inventory.
 
-  // Anonymous, per-device, and never sent anywhere but this app's own server.
-  // Real accounts would replace this; nothing else has to change.
-  function famUserId(){
-    var id = null;
-    try { id = localStorage.getItem("fam_uid"); } catch(e){}
-    if(!id){
-      id = "u" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-      try { localStorage.setItem("fam_uid", id); } catch(e){}
-    }
-    return id;
-  }
+  // Identity used to be made up here - Math.random() into localStorage, then
+  // sent as ?user= on every request - and the server believed whatever arrived.
+  // It is now a session cookie the server mints and this script cannot read,
+  // so there is nothing to generate and nothing to send. Requests carry it
+  // automatically because they are same-origin.
+  //
+  // The old localStorage key is cleared once, so a browser that used the app
+  // before this change stops carrying a value that no longer means anything.
+  try { localStorage.removeItem("fam_uid"); } catch(e){}
 
   // Why each section exists, shown to the listener. A feed that cannot say
   // why it picked something reads as arbitrary, and "followers" in particular
@@ -3278,7 +3275,7 @@
     // four tiles. A listener on their first run has no threads and nothing
     // half-heard; without this they met an empty space where the way in is.
     Promise.all([
-      fetch("/api/godeeper?user=" + encodeURIComponent(famUserId()))
+      fetch("/api/godeeper")
         .then(function(r){ return r.ok ? r.json() : { threads: [] }; })
         .catch(function(){ return { threads: [] }; }),
       fetch("/api/topics")
@@ -3399,7 +3396,7 @@
         + '<div class="feed-rail"><div class="feed-skeleton"></div>'
         + '<div class="feed-skeleton"></div><div class="feed-skeleton"></div></div></div>';
     }
-    fetch("/api/myfam?user=" + encodeURIComponent(famUserId()))
+    fetch("/api/myfam")
       .then(function(r){ if(!r.ok) throw new Error("feed unavailable"); return r.json(); })
       .then(function(data){ renderMyFamFeed(data.sections); loadGoDeeper(); })
       .catch(function(){
@@ -3440,7 +3437,7 @@
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-          user: famUserId(), kind: kind,
+          kind: kind,
           topic_id: topicId || "", text: (text || "").slice(0, 300),
           thread: (thread || "").slice(0, 200)
         })
@@ -3588,11 +3585,116 @@
   // the manage links - are simply not there.
   var viewingProfile = null;
 
+  // Who the server says we are. There is no way to work this out locally any
+  // more - the session cookie is HttpOnly, so the page cannot read it - which
+  // is exactly what stops a script walking off with someone's identity.
+  var AUTH = { user_id: "", email: "", authenticated: false };
+
+  function refreshAuth(){
+    return fetch("/api/auth/me")
+      .then(function(r){ return r.json(); })
+      .then(function(d){ AUTH = d; return d; })
+      .catch(function(){ return AUTH; });
+  }
+
+  function accountBlock(){
+    if(AUTH.authenticated){
+      return '<div class="pf-note">Signed in as <b>' + escapeHtml(AUTH.email)
+        + '</b>. Your history follows you to any device you sign in on.'
+        + '<div class="pf-acts">'
+        + '<button class="pf-btn" onclick="changePassword()">Change password</button>'
+        + '<button class="pf-btn" onclick="logOut()">Log out</button>'
+        + '</div></div>';
+    }
+    return '<div class="pf-note">This is a device profile. Everything here is '
+      + 'yours already \u2014 create an account and it keeps working, on any '
+      + 'device you sign in on. Nothing is lost either way.'
+      + '<div class="pf-acts">'
+      + '<button class="pf-btn" onclick="createAccount()">Create account</button>'
+      + '<button class="pf-btn" onclick="signIn()">Sign in</button>'
+      + '</div></div>';
+  }
+
+  function askEmailAndPassword(title, confirmLabel, done){
+    showModal({
+      title: title,
+      placeholder: "you@example.com",
+      confirmLabel: "Next",
+      onConfirm: function(email){
+        showModal({
+          title: "Password",
+          placeholder: "at least 10 characters",
+          confirmLabel: confirmLabel,
+          inputType: "password",
+          onConfirm: function(password){ done(email, password); }
+        });
+      }
+    });
+  }
+
+  function postAuth(path, body, okMessage){
+    return fetch(path, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    }).then(function(r){
+      return r.json().then(function(d){
+        if(!r.ok) throw new Error(d.error || "That did not work");
+        return d;
+      });
+    }).then(function(d){
+      toast(okMessage);
+      return refreshAuth().then(function(){ loadProfile(); return d; });
+    }).catch(function(err){ toast(err.message); });
+  }
+
+  function createAccount(){
+    askEmailAndPassword("Create an account", "Create", function(email, password){
+      // Signing up keeps this listener's id, so their history, mixes and
+      // echoes are simply theirs now. Nothing is copied or migrated.
+      postAuth("/api/auth/signup", { email: email, password: password },
+               "Account created \u2014 everything here is yours");
+    });
+  }
+
+  function signIn(){
+    askEmailAndPassword("Sign in", "Sign in", function(email, password){
+      postAuth("/api/auth/login", { email: email, password: password },
+               "Signed in");
+    });
+  }
+
+  function logOut(){
+    postAuth("/api/auth/logout", {}, "Logged out").then(function(){
+      // A fresh anonymous listener, so the app keeps working with nothing of
+      // theirs on screen.
+      loadMyFam();
+    });
+  }
+
+  function changePassword(){
+    showModal({
+      title: "Current password", placeholder: "", confirmLabel: "Next",
+      inputType: "password",
+      onConfirm: function(current){
+        showModal({
+          title: "New password", placeholder: "at least 10 characters",
+          confirmLabel: "Change", inputType: "password",
+          onConfirm: function(next){
+            postAuth("/api/auth/password", { current: current, "new": next },
+                     "Password changed \u2014 other devices signed out");
+          }
+        });
+      }
+    });
+  }
+
+  refreshAuth();
+
   function loadProfile(){
     var el = document.getElementById("profileBody");
     if(!el) return;
     if(viewingProfile){ renderFriendProfile(viewingProfile); return; }
-    fetch("/api/profile?user=" + encodeURIComponent(famUserId()))
+    fetch("/api/profile")
       .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
       .then(renderProfile)
       .catch(function(){
@@ -3721,6 +3823,8 @@
       + '<path d="M4 5h16v11H9l-5 4z"/></svg></button>'
       + '</div>';
 
+    html += accountBlock();
+
     if(p.subjects && p.subjects.length){
       html += '<div class="pf-tags">' + p.subjects.map(function(t){
         return '<div class="pf-tag">' + escapeHtml(t) + '</div>';
@@ -3788,7 +3892,7 @@
           onConfirm: function(handle){
             fetch("/api/me", {
               method: "POST", headers: {"Content-Type": "application/json"},
-              body: JSON.stringify({ user: famUserId(), name: name, handle: handle })
+              body: JSON.stringify({ name: name, handle: handle })
             }).then(function(r){
               return r.json().then(function(d){
                 if(!r.ok) throw new Error(d.error || "Could not save that");
@@ -3968,7 +4072,7 @@
 
   function loadExplore(){
     setReelText("Loading…", "", "");
-    fetch("/api/explore?limit=60&user=" + encodeURIComponent(famUserId()))
+    fetch("/api/explore?limit=60")
       .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
       .then(function(data){
         var eps = data.episodes || [];
@@ -4092,7 +4196,7 @@
         toast(err && err.message ? err.message : "That one has expired");
         nextReel();
       }
-    }, "", selectedVoice, { user: famUserId(), cachedOnly: true });
+    }, "", selectedVoice, { cachedOnly: true });
   }
 
   function reelTogglePlay(){

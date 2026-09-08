@@ -251,8 +251,16 @@ another rule.
    the listener can act on, and an attached episode is **never cached**, so it
    cannot reach another listener or Explore. Only PDF needs a package (pypdf,
    optional); .docx is read with `zipfile`.
-10. **Personalisation needs state the app does not have**: user identity, an
-   interaction log, and a recommender. Everything today is stateless.
+10. ~~**Personalisation needs state the app does not have**~~ - *identity is
+   done; the recommender is still crude.* `accounts.py` gives every listener a
+   server-minted session id in an HttpOnly cookie, and an account is *email and
+   password attached to the id they already have* - so signing up keeps their
+   history rather than starting a second listener beside it, and logging in on
+   a phone reaches the same data. The app still works with no account at all,
+   which was the constraint that stopped this becoming a login screen in front
+   of the product. What is genuinely missing: **password reset**, which needs
+   email delivery the app has no route to, so a forgotten password today means
+   a lost account. Say so before anyone relies on it.
 
 ## Constraints that are settled — do not undo without discussing
 
@@ -277,6 +285,14 @@ another rule.
   what the model already knows, immediately. `search=1`/`search=0` on a request
   still wins. Paying 10-25 seconds on every episode bought nothing for "what is
   the NASDAQ", which is most of what people ask.
+- **A listener id is never accepted from the client.** It arrives from an
+  HttpOnly session cookie the server minted, and `?user=` is ignored wherever
+  it still appears. This replaced `famUserId()`, which made an id up with
+  `Math.random()` and put it in every query string - so anyone who read or
+  guessed one could take over that listener. Anonymous listeners still get a
+  full identity, because requiring a login to hear an episode would break the
+  one-sentence spec. If you add an endpoint that touches per-listener data,
+  take the id from `_listener(request)` and never from a parameter.
 - **Failures must be visible.** Silent success (empty audio, a placeholder tone,
   demo mode mistaken for live) has caused more lost time on this project than
   any real bug. Every fallback must announce itself. *(PROBLEMS.md §51: demo
@@ -301,7 +317,10 @@ another rule.
 
 - **Where does this deploy?** Bandwidth is 2.65 MB/min uncompressed; that is
   fine on localhost and expensive at scale.
-- **Is there a user account?** Personalisation cannot start without identity.
+- ~~**Is there a user account?**~~ *Answered: yes, as of PROBLEMS.md §66.* An
+  identity is a session; an account is credentials attached to one. What is
+  still open is what an account should *entitle* you to - nothing is gated on
+  having one today.
 - **Local or hosted voices?** Changes the cost model more than the model choice
   does.
 - **How much to prefetch?** Every speculative script costs money; every one not

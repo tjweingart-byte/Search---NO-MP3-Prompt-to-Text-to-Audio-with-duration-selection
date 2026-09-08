@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import accounts as ACC  # noqa: E402
 import attachments as A  # noqa: E402
 import mixes as M  # noqa: E402
 import paths  # noqa: E402
@@ -34,6 +35,7 @@ STORES = [
     ("SOCIAL_DB", "social.db", S.SocialStore),
     ("MIXES_DB", "mixes.db", M.MixStore),
     ("ATTACHMENTS_PATH", "attachments.db", A.AttachmentStore),
+    ("ACCOUNTS_DB", "accounts.db", ACC.AccountStore),
 ]
 
 ALL_VARS = [v for v, _f, _c in STORES] + ["CACHE_PATH"]
@@ -61,7 +63,11 @@ def test_a_store_built_from_elsewhere_writes_to_the_project_root(monkeypatch, tm
     monkeypatch.chdir(tmp_path)
     store = T.EventStore()
     assert pathlib.Path(store.path).parent == ROOT
-    assert not list(tmp_path.glob("*.db")), "a database was created in the cwd"
+    # Named files rather than *.db: a fixture may legitimately put its own
+    # database in tmp_path, and the claim here is only that *these* did not
+    # follow the working directory.
+    strays = [f for _v, f, _c in STORES if (tmp_path / f).exists()]
+    assert not strays, f"a store followed the cwd: {strays}"
 
 
 # --- resolution rules -----------------------------------------------------
@@ -230,7 +236,8 @@ def test_health_reports_every_database_with_a_real_read(monkeypatch, tmp_path):
     body = TestClient(appmod.app).get("/api/health").json()
 
     reported = {entry["name"] for entry in body["databases"]}
-    assert reported == {"scripts", "events", "social", "mixes", "attachments"}
+    assert reported == {"scripts", "events", "social", "mixes", "attachments",
+                        "accounts"}
     for entry in body["databases"]:
         assert entry["readable"] is True, f"{entry['name']} did not open: {entry}"
         assert entry["writable"] is True

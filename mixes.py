@@ -166,7 +166,7 @@ def clean_items(raw: Sequence) -> list[MixItem]:
 
 class MixStore:
     def __init__(self, path: str | None = None) -> None:
-        self.path = path or data_path("MIXES_DB", "mixes.db")
+        self.path = data_path("MIXES_DB", "mixes.db", path)
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(

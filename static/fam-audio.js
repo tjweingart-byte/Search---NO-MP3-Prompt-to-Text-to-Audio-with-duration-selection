@@ -149,11 +149,12 @@ window.FamAudio = (function () {
               "&minutes=" + encodeURIComponent(minutes) + "&fmt=pcm" +
               (context ? "&context=" + encodeURIComponent(context) : "") +
               (voice ? "&voice=" + encodeURIComponent(voice) : "") +
-              // Who is listening and what they tapped, so myFAM can rank.
-              // Sent with the audio request rather than as a separate call:
-              // a play that reached the server is a fact, and a client-side
-              // report of one is a claim that can be lost or duplicated.
-              (listener && listener.user ? "&user=" + encodeURIComponent(listener.user) : "") +
+              // What they tapped, so myFAM can rank. *Who* is listening is no
+              // longer sent: it comes from the session cookie, which rides
+              // along automatically and cannot be set by this script.
+              // The play is still recorded from the audio request rather than
+              // a separate call, because a play that reached the server is a
+              // fact and a client-side report of one is a claim.
               (listener && listener.topicId ? "&topic_id=" + encodeURIComponent(listener.topicId) : "") +
               // Explore replays only. The server refuses to generate on a miss,
               // so a stale card costs a 409 rather than a model call.

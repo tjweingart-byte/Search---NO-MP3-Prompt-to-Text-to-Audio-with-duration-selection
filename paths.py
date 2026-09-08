@@ -73,8 +73,9 @@ def _ensure_parent(path: Path, env_var: str) -> None:
     log.info("created %s for %s", parent, env_var)
 
 
-def data_path(env_var: str, filename: str) -> str:
-    """Absolute path for one database, from `env_var` or the project root.
+def data_path(env_var: str, filename: str, override: str | None = None) -> str:
+    """Absolute path for one database: `override`, else `env_var`, else the
+    project root.
 
     Read at call time rather than at import, so a test that sets the variable
     and rebuilds a store gets what it set.
@@ -82,7 +83,20 @@ def data_path(env_var: str, filename: str) -> str:
     Creates the containing directory as a side effect: every caller is about to
     open the file, and a missing directory is the one failure sqlite reports in
     a way nobody can act on. Raises `DataPathError` if it cannot.
+
+    `override` is the path a caller passed directly - a test's tmp_path, mostly.
+    It goes through here rather than straight to the store so that it gets the
+    same directory guarantee as everything else. It did not at first, and the
+    gap showed up immediately: a fixture pointing at a new subdirectory failed
+    with the exact `unable to open database file` this function exists to
+    prevent. Used as given rather than re-anchored - an explicit argument is
+    the caller's decision, not an ambiguity to resolve.
     """
+    if override:
+        chosen = Path(override).expanduser()
+        _ensure_parent(chosen, env_var or "the path given")
+        return str(chosen)
+
     raw = os.environ.get(env_var, "").strip()
     if not raw:
         resolved = PROJECT_ROOT / filename

@@ -294,7 +294,7 @@ class EventStore:
     def __init__(self, path: str | None = None) -> None:
         # None means "the app's own database", resolved from the project
         # root rather than the cwd. See paths.py for why that matters.
-        self.path = path or data_path("MYFAM_DB", "myfam.db")
+        self.path = data_path("MYFAM_DB", "myfam.db", path)
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(
