@@ -11,6 +11,7 @@ Endpoints
 from __future__ import annotations
 
 import os
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -729,10 +730,11 @@ async def audio(
             log.info(
                 "episode q=%r %s wall=%.1fs preroll=%.2fs chunks_primed=%d "
                 "audio_primed=%.2fs first_pcm=%s preroll_satisfied=%s "
-                "first_byte=%s",
+                "first_byte=%s marks=%s",
                 plan.query, stats.as_dict(), time.monotonic() - started,
                 PREROLL_SECONDS, chunks_primed, primed_seconds,
                 _ms(first_pcm_at), _ms(preroll_at), _ms(first_byte_at),
+                json.dumps(stats.marks.to_dict(), default=str),
             )
 
     # Recorded here rather than client-side: audio is being served, so the
@@ -763,6 +765,9 @@ async def audio(
             "X-Audio-Primed-Seconds": f"{primed_seconds:.3f}",
             "X-First-PCM-Seconds": f"{first_pcm_at:.4f}" if first_pcm_at is not None else "",
             "X-Preroll-Satisfied-Seconds": f"{preroll_at:.4f}" if preroll_at is not None else "",
+            # The episode's own marks, so a client-side probe can read the
+            # server's view of the same request rather than inferring it.
+            "X-Episode-Marks": json.dumps(stats.marks.summary(), default=str),
         },
     )
 

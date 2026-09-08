@@ -232,3 +232,67 @@ def test_the_model_is_loaded_once_per_process(monkeypatch):
 
     assert ChatterboxEngine._model() is ChatterboxEngine._model()
     assert loads == ["cuda"]
+
+
+# --------------------------------------------------------------------------
+# warm at startup, not on the first listener
+# --------------------------------------------------------------------------
+def test_warm_up_loads_the_model_so_no_request_pays_for_it(monkeypatch):
+    """The cold load is ~10s on a 4090. `warm_up()` runs in the app lifespan,
+    before the server accepts anything, so it lands there and not on the first
+    episode of the day.
+
+    The test asserts on the *whole* warm-up path, not just residency, because
+    `warm_up` swallows every exception - a model that loads but cannot speak
+    would still leave the first listener paying, silently.
+    """
+    import contextlib
+
+    import numpy as np
+
+    spoken = []
+
+    class FakeWav:
+        """Stands in for the torch tensor `generate` returns."""
+
+        def squeeze(self, axis):
+            return self
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def numpy(self):
+            return np.zeros(240, dtype="float32")
+
+    class FakeModel:
+        sr = 24000
+        device = "cuda"
+
+        def generate(self, text, **kwargs):
+            spoken.append(text)
+            return FakeWav()
+
+    torch = type(sys)("torch")
+    torch.inference_mode = contextlib.nullcontext
+    module = type(sys)("chatterbox.tts")
+    module.ChatterboxTTS = type("T", (), {
+        "from_pretrained": staticmethod(lambda device: FakeModel())})
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "chatterbox", type(sys)("chatterbox"))
+    monkeypatch.setitem(sys.modules, "chatterbox.tts", module)
+    monkeypatch.setattr(ChatterboxEngine, "device", classmethod(lambda cls: "cuda"))
+    monkeypatch.setattr(ChatterboxEngine, "reference_path",
+                        staticmethod(lambda: __import__("pathlib").Path("ref.wav")))
+    monkeypatch.setattr(ChatterboxEngine, "_available", True)
+    monkeypatch.setattr(tts, "PRODUCTION_ENGINES", (ChatterboxEngine,))
+    ChatterboxEngine._loaded.clear()
+    ChatterboxEngine._gate = None
+
+    assert ChatterboxEngine._loaded == {}, "nothing should be resident yet"
+    asyncio.run(tts.warm_up())
+    assert "cuda" in ChatterboxEngine._loaded, "startup did not load the model"
+    assert spoken, "warm_up loaded the model but never proved it can speak"
+    ChatterboxEngine._loaded.clear()

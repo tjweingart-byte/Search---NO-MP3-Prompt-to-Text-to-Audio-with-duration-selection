@@ -26,6 +26,7 @@ import time
 
 from audio_utils import PaceController, pcm_duration, silence, streaming_wav_header
 from cache import ScriptCache, build_cache, cache_key, canonical_key, is_shareable, ttl_for
+from episode_marks import EpisodeMarks, TimedClient
 from config import settings
 from script_buffer import ASSEMBLER_TICK, ScriptBuffer
 from script_generator import EpisodePlan, ScriptGenerator, ScriptNotes, count_words
@@ -151,6 +152,10 @@ class GenerationStats:
     starved: bool = False
     #: Wall clock at which the first audio left the pipeline.
     first_audio_at: float = 0.0
+    #: Named instants and per-synthesis records for this episode. Written to,
+    #: never read back: instrumentation must not be able to change what a
+    #: listener hears.
+    marks: EpisodeMarks = field(default_factory=EpisodeMarks)
     script: list[str] = field(default_factory=list)
     #: The thread the episode left open, phrased as the follow-up a listener
     #: would ask for. Drives the one-tap suggestion in Go Deeper; empty when
@@ -372,17 +377,29 @@ class PodcastPipeline:
             while True:
                 item = await pump.next()
                 if item is None:
+                    stats.marks.mark("claude_complete")
+                    # Waiting work at the moment Claude finished. Greater than
+                    # zero means synthesis was behind and the model finished
+                    # anyway, which is the decoupling seen rather than claimed.
+                    stats.marks.backlog_at_claude_complete = pump.queue.qsize()
                     break
                 if isinstance(item, Exception):
                     if fatal:
                         raise item
                     log.warning("optional stream failed; continuing", exc_info=item)
                     break
+                stats.marks.mark("first_sentence")
                 async for chunk in self._speak_chunk(item, pace, stats):
                     yield chunk
                 if stats.truncated:
                     break
         finally:
+            stats.marks.mark("speaking_complete")
+            if stats.marks.backlog_at_claude_complete is None:
+                # Truncation stops the loop before the sentinel arrives, which
+                # is most episodes. The queue depth at the moment speaking
+                # ended answers the same question: was synthesis behind?
+                stats.marks.backlog_at_claude_complete = pump.queue.qsize()
             # `_Pump.close()`, the same as `_speak`: it cancels the producer
             # *and* awaits it, so nothing this method started outlives it.
             await pump.close()
@@ -416,13 +433,17 @@ class PodcastPipeline:
         if not fit.spoken:
             return
 
+        tts_start = stats.marks.mark("first_tts_start")
         started = time.perf_counter()
         pcm = await self.engine.synth(fit.text, wpm, self.voice)
         synth_seconds = time.perf_counter() - started
+        tts_done = stats.marks.mark("first_tts_complete")
         if not pcm:
             return
 
         audio_seconds = pcm_duration(len(pcm), self.engine.sample_rate)
+        stats.marks.add_chunk(fit.text, len(fit.spoken),
+                              tts_done - synth_seconds, tts_done, audio_seconds)
         stats.synth_seconds += synth_seconds
         elapsed_wall = time.perf_counter() - stats.started_at
         headroom = pace.elapsed + audio_seconds - elapsed_wall
@@ -467,17 +488,20 @@ class PodcastPipeline:
             while True:
                 item = await pump.next()
                 if item is None:
+                    stats.marks.mark("claude_complete")
                     break
                 if isinstance(item, Exception):
                     if fatal:
                         raise item
                     log.warning("optional stream failed; continuing", exc_info=item)
                     break
+                stats.marks.mark("first_sentence")
                 async for chunk in self._speak_one(item, pace, stats):
                     yield chunk
                 if stats.truncated:
                     break
         finally:
+            stats.marks.mark("speaking_complete")
             await pump.close()
 
     async def _speak_one(
@@ -501,9 +525,11 @@ class PodcastPipeline:
             stats.truncated = True
             return
 
+        stats.marks.mark("first_tts_start")
         started = time.perf_counter()
         pcm = await self.engine.synth(sentence, wpm, self.voice)
         synth_seconds = time.perf_counter() - started
+        tts_done = stats.marks.mark("first_tts_complete")
         if not pcm:
             return
 
@@ -528,6 +554,8 @@ class PodcastPipeline:
                 "The listener hears silence here. Synthesis so far: %.1fs.",
                 elapsed_wall, pace.elapsed + audio_seconds, elapsed_wall, stats.synth_seconds,
             )
+        stats.marks.add_chunk(sentence, 1, tts_done - synth_seconds, tts_done,
+                              pcm_duration(len(pcm), self.engine.sample_rate))
         pace.observe(len(pcm) + len(gap), words)
         stats.sentences += 1
         stats.words += words
@@ -606,6 +634,7 @@ class PodcastPipeline:
         instant_plan = dataclasses.replace(plan, search=False, role="opening")
         research_plan = dataclasses.replace(plan, search=True, role="continuation")
 
+        stats.marks.mark("claude_start")
         instant = self._pump_for(
             self.generator.stream_sentences(instant_plan, ScriptNotes()))
         research = self._pump_for(
@@ -716,6 +745,14 @@ class PodcastPipeline:
 
         stats.cache = "miss" if self.cache else "off"
 
+        # Time-to-first-token is invisible from outside `stream_sentences`,
+        # which yields whole sentences. Wrapping the client observes the first
+        # delta and changes nothing about the request - the same wrapper Phase
+        # 6 measured with. Guarded because a test generator has no client.
+        client = getattr(self.generator, "client", None)
+        if client is not None and not isinstance(client, TimedClient):
+            self.generator.client = TimedClient(client, stats.marks)
+
         # --- Generate ------------------------------------------------------
         # Nothing is spoken until the real script arrives. The opener that used
         # to cover this wait is gone: see PROBLEMS.md 55.
@@ -725,6 +762,7 @@ class PodcastPipeline:
             async for chunk in self._answer_first(plan, pace, stats, notes):
                 yield chunk
         else:
+            stats.marks.mark("claude_start")
             body = self._pump_for(self.generator.stream_sentences(plan, notes))
             async for chunk in self._speak_pump(body, pace, stats):
                 yield chunk
