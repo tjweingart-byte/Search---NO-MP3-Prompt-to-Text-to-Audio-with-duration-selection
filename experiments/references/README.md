@@ -3,17 +3,29 @@
 **Nothing goes in here that we do not have the right to clone.** This folder is
 git-ignored: the recordings are somebody's voice, and they are not source code.
 
-Three files, plus a rights record for each:
+Put the three recordings in here **under whatever names they already have** -
+nothing renames, moves or converts them - then:
 
-    reference_1.wav   reference_1.rights.json
-    reference_2.wav   reference_2.rights.json
-    reference_3.wav   reference_3.rights.json
+    python tools/check_reference_audio.py experiments/references --adopt
 
-**Named neutrally on purpose.** A filename like `magnetic.wav` would assert
-which speaker is the magnetic one - a mapping nobody has verified - and would
-prime whoever listens toward hearing it. The four qualities being listened for
-(magnetic, human, storyteller, modern authority) are recorded in the experiment
-design, unattached to any file. The order of the numbers means nothing.
+That writes `sources.json`, mapping neutral ids to the real files, and creates
+a rights template for each. The assignment is shuffled rather than
+alphabetical, and the mapping file is git-ignored along with the audio.
+
+**Neutral ids on purpose.** A filename like `magnetic.wav` would assert which
+speaker is the magnetic one - a mapping nobody has verified - and would prime
+whoever listens. Speaker names are worse: they identify the voice outright.
+Nothing downstream ever sees a source filename except `KEY.json`, which is the
+reveal.
+
+    sources.json               reference_1 -> whichever file
+    reference_1.rights.json    rights for that recording
+    reference_2.rights.json
+    reference_3.rights.json
+
+The four qualities being listened for (magnetic, human, storyteller, modern
+authority) are recorded in the experiment design, unattached to any file. The
+order of the numbers means nothing.
 
 Then:
 
@@ -41,7 +53,7 @@ each voice while feeding the other two the same. Make them the same length.
 | | |
 |---|---|
 | duration | **12-15 seconds**, and **all three within 2 seconds of each other** |
-| format | any file `librosa` can open - wav, flac, mp3, m4a. **Prefer WAV** |
+| format | any file `librosa` can open - **wav, m4a, mp3, flac**. No conversion needed; Chatterbox calls `librosa.load` itself |
 | sample rate | 24 kHz or higher (44.1/48 kHz is ideal). Never below 16 kHz |
 | channels | mono preferred; stereo is downmixed automatically |
 | level | peaks below -1 dBFS. **A clipped reference clones its distortion** |

@@ -51,6 +51,96 @@ DURATION_TOLERANCE = 2.0
 #: A reference that clips has distortion baked into the cloned voice.
 PEAK_CEILING = 0.99
 
+#: Maps neutral ids to the real files. Git-ignored, and never read by anything
+#: that produces judging output.
+SOURCES = "sources.json"
+
+#: Anything librosa can open. Chatterbox itself calls `librosa.load`, so if a
+#: format is readable here it is readable there - and if it is not, that is a
+#: real finding rather than a checker limitation.
+AUDIO_SUFFIXES = (".wav", ".m4a", ".mp3", ".flac", ".aac", ".ogg", ".aiff",
+                  ".aif", ".mp4", ".opus", ".wma")
+
+
+def neutral_ids(count: int = 3) -> list:
+    return [f"reference_{index + 1}" for index in range(count)]
+
+
+def load_sources(folder: pathlib.Path) -> dict:
+    """Neutral id -> real path, from sources.json or from reference_N files.
+
+    The mapping lives in a file rather than in a filename so the recordings can
+    keep whatever names they arrived with. Nothing that judging touches ever
+    reads it.
+    """
+    mapping_path = folder / SOURCES
+    if mapping_path.exists():
+        raw = json.loads(mapping_path.read_text(encoding="utf-8"))
+        entries = raw.get("map", raw)
+        return {key: folder / name for key, name in entries.items()
+                if not key.startswith("_")}
+    found = {}
+    for key in neutral_ids():
+        matches = [m for m in sorted(folder.glob(f"{key}.*"))
+                   if m.suffix.lower() in AUDIO_SUFFIXES]
+        if matches:
+            found[key] = matches[0]
+    return found
+
+
+def adopt(folder: pathlib.Path, seed: int = 20260908) -> dict:
+    """Assign neutral ids to whatever recordings are in the folder.
+
+    The assignment is shuffled rather than alphabetical. The listener only ever
+    sees the per-passage letters, so this is belt and braces - but a mapping
+    anyone could infer from the filenames is not worth keeping.
+
+    Source recordings are never renamed, moved or converted.
+    """
+    import hashlib
+    import random
+
+    audio = sorted(path for path in folder.iterdir()
+                   if path.suffix.lower() in AUDIO_SUFFIXES)
+    if not audio:
+        raise SystemExit(f"no audio files in {folder}")
+    # The expected count comes from the experiment, not from what happens to
+    # be in the folder - deriving it from the folder made the check below
+    # tautological, so two recordings would have been adopted silently.
+    ids = neutral_ids()
+    if len(audio) != len(ids):
+        raise SystemExit(
+            f"found {len(audio)} recordings but the experiment expects "
+            f"{len(ids)}: {', '.join(p.name for p in audio)}")
+
+    digest = hashlib.sha256(str(seed).encode()).hexdigest()
+    order = list(audio)
+    random.Random(int(digest[:16], 16)).shuffle(order)
+    mapping = {key: path.name for key, path in zip(ids, order)}
+
+    (folder / SOURCES).write_text(json.dumps({
+        "_comment": ("Neutral id -> source recording. Git-ignored. Nothing "
+                     "that produces judging output reads this file."),
+        "map": mapping,
+    }, indent=2) + "\n", encoding="utf-8")
+
+    for key in ids:
+        rights = folder / f"{key}.rights.json"
+        if rights.exists():
+            continue
+        rights.write_text(json.dumps({
+            "_comment": ("Answer every field. The runner refuses to synthesise "
+                         "a voice whose record is incomplete."),
+            "source": "TODO",
+            "speaker": "TODO",
+            "consent": None,
+            "commercial_use": None,
+            "synthetic_voice_cleared": None,
+            "notes": "TODO",
+        }, indent=2) + "\n", encoding="utf-8")
+    return mapping
+
+
 #: Fields a rights record must actually answer.
 RIGHTS_FIELDS = ("source", "speaker", "consent", "commercial_use",
                  "synthetic_voice_cleared", "notes")
@@ -173,28 +263,40 @@ def check_rights(folder: pathlib.Path, name: str) -> list:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("folder", nargs="?", default="experiments/references")
+    parser.add_argument("--adopt", action="store_true",
+                        help="assign neutral ids to the recordings that are "
+                             "already in the folder, without renaming them")
     args = parser.parse_args()
     folder = pathlib.Path(args.folder)
 
+    if args.adopt:
+        mapping = adopt(folder)
+        print(f"\nwrote {folder / SOURCES}")
+        for key in sorted(mapping):
+            print(f"  {key}  <-  {mapping[key]}")
+        print("\n  Source recordings were not renamed, moved or converted.")
+        print("  Rights templates created for any that had none.\n")
+
     if not folder.exists():
         raise SystemExit(f"no folder at {folder}\n"
-                         "  Create it and put the three reference recordings "
-                         "in it, named reference_1.wav, reference_2.wav and "
-                         "reference_3.wav, each with a .rights.json beside it.")
+                         "  Put the three recordings in it under any names, "
+                         "then run this with --adopt to assign neutral ids.")
 
     # Neutral names on purpose: a filename that asserts a direction primes the
     # listener and claims a mapping nobody has verified.
-    expected = ["reference_1", "reference_2", "reference_3"]
+    expected = neutral_ids()
+    sources = load_sources(folder)
     ok, results = True, {}
     print(f"\nreference audio in {folder}\n")
+    if (folder / SOURCES).exists():
+        print(f"  mapping from {SOURCES}; source recordings untouched\n")
     for name in expected:
-        matches = sorted(folder.glob(f"{name}.*"))
-        audio = [m for m in matches if m.suffix.lower() != ".json"]
-        if not audio:
-            print(f"  MISSING  {name}: no audio file")
+        path = sources.get(name)
+        if path is None or not path.exists():
+            print(f"  MISSING  {name}: no audio file"
+                  + (f" at {path.name}" if path is not None else ""))
             ok = False
             continue
-        path = audio[0]
         info, problems, warnings = check_one(path)
         problems += check_rights(folder, name)
         results[name] = info

@@ -45,6 +45,8 @@ experiments/chunks/*.json
 experiments/references/*
 !experiments/references/README.md
 !experiments/references/example.rights.json
+# sources.json maps neutral ids to real recordings, so it is as identifying as
+# the audio itself.
 
 # The pod bundle built by tools/pack_for_pod.py: a copy of the tree, not a
 # thing to version.

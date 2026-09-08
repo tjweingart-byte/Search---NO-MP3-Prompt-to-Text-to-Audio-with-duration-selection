@@ -35,22 +35,28 @@ REFERENCES = "experiments/references"
 
 
 def resolve_references(folder: pathlib.Path) -> dict:
-    """One audio file per identity, or a refusal naming what is missing."""
+    """One audio file per identity, or a refusal naming what is missing.
+
+    Resolution goes through `check_reference_audio.load_sources`, so the
+    recordings keep whatever names they arrived with and the neutral ids come
+    from `sources.json`. Nothing downstream ever sees a source filename.
+    """
+    from tools.check_reference_audio import load_sources
+
+    sources = load_sources(folder)
     found, missing = {}, []
     for key, _label, _note in identity.IDENTITIES:
-        matches = [m for m in sorted(folder.glob(f"{key}.*"))
-                   if m.suffix.lower() not in (".json", ".md", ".txt")]
-        if matches:
-            found[key] = matches[0]
+        path = sources.get(key)
+        if path is not None and path.exists():
+            found[key] = path
         else:
             missing.append(key)
     if missing:
         raise SystemExit(
             f"missing reference audio for: {', '.join(missing)}\n"
-            f"  Expected {folder}/<name>.wav for each of "
-            + ", ".join(k for k, _, _ in identity.IDENTITIES) + "\n"
-            "  See experiments/references/README.md for the spec, then run\n"
-            "    python tools/check_reference_audio.py " + str(folder))
+            f"  Put the recordings in {folder} under any names, then:\n"
+            f"    python tools/check_reference_audio.py {folder} --adopt\n"
+            f"    python tools/check_reference_audio.py {folder}")
     return found
 
 
@@ -174,8 +180,14 @@ def main() -> int:
     with (out / "progress.log").open("a", encoding="utf-8") as log:
         log_line(log, f"\n=== identity run {time.strftime('%Y-%m-%d %H:%M:%S')} "
                       f"device={args.device} ===")
+        # Never the source filename: progress.log persists on disk while the
+        # blind judging happens, and a speaker's name in it would give the
+        # answer away before KEY.json is opened. Size and format are enough to
+        # debug with.
         for key, label_text, _note in identity.IDENTITIES:
-            log_line(log, f"  {key:<14}{references[key].name:<24}{label_text}")
+            path = references[key]
+            log_line(log, f"  {key:<14}{path.suffix.lstrip('.'):<6}"
+                          f"{path.stat().st_size / 1024:>8.0f} KB  {label_text}")
         log_line(log, f"  settings held constant: {identity.GENERATION}")
 
         needed = [(k, p) for k, _, _ in identity.IDENTITIES for p in passages

@@ -5,9 +5,15 @@ Phase 2 chose Chatterbox Base on voice quality, especially how human it sounded.
 This experiment chooses the *voice*, and deliberately does not re-open the
 engine question. No other engine appears.
 
-**Three candidates, blind as A/B/C**, from the three speakers recorded. They
-are named `reference_1`, `reference_2`, `reference_3` - not after the four
-directions. A filename asserting which speaker is "the magnetic one" would
+**Three candidates, blind as A/B/C**, from the three speakers recorded. The
+recordings keep their own filenames on disk; `sources.json` maps them to
+`reference_1`, `reference_2`, `reference_3`, and that mapping is git-ignored.
+Nothing downstream ever writes a source filename - not the listening page, not
+the choice sheet, not the generated clips, and not `progress.log`, which
+persists while the judging happens. Only `KEY.json` names them, and that is the
+reveal.
+
+The ids are neutral rather than named after the four directions. A filename asserting which speaker is "the magnetic one" would
 claim a mapping nobody has verified and would prime the listener toward hearing
 it, which is the opposite of a blind test.
 
@@ -148,10 +154,13 @@ counsel.
 
 ## Sequence
 
-1. Obtain and prepare three reference recordings (see below).
-2. `python tools/check_reference_audio.py experiments/references`
-3. `python tools/voice_identity_bakeoff.py --device mps --out experiments/results/identity`
-4. Open `listen.html`, record choices in `choices.md`, then open `KEY.json`.
+1. Obtain three reference recordings and put them in
+   `experiments/references/` under any names.
+2. `python tools/check_reference_audio.py experiments/references --adopt`
+3. Fill in the three `.rights.json` files.
+4. `python tools/check_reference_audio.py experiments/references`
+5. `python tools/voice_identity_bakeoff.py --device mps --out experiments/results/identity`
+6. Open `listen.html`, record choices in `choices.md`, then open `KEY.json`.
 
 **Step 1 is yours.** No reference audio is sourced, invented or downloaded by
 this repository.
