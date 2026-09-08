@@ -22,3 +22,13 @@ attachments.db
 
 # The launcher installs into here; it is per-machine, never committed.
 .fam-venv/
+
+# The reference recording a pod bundle carries. Someone's voice, extracted
+# from a tarball for one run - never committed. (*.wav is already ignored
+# above; this covers the minimal rights record beside it.)
+pod-voice/
+fam-pod.tar.gz
+
+# What a pod run writes back. Copied to the Mac, then read - not committed
+# from the pod, which has no credentials and should not get any.
+pod-results/

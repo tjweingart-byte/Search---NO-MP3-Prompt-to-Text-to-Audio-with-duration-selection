@@ -1,0 +1,67 @@
+# Chatterbox: FAM's production voice, installed separately on purpose.
+#
+#   pip install -r requirements.txt
+#   pip install -r requirements-chatterbox.txt
+#
+# This pulls in torch and torchaudio - gigabytes, and platform-specific - so it
+# is not in requirements.txt. A laptop, a CI runner or the preview build must
+# still be able to install FAM and run its tests without a deep-learning stack;
+# `ChatterboxEngine.diagnose()` reports "chatterbox is not installed" there and
+# the interim voice speaks. On a GPU host, install both files and Chatterbox
+# becomes the production engine with no flag to set.
+#
+# On a RunPod card torch provides "cuda"; on an Apple laptop it provides "mps".
+# `ChatterboxEngine.device()` refuses CPU - Chatterbox on CPU is slower than
+# speech, so an episode would starve mid-sentence.
+#
+# Every pin below is here because it cost a session on a billing GPU. Read the
+# comment before moving one; `tools/diagnose_chatterbox.py` prints the real
+# error behind the misleading one in each case.
+
+chatterbox-tts
+torch
+torchaudio
+
+# Chatterbox loads a watermarker from `resemble-perth`, and perth still does
+# `from pkg_resources import resource_filename`. setuptools shipped
+# pkg_resources through 81.0.0 and removed it in 82.0.0, so a current
+# setuptools makes that import fail - and perth swallows the ImportError,
+# setting PerthImplicitWatermarker to None. Chatterbox then calls it, and you
+# get `TypeError: 'NoneType' object is not callable` from from_pretrained,
+# after a 4 GB download, with nothing naming the real cause.
+#
+# Pinning below 82 fixes it with nothing disabled. Do not stub the watermarker:
+# it runs inside every generate(), so removing it changes both the audio and
+# the latency, and FAM does not ship unwatermarked synthetic speech.
+setuptools<82
+
+# chatterbox-tts 0.1.7 pins transformers==5.2.0, and transformers 5.2.0 needs
+# huggingface-hub>=1.3.0,<2.0 and tokenizers>=0.22.0,<=0.23.0. Those bounds are
+# stated in its metadata but nothing here forced them, so a resolver that
+# satisfied some other package first could leave an older huggingface-hub in
+# place - and transformers then fails on import behind a lazy module, reporting
+# only "Could not import module 'LlamaModel'. Are this object's requirements
+# defined correctly?" with the real cause discarded.
+#
+# Naming them here makes the resolver settle it at install time instead.
+huggingface-hub>=1.3,<2
+tokenizers>=0.22,<=0.23
+
+# torchvision is NOT a chatterbox dependency and FAM never calls it - but
+# transformers imports it on the way to LlamaModel, so it has to load.
+# torchvision pins an exact torch (verified from its own Requires-Dist:
+# 0.21.0 -> torch==2.6.0, 0.22.0 -> 2.7.0, 0.23.0 -> 2.8.0), and a RunPod
+# PyTorch template ships one built for the template's torch. Installing
+# chatterbox downgrades torch to 2.6.0 and leaves that torchvision behind, and
+# the pair then dies at @torch.library.register_fake("torchvision::nms") with
+# "operator torchvision::nms does not exist" - naming neither version.
+#
+# Pinning the paired version makes a fresh pod resolve both together. If
+# chatterbox ever moves off torch 2.6.0 this line will conflict loudly, which
+# is the right failure: a silent mismatch cost a session on a billing GPU.
+torchvision==0.21.0
+
+# NOT pinned deliberately: torch. chatterbox pins torch==2.6.0 and the working
+# 4090 environment is torch 2.6.0+cu124, which is what makes CUDA work. Do not
+# move it to chase an import error without reading the traceback first -
+# tools/diagnose_chatterbox.py prints the real one.
