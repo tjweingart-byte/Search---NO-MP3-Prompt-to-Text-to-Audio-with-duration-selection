@@ -149,6 +149,25 @@ class GenerationStats:
     #: Why the cover stopped: "research ready" is the healthy one. The others
     #: name the case, so a gap in the artifact says which.
     handover_reason: str = ""
+    #: How long the pipeline waited for research after the cover stopped.
+    handover_stall_seconds: float = 0.0
+    #: Seconds of audio the listener still had buffered when the cover stopped.
+    #: The stall is only audible where it exceeds this.
+    handover_buffer_seconds: float = 0.0
+    #: Silence the listener actually heard at the handover. Zero is the normal
+    #: result and the one the 4090 run produced, despite the warning it logged.
+    handover_gap_seconds: float = 0.0
+    #: A mark name for the next synthesis to record, set once and consumed by
+    #: whichever of `_speak_chunk`/`_speak_one` runs next. Used to name the
+    #: first synthesis *after* the handover without threading a parameter
+    #: through call sites that do not otherwise care about it.
+    pending_synthesis_mark: str = ""
+
+    def take_synthesis_mark(self, marks: EpisodeMarks) -> None:
+        """Record and clear the one-shot mark, if one is waiting."""
+        if self.pending_synthesis_mark:
+            marks.mark(self.pending_synthesis_mark)
+            self.pending_synthesis_mark = ""
     cache: str = "off"
     #: When generation began, for audio-produced vs wall-clock comparisons.
     started_at: float = field(default_factory=time.perf_counter)
@@ -191,6 +210,9 @@ class GenerationStats:
             "cover_seconds": round(self.cover_seconds, 2),
             "cover_overran": self.cover_overran,
             "handover_reason": self.handover_reason,
+            "handover_stall_seconds": round(self.handover_stall_seconds, 2),
+            "handover_buffer_seconds": round(self.handover_buffer_seconds, 2),
+            "handover_gap_seconds": round(self.handover_gap_seconds, 2),
             "cache": self.cache,
             "synth_seconds": round(self.synth_seconds, 2),
             "min_headroom": round(self.min_headroom, 1) if self.min_headroom < 999 else None,
@@ -235,7 +257,8 @@ class PodcastPipeline:
 
     def _start(self, sentences: AsyncIterator[str],
                marks: Optional[EpisodeMarks] = None,
-               completion_mark: str = "claude_complete") -> "_Pump":
+               completion_mark: str = "claude_complete",
+               first_sentence_mark: str = "") -> "_Pump":
         """Begin consuming a sentence stream *now*, into a bounded queue.
 
         Starting is separated from speaking so two model calls can be in flight
@@ -249,6 +272,8 @@ class PodcastPipeline:
         async def produce() -> None:
             try:
                 async for sentence in sentences:
+                    if marks is not None and first_sentence_mark:
+                        marks.mark(first_sentence_mark)
                     await queue.put(sentence)
                 # Here, and only here, is where the model stopped writing.
                 # This used to be marked by the *consumer* on receiving the
@@ -283,6 +308,7 @@ class PodcastPipeline:
         marks: Optional[EpisodeMarks] = None,
         completion_mark: str = "claude_complete",
         headroom: Optional[Callable[[], Optional[float]]] = None,
+        first_sentence_mark: str = "",
     ) -> "_Pump":
         """`_start`, with the reader decoupled and the sentences assembled.
 
@@ -329,6 +355,12 @@ class PodcastPipeline:
                 try:
                     async for sentence in sentences:
                         if sentence and sentence.strip():
+                            # The model produced a sentence. Separate from when
+                            # the assembler releases it and from when it is
+                            # spoken - which is the only way to tell research
+                            # being slow apart from batching holding it.
+                            if marks is not None and first_sentence_mark:
+                                marks.mark(first_sentence_mark)
                             await buffer.put(sentence)
                     # The model stopped writing. Marked in the reader because
                     # this is the only place that knows it: the consumer's
@@ -431,7 +463,6 @@ class PodcastPipeline:
                         raise item
                     log.warning("optional stream failed; continuing", exc_info=item)
                     break
-                stats.marks.mark("first_sentence")
                 async for chunk in self._speak_chunk(item, pace, stats):
                     yield chunk
                 if stats.truncated:
@@ -476,7 +507,15 @@ class PodcastPipeline:
         if not fit.spoken:
             return
 
+        # Marked here, not in the pump loop, because `_answer_first` speaks the
+        # cover through `_speak_item` and never enters one. On a researched
+        # episode the loop's mark therefore recorded the first *researched*
+        # item, and `first_sentence_to_synthesis` came out at -26.13s on the
+        # 4090 - synthesis apparently beginning 26 seconds before a sentence
+        # existed. Impossible numbers are how a misplaced mark announces itself.
+        stats.marks.mark("first_sentence")
         tts_start = stats.marks.mark("first_tts_start")
+        stats.take_synthesis_mark(stats.marks)
         started = time.perf_counter()
         pcm = await self.engine.synth(fit.text, wpm, self.voice)
         synth_seconds = time.perf_counter() - started
@@ -537,7 +576,6 @@ class PodcastPipeline:
                         raise item
                     log.warning("optional stream failed; continuing", exc_info=item)
                     break
-                stats.marks.mark("first_sentence")
                 async for chunk in self._speak_one(item, pace, stats):
                     yield chunk
                 if stats.truncated:
@@ -567,7 +605,9 @@ class PodcastPipeline:
             stats.truncated = True
             return
 
+        stats.marks.mark("first_sentence")
         stats.marks.mark("first_tts_start")
+        stats.take_synthesis_mark(stats.marks)
         started = time.perf_counter()
         pcm = await self.engine.synth(sentence, wpm, self.voice)
         synth_seconds = time.perf_counter() - started
@@ -642,7 +682,8 @@ class PodcastPipeline:
     def _pump_for(self, sentences: AsyncIterator[str],
                   stats: Optional[GenerationStats] = None,
                   pace: Optional[PaceController] = None,
-                  completion_mark: str = "claude_complete") -> "_Pump":
+                  completion_mark: str = "claude_complete",
+                  first_sentence_mark: str = "") -> "_Pump":
         """Start a sentence stream under whichever architecture is selected.
 
         Each call builds its own pump, and under Phase 6 its own script buffer
@@ -652,10 +693,12 @@ class PodcastPipeline:
         """
         marks = stats.marks if stats is not None else None
         if not self._phase6():
-            return self._start(sentences, marks, completion_mark)
+            return self._start(sentences, marks, completion_mark,
+                               first_sentence_mark)
         probe = (self._headroom_probe(pace, stats)
                  if pace is not None and stats is not None else None)
-        return self._start_phase6(sentences, None, marks, completion_mark, probe)
+        return self._start_phase6(sentences, None, marks, completion_mark,
+                                  probe, first_sentence_mark)
 
     def _speak_pump(self, pump: "_Pump", pace: PaceController,
                     stats: GenerationStats, fatal: bool = True) -> AsyncIterator[bytes]:
@@ -701,14 +744,17 @@ class PodcastPipeline:
         research_plan = dataclasses.replace(plan, search=True, role="continuation")
 
         stats.marks.mark("claude_start")
+        stats.marks.mark("research_start")
         # Two streams, two completions. "Claude finished" means the half that
         # carries the episode - the researched one - so the cover half marks a
         # name of its own rather than winning the race to a shared one.
         instant = self._pump_for(
             self.generator.stream_sentences(instant_plan, ScriptNotes()),
-            stats, pace, completion_mark="instant_complete")
+            stats, pace, completion_mark="instant_complete",
+            first_sentence_mark="cover_first_sentence")
         research = self._pump_for(
-            self.generator.stream_sentences(research_plan, notes), stats, pace)
+            self.generator.stream_sentences(research_plan, notes), stats, pace,
+            first_sentence_mark="research_first_sentence")
         stats.answered_first = True
         handover = time.perf_counter()
 
@@ -770,13 +816,53 @@ class PodcastPipeline:
 
         stats.handover_seconds = time.perf_counter() - handover
         stats.cover_seconds = pace.elapsed
+        stats.marks.mark("cover_exhausted")
+
+        # Whether the listener hears the handover is not "is research ready"
+        # - that is a fact about the producer. It is whether the wait outlasts
+        # the audio already made and not yet played. The 4090 run warned of
+        # silence with 66.5s buffered against a 3.9s wait, and the same run's
+        # playback margin never went below +9.95s. A warning that fires on the
+        # wrong quantity is worse than none: it sends the next session looking
+        # for a fault that is not there.
+        buffered = self._headroom_probe(pace, stats)()
+        stats.handover_buffer_seconds = max(0.0, buffered)
+        waited_from = time.perf_counter()
         if not research.ready():
-            # The only remaining way to a mid-episode gap on this path, and it
-            # is now named in the log rather than inferred from a silence.
+            # `peek` waits for the first item without consuming it, so the
+            # stall is measured rather than inferred and nothing about what is
+            # spoken changes.
+            await research.peek()
+        stats.handover_stall_seconds = time.perf_counter() - waited_from
+        stats.handover_gap_seconds = max(
+            0.0, stats.handover_stall_seconds - stats.handover_buffer_seconds)
+        stats.marks.mark("research_first_item")
+        # Name the first synthesis on the researched side, so "research
+        # arrived" and "research was spoken" are separable in the artifact.
+        stats.pending_synthesis_mark = "research_first_synthesis"
+
+        if stats.handover_gap_seconds > 0:
             log.warning(
-                "GAP: the cover ran out after %.1fs (%s) and research is not "
-                "ready. The listener hears silence until it is.",
-                pace.elapsed, stats.handover_reason)
+                "GAP: the cover ran out after %.1fs (%s) and research took a "
+                "further %.1fs, with only %.1fs buffered. The listener heard "
+                "%.1fs of silence.",
+                pace.elapsed, stats.handover_reason,
+                stats.handover_stall_seconds, stats.handover_buffer_seconds,
+                stats.handover_gap_seconds)
+        elif stats.handover_stall_seconds > 0.05:
+            log.info(
+                "the handover waited %.1fs for research, covered by %.1fs of "
+                "buffer - no silence reached the listener",
+                stats.handover_stall_seconds, stats.handover_buffer_seconds)
+        stats.marks.handover = {
+            "reason": stats.handover_reason,
+            "cover_seconds": round(stats.cover_seconds, 2),
+            "cover_overran": stats.cover_overran,
+            "stall_seconds": round(stats.handover_stall_seconds, 2),
+            "buffer_seconds": round(stats.handover_buffer_seconds, 2),
+            "gap_seconds": round(stats.handover_gap_seconds, 2),
+            "listener_heard_a_gap": stats.handover_gap_seconds > 0,
+        }
         log.info("research took over after %.1fs of answering from knowledge "
                  "(%s, ceiling %.0fs%s)",
                  stats.handover_seconds, stats.handover_reason, cover_ceiling,

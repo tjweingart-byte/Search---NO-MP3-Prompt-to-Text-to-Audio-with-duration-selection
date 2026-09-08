@@ -485,9 +485,9 @@ def test_stream_pcm_routes_every_pump_through_the_selector():
     assert source.count("self._speak_pump(") == 3
 
 
-def test_legacy_start_differs_from_trunk_only_by_two_deliberate_changes():
-    """`_start` was byte-identical to trunk through Step 4. Two changes since,
-    both on purpose, and this test exists to keep the list at two.
+def test_legacy_start_differs_from_trunk_only_by_three_deliberate_changes():
+    """`_start` was byte-identical to trunk through Step 4. Three changes
+    since, all on purpose, and this test exists to keep the list at three.
 
     1. The sentinel moved out of `finally`, so a cancelled producer can no
        longer re-block delivering it.
@@ -496,8 +496,14 @@ def test_legacy_start_differs_from_trunk_only_by_two_deliberate_changes():
        *speaking* - and on a truncated episode the consumer breaks before the
        sentinel arrives, so it was usually never marked at all.
 
+    3. The stream's own first sentence is marked, when a caller asks for it by
+       name. `_answer_first` runs two streams at once, and without a mark per
+       stream there is no way to tell research being slow apart from the
+       assembler holding its output.
+
     Everything else about the method, including the queue and its depth, is
-    untouched: the legacy path must keep behaving exactly as it shipped.
+    untouched: the legacy path must keep behaving exactly as it shipped. Both
+    marks are observations - neither changes what is queued or when.
     """
     import subprocess
 
@@ -529,13 +535,22 @@ def test_legacy_start_differs_from_trunk_only_by_two_deliberate_changes():
     # report a completion that has not happened.
     assert after.index("async for sentence in sentences:") < after.index(
         "marks.mark(completion_mark)")
-    # Nothing else about what is queued changed.
+    # Nothing else about what is queued changed: still exactly one put per
+    # sentence, one sentinel, one exception path.
     assert before.count("await queue.put(sentence)") == after.count(
-        "await queue.put(sentence)")
+        "await queue.put(sentence)") == 1
+    assert before.count("await queue.put(exc)") == after.count(
+        "await queue.put(exc)") == 1
     # The queue and its depth are identical; only the signature gained the
     # marks it writes to.
     head = "        queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_DEPTH)"
     assert head in before and head in after
     assert "QUEUE_DEPTH" in after
-    assert "async for sentence in sentences:\n                    await queue.put(sentence)" in after
+    # Change 3: one mark, inside the loop, before the put. Optional by name,
+    # so a caller that does not ask for it gets trunk's loop exactly.
+    assert "marks.mark(first_sentence_mark)" in after
+    assert "marks.mark(first_sentence_mark)" not in before
+    assert after.index("async for sentence in sentences:") < after.index(
+        "marks.mark(first_sentence_mark)") < after.index(
+        "await queue.put(sentence)")
     assert "except Exception as exc:" in after and "await queue.put(exc)" in after

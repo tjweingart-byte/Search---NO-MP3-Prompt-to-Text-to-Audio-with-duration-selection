@@ -552,3 +552,47 @@ def test_a_clean_episode_has_nothing_to_report(tmp_path):
     log.write_text("INFO episode played through with no trouble\n")
     assert episode.server_notes(log, 0) == []
     assert episode.server_notes(None, 0) == []
+
+
+def test_a_researched_episode_reports_its_handoff(capsys):
+    """The whole timeline, so a handover can be read rather than inferred."""
+    run = {"headers": {}, "rate": 24000, "first_byte_seconds": 5.45,
+           "total_seconds": 89.5, "audio_seconds": 180.0}
+    episode.report(run, {"events": {}, "chunks": [], "summary": {
+        "claude_decoupled": True,
+        "research": {
+            "research_start": 0.0, "cover_first_sentence": 1.9,
+            "research_first_sentence": 27.9, "research_first_item": 28.6,
+            "cover_exhausted": 24.7, "research_first_synthesis": 28.7,
+            "research_latency": 27.9, "assembly_delay": 0.7,
+            "reason": "instant half exhausted",
+            "stall_seconds": 3.9, "buffer_seconds": 66.5, "gap_seconds": 0.0,
+            "listener_heard_a_gap": False},
+    }})
+    out = capsys.readouterr().out
+    assert "research latency" in out and "27.90s" in out
+    assert "assembly delay" in out, "slow research and slow batching must be "
+    assert "no gap heard" in out
+    assert "GAP HEARD" not in out
+
+
+def test_a_handoff_that_was_heard_says_so(capsys):
+    run = {"headers": {}, "rate": 24000, "first_byte_seconds": 1.0,
+           "total_seconds": 60.0, "audio_seconds": 120.0}
+    episode.report(run, {"events": {}, "chunks": [], "summary": {
+        "claude_decoupled": True,
+        "research": {"research_start": 0.0, "cover_exhausted": 4.0,
+                     "reason": "instant half exhausted", "stall_seconds": 9.0,
+                     "buffer_seconds": 3.0, "gap_seconds": 6.0,
+                     "listener_heard_a_gap": True},
+    }})
+    out = capsys.readouterr().out
+    assert "GAP HEARD" in out and "6.00s" in out
+
+
+def test_an_unresearched_episode_has_no_handoff_block(capsys):
+    run = {"headers": {}, "rate": 24000, "first_byte_seconds": 0.5,
+           "total_seconds": 30.0, "audio_seconds": 120.0}
+    episode.report(run, {"events": {}, "chunks": [],
+                         "summary": {"claude_decoupled": True}})
+    assert "handoff" not in capsys.readouterr().out

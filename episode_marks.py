@@ -65,6 +65,11 @@ class EpisodeMarks:
     started: float = field(default_factory=time.perf_counter)
     events: dict = field(default_factory=dict)
     chunks: list = field(default_factory=list)
+    #: What happened at the instant -> research handoff, when there was one.
+    #: Written by `_answer_first`; empty on an unresearched episode. Lives here
+    #: rather than only on GenerationStats so that a client reading the marks
+    #: gets the whole researched timeline from one place.
+    handover: dict = field(default_factory=dict)
     #: Items still queued when the speaking loop stopped. Corroboration for
     #: the decoupling claim, never the claim itself: the queue is bounded at
     #: QUEUE_DEPTH and a consumer that has just drained it reads zero on a
@@ -138,7 +143,34 @@ class EpisodeMarks:
             # None, not False, when either instant is missing: "not measured"
             # and "measured and false" must not look alike.
             "claude_decoupled": self._decoupled(),
+            # The researched path, end to end. Absent on an episode that did
+            # not research, present in full on one that did - so a handover can
+            # be read without inferring it from a negative margin.
+            "research": self._research(),
         }
+
+    def _research(self) -> Optional[dict]:
+        """The handoff timeline: when each side had something, and who waited.
+
+        Every instant here answers a question that was previously unanswerable
+        from the artifact - in particular `research_first_sentence` against
+        `research_first_item`, which separates "research was slow" from "the
+        assembler held it", and `cover_exhausted` against `research_first_item`,
+        which is the stall itself.
+        """
+        if "research_start" not in self.events:
+            return None
+        out = {name: self.at(name) for name in (
+            "research_start", "cover_first_sentence", "cover_exhausted",
+            "research_first_sentence", "research_first_item",
+            "research_first_synthesis", "instant_complete")}
+        out["research_latency"] = self.span("research_start",
+                                            "research_first_sentence")
+        out["assembly_delay"] = self.span("research_first_sentence",
+                                          "research_first_item")
+        out["stall"] = self.span("cover_exhausted", "research_first_item")
+        out.update(self.handover)
+        return out
 
     def _decoupled(self) -> Optional[bool]:
         """Did synthesis start before the model finished writing?"""

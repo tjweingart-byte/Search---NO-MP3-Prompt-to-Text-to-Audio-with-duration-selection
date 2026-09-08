@@ -250,6 +250,33 @@ def report(run: dict, marks: dict | None, notes: list | None = None) -> bool:
     print(f"  backlog when Claude   {backlog if backlog is not None else '-'}"
           "  (chunks still queued)")
 
+    research = marks.get("research")
+    if research:
+        print("\nhandoff    the researched episode's two halves")
+        for label, key in (
+            ("research started", "research_start"),
+            ("cover's first sentence", "cover_first_sentence"),
+            ("research's first sentence", "research_first_sentence"),
+            ("...reached the queue", "research_first_item"),
+            ("cover exhausted", "cover_exhausted"),
+            ("research first synthesised", "research_first_synthesis"),
+        ):
+            print(f"  {label:<27}{_seconds(research.get(key))}")
+        print(f"  {'research latency':<27}{_seconds(research.get('research_latency'))}"
+              "  (start -> its first sentence)")
+        print(f"  {'assembly delay':<27}{_seconds(research.get('assembly_delay'))}"
+              "  (sentence -> queued)")
+        print(f"  reason                     {research.get('reason', '-')}")
+        print(f"  {'stall at the handoff':<27}"
+              f"{_seconds(research.get('stall_seconds'))}, against "
+              f"{_seconds(research.get('buffer_seconds'))} buffered")
+        heard = research.get("listener_heard_a_gap")
+        if heard:
+            print(f"  GAP HEARD                  "
+                  f"{_seconds(research.get('gap_seconds'))} of silence")
+        elif heard is False:
+            print("  no gap heard               the buffer covered the wait")
+
     stall = stall_analysis(chunks)
     if stall is not None:
         print("\nplayback   would the listener have heard a gap mid-episode?")
