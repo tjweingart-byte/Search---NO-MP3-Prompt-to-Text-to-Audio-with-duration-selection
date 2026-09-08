@@ -3,12 +3,17 @@
 **Nothing goes in here that we do not have the right to clone.** This folder is
 git-ignored: the recordings are somebody's voice, and they are not source code.
 
-Four files, plus a rights record for each:
+Three files, plus a rights record for each:
 
-    magnetic.wav      magnetic.rights.json
-    human.wav         human.rights.json
-    storyteller.wav   storyteller.rights.json
-    authority.wav     authority.rights.json
+    reference_1.wav   reference_1.rights.json
+    reference_2.wav   reference_2.rights.json
+    reference_3.wav   reference_3.rights.json
+
+**Named neutrally on purpose.** A filename like `magnetic.wav` would assert
+which speaker is the magnetic one - a mapping nobody has verified - and would
+prime whoever listens toward hearing it. The four qualities being listened for
+(magnetic, human, storyteller, modern authority) are recorded in the experiment
+design, unattached to any file. The order of the numbers means nothing.
 
 Then:
 
@@ -27,15 +32,15 @@ Read from `tts.py:182-206`, not from documentation:
 | T3 prompt speech tokens | **first 6 seconds** (`ENC_COND_LEN = 6 * 16000`), capped at 150 tokens |
 | voice-encoder speaker embedding | **the whole file**, untruncated |
 
-Because the third one is untruncated, **length is not a free variable**. Four
-references of different lengths feed the speaker embedding unequal amounts of
+Because the third one is untruncated, **length is not a free variable**.
+References of different lengths feed the speaker embedding unequal amounts of
 each voice while feeding the other two the same. Make them the same length.
 
 ## The spec
 
 | | |
 |---|---|
-| duration | **12-15 seconds**, and **all four within 2 seconds of each other** |
+| duration | **12-15 seconds**, and **all three within 2 seconds of each other** |
 | format | any file `librosa` can open - wav, flac, mp3, m4a. **Prefer WAV** |
 | sample rate | 24 kHz or higher (44.1/48 kHz is ideal). Never below 16 kHz |
 | channels | mono preferred; stereo is downmixed automatically |
@@ -52,13 +57,14 @@ to. The reference carries **delivery as well as identity** — the T3 prompt is
 made of *speech tokens* from the first six seconds, which encode how the person
 was speaking, not only who they are.
 
-So: **have all four speakers read the same neutral, conversational passage**,
-in the same unremarkable way. Then the thing that differs between the four
+So: **have all three speakers read the same neutral, conversational passage**,
+in the same unremarkable way. Then the thing that differs between the three
 files is the speaker, which is what this experiment is choosing.
 
-If instead each speaker performs their assigned direction — one being magnetic,
-one being a storyteller — the test measures performance as much as voice, and
-a later delivery-optimisation pass cannot untangle them.
+If instead each speaker performs a different character — one being magnetic,
+one being a storyteller — the test measures performance as much as voice, and a
+later delivery-optimisation pass cannot untangle them. This is also why the
+files are numbered rather than named after the directions.
 
 Suggested reference text (about 13 seconds at a natural pace):
 

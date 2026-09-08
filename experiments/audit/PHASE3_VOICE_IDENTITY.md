@@ -5,6 +5,12 @@ Phase 2 chose Chatterbox Base on voice quality, especially how human it sounded.
 This experiment chooses the *voice*, and deliberately does not re-open the
 engine question. No other engine appears.
 
+**Three candidates, blind as A/B/C**, from the three speakers recorded. They
+are named `reference_1`, `reference_2`, `reference_3` - not after the four
+directions. A filename asserting which speaker is "the magnetic one" would
+claim a mapping nobody has verified and would prime the listener toward hearing
+it, which is the opposite of a blind test.
+
 No GPU rental. No latency work. This runs on the Mac.
 
 ## What Chatterbox Base actually needs, read from the source
@@ -31,8 +37,8 @@ ve_embed = self.ve.embeds_from_wavs([ref_16k_wav], ...)        # WHOLE file
 rate, stereo downmixed automatically. WAV at 44.1/48 kHz is the safe choice.
 
 **Because the speaker embedding is untruncated, length is not a free
-variable.** Four references of different lengths feed that embedding unequal
-amounts while feeding the other two the same. All four must match.
+variable.** References of different lengths feed that embedding unequal amounts
+while feeding the other two the same. All three must match.
 
 ## Is this a clean test of speaker identity? No — and here is exactly why
 
@@ -46,33 +52,34 @@ seconds — they encode how the person was speaking: rate, contour, energy. A
 reference recorded slowly and warmly biases the output slow and warm.
 **Speaker identity and delivery are entangled by construction in this model.**
 
-This bites hardest given the four directions, which are descriptions of
-*performance* as much as of voice. If each speaker performs their assigned
-direction, the test measures the performance and a later delivery-tuning pass
-cannot untangle it.
+This bites hardest because the qualities being sought - magnetic, human,
+storyteller, modern authority - are descriptions of *performance* as much as of
+voice. If each speaker performs a different character, the test measures the
+performance and a later delivery-tuning pass cannot untangle it. It is also why
+the references are numbered rather than named after the directions.
 
 *Mitigation, and it is the most important instruction in this document:* have
-**all four speakers read the same neutral, conversational passage in the same
-unremarkable way**. Then what differs between the four files is the speaker,
+**all three speakers read the same neutral, conversational passage in the same
+unremarkable way**. Then what differs between the three files is the speaker,
 which is what is being chosen. The suggested text is in
 `experiments/references/README.md`.
 
 **2. Recording conditions are cloned too. Reducible.**
 Room, microphone, EQ, compression and noise all pass into the embedding and the
 s3gen reference. A better-recorded voice can win for reasons that have nothing
-to do with the voice. *Mitigation:* record all four in similar conditions,
+to do with the voice. *Mitigation:* record all three in similar conditions,
 unprocessed, and the checker reports each one's noise floor and dynamic range
 so a mismatched recording is visible before it is used.
 
 **3. Length asymmetry. Removable.** Covered above. *Mitigation:* the checker
-fails the set if the four differ by more than 2 seconds.
+fails the set if the references differ by more than 2 seconds.
 
 **4. Sampling is stochastic. Removable, and removed.**
 `temperature=0.8` with `min_p` and `top_p` means identical settings do not give
 identical output. Two draws of the same identity differ, so without control a
 voice could win on a luckier sample. *Mitigation:* the seed is fixed **per
-passage and shared by all four identities** — same passage, same random stream,
-four references. A test asserts it.
+passage and shared by every identity** — same passage, same random stream,
+three references. A test asserts it.
 
 **What this experiment therefore measures**, stated honestly: *the voice that
 results from a given reference recording under fixed settings.* That is the
@@ -80,15 +87,30 @@ unit that actually ships, so it is the right thing to choose on — but it is no
 a pure timbre comparison, and a winner should be understood as "this reference
 produces the FAM voice", not "this person's vocal cords are the FAM voice".
 
+## The qualities being listened for
+
+Recorded here because they are what the listening is *for* - and kept
+deliberately unattached to any reference file:
+
+| | |
+|---|---|
+| **Magnetic** | intimate, intriguing, slightly restrained, sophisticated; pulls the listener toward it rather than demanding attention |
+| **Human** | exceptionally conversational and natural; a smart person beside you, not a narrator, announcer or assistant |
+| **Storyteller** | warm, emotionally intelligent, dynamic; timing and movement without theatricality |
+| **Modern Authority** | confident, composed, intelligent, sophisticated, still human; authoritative without becoming a news anchor |
+
+Three speakers against four qualities is not a mismatch to fix. The question is
+which recorded speaker best carries FAM, not which speaker fills which slot.
+
 ## Controls held
 
 | | |
 |---|---|
 | engine | Chatterbox Base only, one model load, `chatterbox.tts.ChatterboxTTS` |
 | settings | `exaggeration 0.5, cfg_weight 0.5, temperature 0.8, repetition_penalty 1.2, min_p 0.05, top_p 1.0` — the model's own defaults, pinned by a test |
-| seed | fixed per passage, shared across all four identities |
+| seed | fixed per passage, shared across all three identities |
 | passages | the same three from Phase 2, unchanged, so this stays anchored to what was already heard |
-| blinding | Voice A/B/C/D, randomised **separately per passage** |
+| blinding | Voice A/B/C, randomised **separately per passage** |
 | loudness | every clip normalised to -23 LUFS before labelling |
 | first takes | a clip already on disk is never regenerated |
 | checkpointing | every clip written as it is made; a kill costs only the clip in flight |
@@ -126,7 +148,7 @@ counsel.
 
 ## Sequence
 
-1. Obtain and prepare four reference recordings (see below).
+1. Obtain and prepare three reference recordings (see below).
 2. `python tools/check_reference_audio.py experiments/references`
 3. `python tools/voice_identity_bakeoff.py --device mps --out experiments/results/identity`
 4. Open `listen.html`, record choices in `choices.md`, then open `KEY.json`.

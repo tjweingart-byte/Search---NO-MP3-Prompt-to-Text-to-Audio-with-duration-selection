@@ -284,8 +284,10 @@ reference (`tts.py:192-195`), so the reference carries *how the person was
 speaking* and not only *who they are*. Swapping references while holding
 settings fixed is the best available test of identity and is not a clean one.
 
-Reduced by having all four speakers read the same neutral passage in the same
-unremarkable way, so what varies is the speaker rather than the performance.
+Reduced by having all speakers read the same neutral passage in the same
+unremarkable way, and by naming the references neutrally so no filename asserts
+which speaker is which direction, so what varies is the speaker rather than the
+performance.
 **Cannot be removed.** A winner means "this reference produces the FAM voice",
 not "this person's voice is the FAM voice". *Open, and inherent to the model.*
 
@@ -302,4 +304,4 @@ Phase 3 makes it enforceable: the runner refuses to synthesise a voice with no
 `.rights.json`, and a `false` in `consent`, `commercial_use` or
 `synthetic_voice_cleared` blocks that voice. `experiments/references/` is
 git-ignored. **This is the one failure in this project that cannot be fixed by
-re-running something.** *Open until four cleared references exist.*
+re-running something.** *Open until the cleared references exist.*

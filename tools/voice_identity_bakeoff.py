@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Chatterbox Base, four reference voices, blind. Local, free, no GPU rental.
+"""Chatterbox Base, three reference voices, blind. Local, free, no GPU rental.
 
 Engine selection is finished; this chooses the voice. Chatterbox Base is the
-only engine here, loaded once, and the only thing that varies between the four
-candidates is which reference recording conditions it.
+only engine here, loaded once, and the only thing that varies between the
+candidates is which reference recording conditions it. The references are named
+neutrally - a filename asserting a direction would prime the listener and claim
+a mapping nobody has verified.
 
     python tools/check_reference_audio.py experiments/references     # gate
     python tools/voice_identity_bakeoff.py --device mps \\
@@ -11,8 +13,8 @@ candidates is which reference recording conditions it.
 
 Same discipline as the engine bake-off: blind letters randomised per passage,
 loudness matched, first takes kept, every clip checkpointed, and one model
-resident at a time. Plus a fixed random seed per passage shared by all four
-identities, so no voice wins on a luckier sample.
+resident at a time. Plus a fixed random seed per passage shared by every
+identity, so no voice wins on a luckier sample.
 """
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ REFERENCES = "experiments/references"
 def resolve_references(folder: pathlib.Path) -> dict:
     """One audio file per identity, or a refusal naming what is missing."""
     found, missing = {}, []
-    for key, _label, _desc in identity.IDENTITIES:
+    for key, _label, _note in identity.IDENTITIES:
         matches = [m for m in sorted(folder.glob(f"{key}.*"))
                    if m.suffix.lower() not in (".json", ".md", ".txt")]
         if matches:
@@ -57,7 +59,7 @@ def rights_cleared(folder: pathlib.Path) -> list:
     from tools.check_reference_audio import check_rights
 
     problems = []
-    for key, _label, _desc in identity.IDENTITIES:
+    for key, _label, _note in identity.IDENTITIES:
         problems += check_rights(folder, key)
     return problems
 
@@ -68,7 +70,7 @@ def generate_all(model, references: dict, passages: list, out: pathlib.Path,
     import torch
 
     done, failed = {}, {}
-    for key, label, _desc in identity.IDENTITIES:
+    for key, _label, _note in identity.IDENTITIES:
         count = 0
         for passage in passages:
             path = bake.raw_path(out, key, passage["id"])
@@ -172,8 +174,8 @@ def main() -> int:
     with (out / "progress.log").open("a", encoding="utf-8") as log:
         log_line(log, f"\n=== identity run {time.strftime('%Y-%m-%d %H:%M:%S')} "
                       f"device={args.device} ===")
-        for key, label_text, description in identity.IDENTITIES:
-            log_line(log, f"  {key:<12}{references[key].name:<24}{label_text}")
+        for key, label_text, _note in identity.IDENTITIES:
+            log_line(log, f"  {key:<14}{references[key].name:<24}{label_text}")
         log_line(log, f"  settings held constant: {identity.GENERATION}")
 
         needed = [(k, p) for k, _, _ in identity.IDENTITIES for p in passages
@@ -224,9 +226,13 @@ def main() -> int:
             "engine": "Chatterbox Base (chatterbox.tts.ChatterboxTTS)",
             "seed": args.seed,
             "generation_settings": identity.GENERATION,
-            "identities": {k: {"label": lab, "direction": d,
+            # No "direction" field: nothing here asserts which speaker is the
+            # magnetic one. The qualities being listened for are recorded
+            # separately, unattached to any reference.
+            "identities": {k: {"label": lab, "note": note,
                                "reference": references[k].name}
-                           for k, lab, d in identity.IDENTITIES if k in keys},
+                           for k, lab, note in identity.IDENTITIES if k in keys},
+            "qualities_sought": dict(identity.QUALITIES_SOUGHT),
             "letters": letters_by_passage,
             "clips": [c.__dict__ for c in clips],
             "failed": outcome["failed"],

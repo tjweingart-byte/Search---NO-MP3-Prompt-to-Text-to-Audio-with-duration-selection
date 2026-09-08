@@ -1,4 +1,4 @@
-"""Blind bake-off across four speaker identities on one engine.
+"""Blind bake-off across three speaker identities on one engine.
 
 Phase 2 chose the engine. This chooses the voice, and the two are deliberately
 not asked at once: Chatterbox Base is held fixed and only the reference
@@ -18,20 +18,34 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-#: The four directions being compared. The keys are the reference filenames.
+#: The candidates: three recorded speakers, named neutrally.
+#:
+#: They are deliberately NOT labelled magnetic / human / storyteller /
+#: authority. Those four are the qualities being listened *for*, not claims
+#: about which speaker embodies which - assigning a direction to a file would
+#: prime the listener toward hearing it, which is the opposite of a blind test,
+#: and would assert a mapping nobody has verified.
+#:
+#: Adding a fourth speaker later is one line here plus one in
+#: tools/check_reference_audio.py.
 IDENTITIES = (
-    ("magnetic", "Magnetic",
-     "intimate, intriguing, slightly restrained, sophisticated; pulls the "
-     "listener toward it rather than demanding attention"),
-    ("human", "Human",
-     "exceptionally conversational and natural; a smart person beside you, "
-     "not a narrator, announcer or assistant"),
-    ("storyteller", "Storyteller",
-     "warm, emotionally intelligent, dynamic; timing and movement without "
-     "theatricality"),
-    ("authority", "Modern Authority",
-     "confident, composed, intelligent, sophisticated, still human; "
-     "authoritative without becoming a news anchor"),
+    ("reference_1", "Reference 1", "speaker as recorded; no direction assigned"),
+    ("reference_2", "Reference 2", "speaker as recorded; no direction assigned"),
+    ("reference_3", "Reference 3", "speaker as recorded; no direction assigned"),
+)
+
+#: What the listening is *for*. Kept here as the qualities in play, deliberately
+#: not attached to any particular reference.
+QUALITIES_SOUGHT = (
+    ("magnetic", "intimate, intriguing, slightly restrained, sophisticated; "
+                 "pulls the listener toward it rather than demanding attention"),
+    ("human", "exceptionally conversational and natural; a smart person beside "
+              "you, not a narrator, announcer or assistant"),
+    ("storyteller", "warm, emotionally intelligent, dynamic; timing and "
+                    "movement without theatricality"),
+    ("modern authority", "confident, composed, intelligent, sophisticated, "
+                         "still human; authoritative without becoming a news "
+                         "anchor"),
 )
 
 #: Chatterbox Base defaults, pinned so a later run cannot drift. These are the

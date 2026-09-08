@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the four reference recordings before a single clip is generated.
+"""Check the three reference recordings before a single clip is generated.
 
 Two jobs, and the second is the one that matters more.
 
@@ -44,8 +44,8 @@ ENC_COND_SECONDS = 6.0
 MIN_SECONDS = 12.0
 MAX_SECONDS = 30.0
 
-#: All four must match within this, or the speaker embedding sees unequal
-#: amounts of each voice.
+#: All references must match within this, or the speaker embedding sees
+#: unequal amounts of each voice.
 DURATION_TOLERANCE = 2.0
 
 #: A reference that clips has distortion baked into the cloned voice.
@@ -178,11 +178,13 @@ def main() -> int:
 
     if not folder.exists():
         raise SystemExit(f"no folder at {folder}\n"
-                         "  Create it and put the four reference recordings in "
-                         "it, named magnetic.wav, human.wav, storyteller.wav "
-                         "and authority.wav, each with a .rights.json beside it.")
+                         "  Create it and put the three reference recordings "
+                         "in it, named reference_1.wav, reference_2.wav and "
+                         "reference_3.wav, each with a .rights.json beside it.")
 
-    expected = ["magnetic", "human", "storyteller", "authority"]
+    # Neutral names on purpose: a filename that asserts a direction primes the
+    # listener and claims a mapping nobody has verified.
+    expected = ["reference_1", "reference_2", "reference_3"]
     ok, results = True, {}
     print(f"\nreference audio in {folder}\n")
     for name in expected:
@@ -224,7 +226,8 @@ def main() -> int:
 
     print()
     if ok and len(results) == len(expected):
-        print("  all four references pass. Generation can proceed.\n")
+        print(f"  all {len(expected)} references pass. Generation can "
+              "proceed.\n")
         return 0
     print("  not ready. Fix the above before generating anything.\n")
     return 1
