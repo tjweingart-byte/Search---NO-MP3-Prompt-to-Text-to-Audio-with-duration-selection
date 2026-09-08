@@ -3026,3 +3026,42 @@ an episode, signed up, and kept the same id and their history; a second cookie
 jar logged in and saw that history; `?user=<their id>` returned an empty
 profile and failed to rename them; and the cookie came back
 `HttpOnly; SameSite=lax`. 426 pass.
+
+## 67. The preview proves layout; this one proves storage
+
+`build_preview.py` ships `static/index.html` with every `fetch` answered from
+fixtures. That is the right tool for layout, flow and interaction on a phone,
+and it proves nothing about state: tap the same tile twice and the second tap
+is the same canned JSON as the first, so nothing about the event log, the
+cache or identity is exercised.
+
+`build_live_preview.py` takes the **same interface** and swaps only that one
+layer. The fixture shim becomes a small API implemented against the Artifact
+`db` capability, mirroring the response shape of every route `app.py` serves,
+so `static/index.html` runs **unmodified** - which is the whole claim: what you
+click is the shipped frontend, not a mock of it.
+
+Real: the append-only event log, impressions carrying `section` and
+`ALGO_VERSION` (read from `topics.py` at build time rather than retyped),
+`for_user` excluding them, the normalised cache key with its hit counter,
+sessions, accounts attaching to the id a listener already has, mixes, echoes,
+the listener table. Synthetic: `/api/audio` returns silence of the right
+length, and `/api/topics`, `/api/voices` and `/api/health` are reference data.
+There is no model and no speech engine in a published page.
+
+**The verification is the repo's own smoke test.** `tools/smoke_preview.py`
+takes a path, so it drives this build exactly as it drives the fixture one -
+all fourteen named behaviours pass against the database. Five of them failed
+first, every one for the same reason: a fresh store is empty where the fixture
+preview ships pre-populated. That is §50's point again - Explore replays other
+listeners' episodes and cannot generate one - so the shim seeds on first boot
+only when the store is genuinely empty, the browser equivalent of
+`tools/seed_demo.py`.
+
+Two things the browser run corrected. The health fixture has no `mode`, so the
+app fell through to "Audio server unreachable - start it with ./run.sh": true
+of a server and useless advice inside a published page. Health now reports
+`demo`, and the shim replaces that one sentence with what is actually true of
+this build. And the session token lives in `localStorage` rather than the
+HttpOnly cookie the server sets, because a published page has no cookie of its
+own - the single divergence, stated in the badge the shim renders.
