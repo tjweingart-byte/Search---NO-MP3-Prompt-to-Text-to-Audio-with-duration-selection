@@ -475,3 +475,109 @@ def test_a_cached_script_replays_through_the_selected_path(flag, value):
     assert second[1].cache == "hit"
     assert second[1].script == first[1].script
     assert second[0] == pytest.approx(first[0], abs=0.5)
+
+
+# ==========================================================================
+# The engine boundary: what actually reaches the voice, and when
+# ==========================================================================
+class Recording(DebugEngine):
+    """Records every synthesis request, in order, with its arrival time.
+
+    A stand-in for Chatterbox at the one place that matters: the boundary
+    where Phase 6 hands text to the voice. It needs no GPU, so the invariant
+    is checked on every run rather than only on a rented card.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    async def synth(self, text, wpm, voice=None):
+        self.calls.append({"text": text, "wpm": wpm,
+                           "at": asyncio.get_running_loop().time()})
+        return await DebugEngine.synth(self, text, wpm, voice)
+
+
+def test_the_first_complete_thought_reaches_the_engine_un_batched(flag):
+    """The Phase 6 first-chunk rule, asserted where the voice sees it: call
+    one is the opening sentence alone - not merged with the next, not held for
+    a word count, not delayed by a batching threshold."""
+    class Opening:
+        async def stream_sentences(self, plan, notes=None):
+            yield "It was built to ring."
+            for _ in range(30):
+                await asyncio.sleep(0)
+                yield sized(20)
+
+        async def top_up(self, plan, spoken_so_far, words_needed):
+            async for s in self.stream_sentences(plan):
+                yield s
+
+    async def main():
+        engine = Recording()
+        plan = plan_episode("q", 3)
+        pipe = PodcastPipeline(generator=Opening(), engine=engine, cache=None)
+        async for _ in pipe.stream_pcm(plan, GenerationStats()):
+            pass
+        return engine.calls
+
+    flag("phase6")
+    calls = _bounded(main())
+    assert calls[0]["text"] == "It was built to ring."
+    assert len(calls) < 31, "every sentence was sent on its own; nothing batched"
+    assert any(len(c["text"].split()) > 20 for c in calls[1:]), (
+        "no chunk after the first was assembled")
+
+
+def test_the_first_call_is_the_first_thing_the_engine_is_asked_for(flag):
+    """No warm-up utterance, no preamble, nothing ahead of the listener's
+    opening sentence in the queue."""
+    class Opening:
+        async def stream_sentences(self, plan, notes=None):
+            yield "The clock has no face."
+            for _ in range(10):
+                await asyncio.sleep(0)
+                yield sized(20)
+
+        async def top_up(self, plan, spoken_so_far, words_needed):
+            async for s in self.stream_sentences(plan):
+                yield s
+
+    async def main():
+        engine = Recording()
+        pipe = PodcastPipeline(generator=Opening(), engine=engine, cache=None)
+        async for _ in pipe.stream_pcm(plan_episode("q", 3), GenerationStats()):
+            pass
+        return engine.calls
+
+    for value in ("legacy", "phase6"):
+        flag(value)
+        calls = _bounded(main())
+        assert calls[0]["text"] == "The clock has no face.", value
+
+
+def test_a_rate_ignoring_engine_still_honours_the_duration_ceiling(flag):
+    """Chatterbox has no speaking-rate control, so pacing cannot help it.
+    Length has to hold on the budget and the trim alone - which is the trade
+    accepted when Chatterbox became the production voice."""
+    class Deaf(DebugEngine):
+        """Ignores wpm entirely, as Chatterbox does."""
+
+        async def synth(self, text, wpm, voice=None):
+            return await DebugEngine.synth(self, text, 150.0, voice)
+
+    async def main(minutes):
+        plan = plan_episode("q", minutes)
+        pipe = PodcastPipeline(generator=FakeGenerator(1.6), engine=Deaf(),
+                               cache=None)
+        stats = GenerationStats()
+        total = 0
+        async for chunk in pipe.stream_pcm(plan, stats):
+            total += len(chunk)
+        return pcm_duration(total, Deaf().sample_rate), plan.target_seconds
+
+    for value in ("legacy", "phase6"):
+        flag(value)
+        for minutes in (1, 3, 5):
+            seconds, target = _bounded(main(minutes))
+            assert seconds <= target + OVERRUN_GRACE, (
+                f"{value} at {minutes} min ran to {seconds:.2f}s over {target}s")

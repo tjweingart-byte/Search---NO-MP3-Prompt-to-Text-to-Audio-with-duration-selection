@@ -249,6 +249,17 @@ class Settings:
     # default, and the only value a deployment should ever have - means "the
     # production engine, or the interim one while that slot is empty".
     tts_engine: str = field(default_factory=lambda: os.environ.get("TTS_ENGINE", "auto"))
+    # --- Chatterbox: the production voice --------------------------------
+    # Where the model runs. `auto` picks cuda, then mps, and refuses cpu -
+    # Chatterbox on a CPU is slower than speech, so an episode would starve.
+    chatterbox_device: str = field(
+        default_factory=lambda: os.environ.get("CHATTERBOX_DEVICE", "auto"))
+    # The recording Chatterbox clones. Per-machine state, never in the repo:
+    # it is somebody's voice. Defaults to reference_3.wav in the shared voice
+    # folder, and a rights record must sit beside it clearing consent,
+    # commercial use and synthetic voice, or the engine reports unavailable.
+    chatterbox_reference: str = field(
+        default_factory=lambda: os.environ.get("CHATTERBOX_REFERENCE", ""))
     # Voice models live in one shared per-user folder (~/.fam/voices by
     # default), NOT inside the project, so a new version of the app finds the
     # voices already downloaded instead of fetching them again. Override with

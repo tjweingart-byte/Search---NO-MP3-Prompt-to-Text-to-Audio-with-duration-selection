@@ -12,6 +12,7 @@ being loaded into every web worker.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import pathlib
 import shutil
@@ -22,6 +23,7 @@ from functools import lru_cache
 from abc import ABC, abstractmethod
 from typing import Optional
 
+import voice_store
 from audio_utils import strip_wav_header
 from config import settings
 
@@ -455,15 +457,218 @@ class DebugEngine(TTSEngine):
 
 #: The engines production is allowed to serve.
 #:
-#: Chatterbox is the decided production voice. It is not integrated yet - that
-#: is its own deliberate step - so this is empty today and `build_engine` falls
-#: through to the interim engine below, saying so in the health report.
+#: The generation settings Phase 2 chose and Phase 6 measured. Copied from
+#: `experiments/voice_identity.GENERATION` deliberately rather than imported:
+#: the experiment layer is not a production dependency. Changing a number here
+#: changes the voice, and invalidates every listening judgement made on it.
+CHATTERBOX_GENERATION = {
+    "exaggeration": 0.5,
+    "cfg_weight": 0.5,
+    "temperature": 0.8,
+    "repetition_penalty": 1.2,
+    "min_p": 0.05,
+    "top_p": 1.0,
+}
+
+
+def pcm_from_float(samples) -> bytes:
+    """Float waveform in [-1, 1] to 16-bit little-endian PCM."""
+    import numpy as np
+
+    clipped = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
+    return (clipped * 32767.0).astype("<i2").tobytes()
+
+
+class ChatterboxEngine(TTSEngine):
+    """Chatterbox Base: FAM's production voice.
+
+    A thin adapter around the call Phase 6 validated on an RTX 4090
+    (`phase6_4090_20260908T064113Z`: 2.992s search-to-first-listen warm, zero
+    playback stalls). Nothing about the synthesis is reinvented here - the
+    settings, the `inference_mode` wrapper, the tensor-to-PCM conversion and
+    the 24 kHz rate are the measured ones.
+
+    Three things this must get right, and one it deliberately cannot:
+
+    * **Load the model once.** The cold load is ~10s on a 4090. Loaded models
+      are cached on the class for the life of the process and `warm_up()` pays
+      it at startup, so no listener ever does. Same pattern as Piper's.
+    * **Do not block the event loop.** Generation is blocking GPU work and runs
+      in a worker thread, which is what lets Claude keep streaming underneath -
+      the Phase 6 decoupling depends on it.
+    * **One generation at a time.** A single card cannot run concurrent
+      generations safely, so they serialise on a semaphore. A second listener
+      queues behind the first; at ~4.6x realtime that is fine for a few and is
+      a real capacity limit worth knowing.
+    * **`wpm` is ignored.** Chatterbox exposes no speaking-rate control, so the
+      pacing half of the duration contract does not apply: length is held by
+      the budget and by trimming at a sentence boundary, not by speeding the
+      voice up. This is a decided trade, not an oversight - see PROBLEMS.md.
+      The parameter stays in the signature because `TTSEngine` defines it.
+    """
+
+    name = "chatterbox"
+    #: The rate the model emits at. Read back from the model once loaded, but
+    #: needed before that for the stream header on the very first chunk.
+    SAMPLE_RATE = 24000
+
+    #: device -> loaded model. Shared by every request in the process.
+    _loaded: dict = {}
+    #: One card, one generation. Class-level so it is shared, and built lazily
+    #: because a semaphore binds to the loop that first awaits it.
+    _gate: "asyncio.Semaphore | None" = None
+    #: Memoised availability, so /api/health does not re-import torch.
+    _available: bool | None = None
+
+    # -- configuration -----------------------------------------------------
+
+    @staticmethod
+    def reference_path() -> pathlib.Path:
+        """The voice Chatterbox clones. Per-machine state, never in the repo."""
+        configured = (settings.chatterbox_reference or "").strip()
+        if configured:
+            return pathlib.Path(configured).expanduser()
+        return voice_store.voices_dir() / "reference_3.wav"
+
+    @staticmethod
+    def rights_path(reference: pathlib.Path) -> pathlib.Path:
+        return reference.with_suffix(".rights.json")
+
+    @classmethod
+    def rights_cleared(cls, reference: pathlib.Path) -> tuple[bool, str]:
+        """A cloned voice is somebody's voice. No record, no synthesis.
+
+        The same three fields `tools/check_reference_audio.py` requires, asked
+        again here because a gate that only runs in a tool is not a gate.
+        """
+        path = cls.rights_path(reference)
+        if not path.exists():
+            return False, f"no rights record at {path.name}"
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            return False, f"{path.name} is not valid JSON: {exc}"
+        for field_name in ("consent", "commercial_use", "synthetic_voice_cleared"):
+            value = record.get(field_name)
+            if str(value).strip().lower() not in ("yes", "true"):
+                return False, f"{path.name} does not clear {field_name!r}"
+        return True, "consent, commercial use and synthetic voice cleared"
+
+    @classmethod
+    def device(cls) -> str:
+        """Where the model runs. CPU is refused, not chosen."""
+        configured = (settings.chatterbox_device or "auto").strip().lower()
+        if configured != "auto":
+            return configured
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                return "cuda"
+            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                return "mps"
+        except Exception:
+            pass
+        return "cpu"
+
+    # -- discovery ---------------------------------------------------------
+
+    @classmethod
+    def diagnose(cls) -> tuple[bool, str]:
+        """Why this engine can or cannot serve, in one sentence."""
+        try:
+            import chatterbox.tts  # noqa: F401
+        except Exception as exc:
+            return False, f"chatterbox is not installed ({type(exc).__name__})"
+        device = cls.device()
+        if device == "cpu":
+            # ~1x realtime or worse: the listener would hear silence. Refusing
+            # is better than serving an episode that starves.
+            return False, "no GPU: Chatterbox on CPU is slower than speech"
+        reference = cls.reference_path()
+        if not reference.exists():
+            return False, f"no reference voice at {reference}"
+        cleared, detail = cls.rights_cleared(reference)
+        if not cleared:
+            return False, detail
+        return True, f"{device}, cloning {reference.name}"
+
+    @classmethod
+    def available(cls) -> bool:
+        if cls._available is None:
+            cls._available = cls.diagnose()[0]
+        return cls._available
+
+    @classmethod
+    def voices(cls) -> list:
+        if not cls.available():
+            return []
+        reference = cls.reference_path()
+        return [Voice(id=f"chatterbox:{reference.stem}", label="FAM",
+                      engine=cls.name, detail="Chatterbox")]
+
+    # -- synthesis ---------------------------------------------------------
+
+    @classmethod
+    def _model(cls):
+        device = cls.device()
+        if device not in cls._loaded:
+            from chatterbox.tts import ChatterboxTTS
+
+            log.info("loading chatterbox on %s (one-time, ~10s)", device)
+            model = ChatterboxTTS.from_pretrained(device=device)
+            actual = str(getattr(model, "device", device))
+            if actual.split(":")[0] != device.split(":")[0]:
+                raise TTSUnavailable(
+                    f"asked chatterbox for {device!r}, it loaded on {actual!r}")
+            cls._loaded[device] = model
+        return cls._loaded[device]
+
+    def _synth_blocking(self, text: str) -> tuple[bytes, int]:
+        """The validated call, unchanged, plus the tensor-to-PCM conversion."""
+        import numpy as np
+        import torch
+
+        model = self._model()
+        with torch.inference_mode():
+            wav = model.generate(text,
+                                 audio_prompt_path=str(self.reference_path()),
+                                 **CHATTERBOX_GENERATION)
+        samples = wav.squeeze(0).detach().cpu().numpy()
+        del wav
+        return pcm_from_float(samples), int(getattr(model, "sr", self.SAMPLE_RATE))
+
+    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
+        """`wpm` is accepted and ignored - Chatterbox has no rate control."""
+        if type(self)._gate is None:
+            type(self)._gate = asyncio.Semaphore(1)
+        async with type(self)._gate:
+            # Off the event loop: generation is blocking GPU work, and Claude
+            # has to keep streaming while it runs.
+            pcm, rate = await asyncio.to_thread(self._synth_blocking, text)
+        self._rate = rate
+        return pcm
+
+    @property
+    def sample_rate(self) -> int:
+        rate = getattr(self, "_rate", None)
+        if rate:
+            return int(rate)
+        model = self._loaded.get(self.device())
+        return int(getattr(model, "sr", self.SAMPLE_RATE)) if model else self.SAMPLE_RATE
+
+
+#: Chatterbox is FAM's production voice. It gates itself on being able to run:
+#: no package, no GPU, no reference voice or uncleared rights and it reports
+#: unavailable, `build_engine` falls through to the interim engine, and the
+#: health report says `interim: true`. So this is live everywhere it can be and
+#: nowhere it cannot, which is the switch - no separate flag to forget.
 #:
 #: espeak and macOS `say` are deliberately absent and are no longer production
 #: options at all. They exist only if the host OS happens to provide them, so
 #: relying on either means the deployed app sounds different, and worse, than
 #: the laptop it was built on.
-PRODUCTION_ENGINES: tuple = ()
+PRODUCTION_ENGINES: tuple = (ChatterboxEngine,)
 
 #: What speaks until Chatterbox lands. **Not a production choice**: there is no
 #: engine toggle, nothing selects between it and anything else, and

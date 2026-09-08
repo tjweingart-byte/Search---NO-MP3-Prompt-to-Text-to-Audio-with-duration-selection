@@ -50,12 +50,18 @@ def test_the_production_slot_is_the_only_thing_production_selects_from(monkeypat
     assert tts.default_voice() == "fake:one"
 
 
-def test_an_empty_slot_falls_through_to_the_interim_engine_and_says_so():
-    assert tts.PRODUCTION_ENGINES == (), (
-        "Chatterbox integration is its own step; this should still be empty")
+def test_chatterbox_is_the_only_production_engine():
+    assert [cls.name for cls in tts.PRODUCTION_ENGINES] == ["chatterbox"]
+    assert tts.engine_report()["production_engines"] == ["chatterbox"]
+
+
+def test_a_slot_that_cannot_run_falls_through_and_says_so(monkeypatch):
+    """Chatterbox gates itself. Where it cannot run - no package, no GPU, no
+    reference - the interim voice speaks and the report says so, rather than
+    the server pretending to be on the production voice."""
+    monkeypatch.setattr(tts.ChatterboxEngine, "_available", False)
     assert tts.production_engine() is None
     assert tts.engine_report()["interim"] is True
-    assert tts.engine_report()["production_engines"] == []
 
 
 def test_a_filled_slot_is_not_reported_as_interim(monkeypatch):
