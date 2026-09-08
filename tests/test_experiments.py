@@ -520,23 +520,24 @@ def test_actual_cost_uses_real_token_counts():
 def test_the_experiment_package_never_writes_to_the_script_cache():
     """No experiment may put a script into the shared cache.
 
-    The check used to be a bare search for `.put(`, which also banned
-    `asyncio.Queue.put` - and the concurrent pipeline needs a queue, because
-    production uses one. So the receiver is named instead: a `.put(` is allowed
-    only on something called a queue, and importing the production cache module
-    at all is refused.
+    The check used to be a bare search for `.put(`, then a rule about what the
+    receiver was called. Both policed variable names rather than the thing
+    being guarded, and the concurrent pipelines need ordinary queues. So it
+    names the cache instead: an experiment may not import the production cache
+    module, and may not call `put` on anything that is one.
     """
     import re
 
     root = pathlib.Path(__file__).resolve().parent.parent / "experiments"
+    forbidden = re.compile(
+        r"^\s*(?:from cache import|import cache\b)"      # the module itself
+        r"|\bScriptCache\b|\bbuild_cache\s*\("           # its constructors
+        r"|\b\w*cache\w*\.put\s*\(",                     # a write to one
+        re.M | re.I)
     for path in root.rglob("*.py"):
-        text = path.read_text()
-        assert not re.search(r"^\s*(?:from cache import|import cache\b)", text,
-                             re.M), f"{path.name} imports the production cache"
-        for receiver in re.findall(r"(\w+)\.put\(", text):
-            assert receiver.lower().endswith("queue"), (
-                f"{path.name} calls {receiver}.put(...) - if that is a cache, "
-                "an experiment must not write to it")
+        found = forbidden.search(path.read_text())
+        assert not found, (f"{path.name} reaches the production script cache: "
+                           f"{found.group(0)!r}")
 
 
 def test_the_real_generator_disables_the_cache():

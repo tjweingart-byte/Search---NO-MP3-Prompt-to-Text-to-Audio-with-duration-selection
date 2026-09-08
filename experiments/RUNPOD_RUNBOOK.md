@@ -389,3 +389,104 @@ should be read rather than assumed away.
     git push -u origin claude/fam-repo-inventory-5lznba
 
 Copy first, destroy second, rotate the keys third.
+
+---
+
+# Phase 6 — Claude decoupled from Chatterbox
+
+Design and reasoning: `experiments/audit/PHASE6_DECOUPLED_PIPELINE.md`. This
+section is the procedure only.
+
+Phase 5 proved the overlap and gave the baseline: **Search → First Listen =
+4.659s warm**, zero stalls. It also reported `claude_total = 66.668s` with
+`backpressure = 64.273s` inside it, because the TTS queue sat directly under
+the Claude reader. Phase 6 separates them, batches later sentences into
+speech-sized chunks, and asserts that TTS saturation never reaches upstream.
+
+## 1. On the Mac, free
+
+    git pull
+    python3 -m pytest tests/test_speech_assembler.py \
+                      tests/test_decoupled_pipeline.py \
+                      tests/test_phase6_runner.py -q          # 50 tests
+
+    python3 tools/phase6_experiment.py --dry-run --runs 1
+    python3 tools/phase6_experiment.py --dry-run --coupled --runs 1
+
+The first dry run must pass; the second must **fail its decoupling assertion**,
+because it rebuilds Phase 5's coupling on purpose. An assertion that has never
+rejected anything is decoration.
+
+If you still have Phase 5's `results.json`, this is the moment to look at it —
+it was never pushed, so nothing in this repository has seen its chunk data:
+
+    python3 tools/fit_chunk_policy.py <phase5>/results.json
+
+It prints the measured chunk distribution, fits generation time against word
+count from that run's own timings, and replays the assembler over the same
+sentences to show what Phase 6 would have produced.
+
+## 2. Get the new code onto the pod
+
+A pod that ran Phase 5 does not have `experiments/decoupled_pipeline.py` or
+`experiments/speech_assembler.py`; Gate 3 refuses rather than running something
+stale.
+
+    python3 tools/pack_for_pod.py \
+      --reference experiments/references/working/reference_3.wav
+    scp fam-pod.tar.gz root@<pod>:/workspace/
+    ssh root@<pod>
+    cd /workspace && tar xzf fam-pod.tar.gz && cd FAM
+
+Weights under `HF_HOME` and installed packages survive; only the source tree is
+replaced, so this costs seconds.
+
+## 3. The whole experiment, as one command
+
+    export EXA_API_KEY='...'
+    export ANTHROPIC_API_KEY='...'
+    bash tools/pod_phase6.sh experiments/references/working/reference_3.wav
+
+| gate | cost | what it settles |
+|---|---|---|
+| 1. RTX 4090 | free, instant | the same card as Phase 5, so the comparison is architecture only |
+| 2. both keys exported | free, instant | the run will not silently become a stubbed one |
+| 3. voice present, tarball current | free, instant | an old tree is caught before the install |
+| 4a. the decoupled stub passes | free, ~10s | the harness is sound |
+| 4b. **the coupled stub fails** | free, ~10s | the assertion has teeth |
+| 5. dependencies | seconds on a Phase 5 pod | a no-op |
+| 6. preflight | ~$0.006 | one real Exa search, one real Claude call, the watermarker, production's chunker |
+
+Then cold, then warm.
+
+## 4. What success looks like
+
+`ANALYSIS.md` opens with six plain-English answers, before any table:
+
+1. Search → first listen, warm, against the 5.0s budget and Phase 5's 4.659s
+2. whether Claude stayed decoupled — `claude_reader_blocked_seconds` at 0.000s
+   and the decoupling reported as **exercised**
+3. how long Claude actually took, with our processing and our blocking split out
+4. playback stalls, and minimum / median / maximum headroom
+5. sentences in, TTS calls out, median words, how many under five and ten
+6. whether Phase 6 improved on Phase 5, or *not proven*
+
+A pass is: first listen ≤ 5.0s, `first_tts_start < claude_complete`, zero
+stalls, no text loss, and the reader never blocked. **One request per
+condition**, so a first-listen difference of a few hundred milliseconds against
+Phase 5 is API variance, not a finding.
+
+## 5. Getting it back, then terminating
+
+    scp -r root@<pod>:/workspace/FAM/experiments/results/phase6_4090_<stamp> \
+        experiments/results/
+
+    open experiments/results/phase6_4090_<stamp>/ANALYSIS.md
+    afplay experiments/results/phase6_4090_<stamp>/audio/warm_episode.wav
+
+    git add -f experiments/results/phase6_4090_<stamp>
+    git commit -m "Phase 6 on a 4090: Claude decoupled from Chatterbox"
+    git push -u origin claude/fam-repo-inventory-5lznba
+
+Copy first, destroy second, rotate the keys third. **Push the results** —
+Phase 5's were not, so nothing in this repository has ever seen its chunk data.
