@@ -252,3 +252,24 @@ latency. Combined with P17 (Turbo disables the expressive controls) and P19
 yet: the fork would be committed before knowing whether the voice is wanted or
 the weights are usable. **The listening test is now the highest-value
 outstanding action on the whole voice question.**
+
+---
+
+## Found while running Phase 2
+
+### P24. The bake-off runner held every loaded model at once
+`zsh: killed` on the Mac after Chatterbox loaded. The runner kept each engine's
+closure in a dict for the whole run, so the second Chatterbox model loaded
+while the first was still resident and macOS reclaimed the process.
+
+Fixed: generation and labelling are separate passes, one engine loaded at a
+time, released with `gc.collect()` and a torch device-cache clear before the
+next loads. A test asserts the high-water mark of simultaneously resident
+engines is exactly 1, and the run is checkpointed so a kill costs only the
+engine in flight. *Closed.*
+
+Worth noting as a pattern rather than a one-off: this is the third time in this
+sequence that a harness fault - not the thing being measured - has cost a run.
+The others were the openings parser reading one line of a multi-line chunk, and
+the seam detector reading one sample past the join. All three were caught by a
+test that reproduced the real shape rather than by inspection.

@@ -135,6 +135,128 @@ def build_candidates(device: str | None, piper_voice: str | None) -> list:
     return out
 
 
+def log_line(handle, message: str) -> None:
+    """Say it on stdout and in the file, and flush both.
+
+    The failure this exists for is `zsh: killed` - the process does not get to
+    finish, so anything buffered is gone. A flushed file is what tells us which
+    candidate and which passage were in flight when the kernel stepped in.
+    """
+    print(message, flush=True)
+    if handle is not None:
+        handle.write(message + "\n")
+        handle.flush()
+
+
+def rss_mb() -> str:
+    """Resident memory, if psutil is here. Absent is fine; guessing is not."""
+    try:
+        import os
+
+        import psutil
+
+        return f"{psutil.Process(os.getpid()).memory_info().rss / 1024 ** 2:.0f}MB"
+    except Exception:
+        return "?"
+
+
+def generate_all(candidates, passages, out, device, log, force: bool) -> dict:
+    """One engine at a time: load, speak, persist, release. Then the next.
+
+    Every clip is written before the next is attempted, so a kill costs the
+    engine in flight and nothing that came before it.
+    """
+    done, failed = {}, {}
+    for candidate in candidates:
+        wanted = [p for p in passages
+                  if force or not bake.raw_path(out, candidate.key, p["id"]).exists()]
+        already = len(passages) - len(wanted)
+        if already:
+            log_line(log, f"[{candidate.key}] {already}/{len(passages)} already on "
+                          f"disk - not regenerating (first-take rule)")
+        if not wanted:
+            done[candidate.key] = len(passages)
+            continue
+
+        log_line(log, f"[{candidate.key}] LOADING   rss={rss_mb()}")
+        started = time.perf_counter()
+        try:
+            synth = candidate.synth()
+        except Exception as exc:
+            failed[candidate.key] = f"load: {type(exc).__name__}: {exc}"
+            log_line(log, f"[{candidate.key}] LOAD FAILED {failed[candidate.key]}")
+            bake.release_memory(device)
+            continue
+        log_line(log, f"[{candidate.key}] loaded in {time.perf_counter() - started:.1f}s"
+                      f"  rss={rss_mb()}")
+
+        count = already
+        for passage in wanted:
+            log_line(log, f"[{candidate.key}] GENERATING {passage['id']}  "
+                          f"rss={rss_mb()}")
+            began = time.perf_counter()
+            try:
+                samples, rate = synth(passage["text"])
+            except Exception as exc:
+                failed.setdefault(candidate.key,
+                                  f"{passage['id']}: {type(exc).__name__}: {exc}")
+                log_line(log, f"[{candidate.key}] {passage['id']} FAILED "
+                              f"{type(exc).__name__}: {exc}")
+                continue
+            elapsed = time.perf_counter() - began
+            path = bake.raw_path(out, candidate.key, passage["id"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            bake.write_wav(path, samples, rate)
+            seconds = len(samples) / rate if rate else 0.0
+            count += 1
+            log_line(log, f"[{candidate.key}] wrote {passage['id']}  "
+                          f"{seconds:.1f}s audio in {elapsed:.1f}s  rss={rss_mb()}")
+            del samples
+
+        # Release before the next engine loads. This is the whole fix.
+        del synth
+        bake.release_memory(device)
+        log_line(log, f"[{candidate.key}] RELEASED  rss={rss_mb()}")
+        done[candidate.key] = count
+
+    return {"done": done, "failed": failed}
+
+
+def label(candidates, passages, out, seed: int, log) -> tuple:
+    """Second pass: read the raw clips back, normalise, assign blind letters.
+
+    Only candidates with a complete set are labelled. A half-generated engine
+    would otherwise appear on some passages and not others, which tells the
+    listener something the test is meant to hide.
+    """
+    complete = [c for c in candidates
+                if all(bake.raw_path(out, c.key, p["id"]).exists() for p in passages)]
+    incomplete = [c.key for c in candidates if c not in complete]
+    if incomplete:
+        log_line(log, f"not labelled (incomplete): {', '.join(incomplete)}")
+    if len(complete) < 2:
+        return complete, {}, []
+
+    letters_by_passage = {
+        p["id"]: bake.assign_letters([c.key for c in complete], p["id"], seed)
+        for p in passages}
+
+    clips = []
+    for passage in passages:
+        folder = out / "clips" / passage["id"]
+        folder.mkdir(parents=True, exist_ok=True)
+        for candidate in complete:
+            samples, rate = bake.read_wav(bake.raw_path(out, candidate.key,
+                                                        passage["id"]))
+            samples, before, after = bake.normalise(samples, rate)
+            letter = letters_by_passage[passage["id"]][candidate.key]
+            bake.write_wav(folder / f"{letter}.wav", samples, rate)
+            clips.append(bake.Clip(passage["id"], candidate.key, letter,
+                                   len(samples) / rate if rate else 0.0, rate,
+                                   0.0, before, after))
+    return complete, letters_by_passage, clips
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--device", help="mps / cuda for the Chatterbox models")
@@ -143,6 +265,8 @@ def main() -> int:
     parser.add_argument("--out", default="experiments/results/bakeoff")
     parser.add_argument("--seed", type=int, default=20260907)
     parser.add_argument("--only", help="comma-separated candidate keys")
+    parser.add_argument("--force", action="store_true",
+                        help="regenerate clips that are already on disk")
     args = parser.parse_args()
 
     passages = json.loads(
@@ -152,73 +276,63 @@ def main() -> int:
         wanted = {k.strip() for k in args.only.split(",")}
         candidates = [c for c in candidates if c.key in wanted]
 
-    print("\nroster")
-    for candidate in candidates:
-        print(f"  {'ok  ' if candidate.available else 'SKIP'}  "
-              f"{candidate.key:<18}{candidate.label}"
-              + (f"   ({candidate.reason})" if not candidate.available else ""))
-    usable = [c for c in candidates if c.available]
-    if len(usable) < 2:
-        raise SystemExit("\nfewer than two candidates can run; nothing to compare")
-    if len(usable) < len(candidates):
-        print("\n  A missing candidate is a weaker test, not a failed one - but "
-              "note which, because\n  the comparison cannot speak for it.")
-
     out = pathlib.Path(args.out)
-    (out / "clips").mkdir(parents=True, exist_ok=True)
+    (out / "raw").mkdir(parents=True, exist_ok=True)
+    (out / "raw" / "DO_NOT_BROWSE.txt").write_text(
+        "Raw clips, named by engine. Opening this folder tells you which voice "
+        "is which and spoils the blind test. Use listen.html.\n", encoding="utf-8")
 
-    letters_by_passage = {
-        p["id"]: bake.assign_letters([c.key for c in usable], p["id"], args.seed)
-        for p in passages}
+    with (out / "progress.log").open("a", encoding="utf-8") as log:
+        log_line(log, f"\n=== run {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                      f"device={args.device} ===")
+        log_line(log, "roster")
+        for candidate in candidates:
+            log_line(log, f"  {'ok  ' if candidate.available else 'SKIP'}  "
+                          f"{candidate.key:<18}{candidate.label}"
+                          + (f"   ({candidate.reason})"
+                             if not candidate.available else ""))
+        usable = [c for c in candidates if c.available]
+        if len(usable) < 2:
+            raise SystemExit("\nfewer than two candidates can run")
 
-    print("\ngenerating")
-    built, clips = {}, []
-    for candidate in usable:
-        try:
-            built[candidate.key] = candidate.synth()
-        except Exception as exc:
-            print(f"  {candidate.key}: FAILED to load - {type(exc).__name__}: {exc}")
-            continue
+        log_line(log, "\ngenerating - one engine loaded at a time")
+        outcome = generate_all(usable, passages, out, args.device, log, args.force)
 
-        for passage in passages:
-            letter = letters_by_passage[passage["id"]][candidate.key]
-            started = time.perf_counter()
-            try:
-                samples, rate = built[candidate.key](passage["text"])
-            except Exception as exc:
-                print(f"  {candidate.key}/{passage['id']}: FAILED - {exc}")
-                continue
-            elapsed = time.perf_counter() - started
-            samples, before, after = bake.normalise(samples, rate)
-            folder = out / "clips" / passage["id"]
-            folder.mkdir(parents=True, exist_ok=True)
-            bake.write_wav(folder / f"{letter}.wav", samples, rate)
-            seconds = len(samples) / rate if rate else 0.0
-            clips.append(bake.Clip(passage["id"], candidate.key, letter, seconds,
-                                   rate, elapsed, before, after))
-            print(f"  {candidate.key:<18}{passage['id']:<14}-> Voice {letter}  "
-                  f"{seconds:5.1f}s audio in {elapsed:5.1f}s")
+        log_line(log, "\nlabelling")
+        complete, letters_by_passage, clips = label(
+            usable, passages, out, args.seed, log)
 
-    if not clips:
-        raise SystemExit("no clips were generated")
+        if outcome["failed"]:
+            log_line(log, "\nfailures")
+            for key, reason in outcome["failed"].items():
+                log_line(log, f"  {key}: {reason}")
+            log_line(log, "  Rerun the same command; finished clips are kept and "
+                          "only the missing ones are generated.")
 
-    (out / "listen.html").write_text(
-        bake.player_html(passages, letters_by_passage), encoding="utf-8")
-    (out / "scorecard.md").write_text(
-        bake.scorecard_markdown(passages, letters_by_passage), encoding="utf-8")
-    (out / "KEY.json").write_text(json.dumps({
-        "DO_NOT_OPEN_UNTIL_SCORED": True,
-        "seed": args.seed,
-        "candidates": {c.key: {"label": c.label, "notes": c.notes}
-                       for c in usable},
-        "letters": letters_by_passage,
-        "clips": [c.__dict__ for c in clips],
-    }, indent=2), encoding="utf-8")
+        if not clips:
+            log_line(log, "\nfewer than two complete candidates - nothing to "
+                          "compare yet. Rerun to continue.")
+            return 1
 
-    print(f"\nwrote {out}/")
-    print(f"  listen.html    open this")
-    print(f"  scorecard.md   fill this in while listening")
-    print(f"  KEY.json       open only afterwards")
+        (out / "listen.html").write_text(
+            bake.player_html(passages, letters_by_passage), encoding="utf-8")
+        (out / "scorecard.md").write_text(
+            bake.scorecard_markdown(passages, letters_by_passage), encoding="utf-8")
+        (out / "KEY.json").write_text(json.dumps({
+            "DO_NOT_OPEN_UNTIL_SCORED": True,
+            "seed": args.seed,
+            "candidates": {c.key: {"label": c.label, "notes": c.notes}
+                           for c in complete},
+            "letters": letters_by_passage,
+            "clips": [c.__dict__ for c in clips],
+            "failed": outcome["failed"],
+        }, indent=2), encoding="utf-8")
+
+        log_line(log, f"\nlabelled {len(complete)} candidate(s) across "
+                      f"{len(passages)} passages")
+        log_line(log, f"  {out}/listen.html    open this")
+        log_line(log, f"  {out}/scorecard.md   fill this in while listening")
+        log_line(log, f"  {out}/KEY.json       open only afterwards")
     return 0
 
 

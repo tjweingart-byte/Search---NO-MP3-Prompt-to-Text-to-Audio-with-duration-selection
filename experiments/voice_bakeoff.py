@@ -20,6 +20,15 @@ the comparison is of voice rather than of gain.
 **Same words.** Every candidate speaks the identical passage. Nothing is
 re-prompted, re-rolled or hand-picked; the first generation is the one that
 gets scored.
+
+Generation and labelling are **two separate passes**, and that separation is
+what makes the run survivable. The first pass loads exactly one engine at a
+time, writes its raw output to disk, and releases the model before the next
+one loads - the first version kept every loaded model in a dict for the whole
+run, so by the time the second Chatterbox loaded the first was still resident
+and macOS killed the process. The second pass reads the raw files back,
+normalises, and assigns the blind letters. A run killed partway loses only the
+engine that was in flight.
 """
 from __future__ import annotations
 
@@ -100,6 +109,55 @@ def normalise(samples, sample_rate: int) -> tuple:
     if peak > 1.0:
         out = out / peak * 0.999
     return out.astype(np.float32), before, after
+
+
+def release_memory(device: Optional[str] = None) -> None:
+    """Drop what a finished engine left behind, before the next one loads.
+
+    Deleting the caller's reference is necessary and not sufficient: torch
+    keeps a per-device allocator cache, and on MPS that cache is the difference
+    between the next model fitting and the process being killed. Every step is
+    guarded, because this must never be the thing that fails a run.
+    """
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+    except ImportError:
+        return
+    for backend in ("mps", "cuda"):
+        if device and device != backend:
+            continue
+        module = getattr(torch, backend, None)
+        empty = getattr(module, "empty_cache", None)
+        if callable(empty):
+            try:
+                empty()
+            except Exception:
+                pass
+    gc.collect()
+
+
+def raw_path(root, candidate_key: str, passage_id: str):
+    """Where one engine's untouched output lives, so a resume can find it.
+
+    Named by candidate rather than by blind letter on purpose: resuming has to
+    know what is already done, and letters are not assigned until every engine
+    has finished. The listener never opens this folder.
+    """
+    return root / "raw" / candidate_key / f"{passage_id}.wav"
+
+
+def read_wav(path) -> tuple:
+    """Read back a raw clip as float32 samples plus its rate."""
+    import numpy as np
+
+    with wave.open(str(path), "rb") as handle:
+        rate = handle.getframerate()
+        frames = handle.readframes(handle.getnframes())
+    samples = np.frombuffer(frames, dtype="<i2").astype("float32") / 32768.0
+    return samples, rate
 
 
 def write_wav(path, samples, sample_rate: int) -> None:

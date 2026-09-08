@@ -123,12 +123,47 @@ Per passage: a best-on-this-passage line and free notes. At the end: overall
 winner, would-you-ship-it, and **better than Piper?** — asked while Piper is
 still unnamed.
 
+## Memory: one engine at a time, and resumable
+
+The first attempt was killed by macOS after Chatterbox loaded. The cause was
+mine: the runner kept every loaded engine in a dict for the whole run, so the
+second Chatterbox model loaded on top of the first still being resident.
+
+Generation and labelling are now **two passes**:
+
+1. **Generate**, one engine at a time. Load, speak all three passages, write
+   each clip to `raw/<engine>/<passage>.wav` as it is made, then drop the
+   reference, run `gc.collect()` and clear the torch device cache before the
+   next engine loads. A test asserts the high-water mark of simultaneously
+   resident engines is exactly **1**.
+2. **Label**, reading the raw clips back, normalising and assigning blind
+   letters. Only engines with a complete set are labelled - a half-generated
+   engine appearing on some passages and not others would tell the listener
+   something the blinding is meant to hide.
+
+**Resumable.** A clip already on disk is never regenerated, which also
+preserves the first-take rule: a resume must not re-roll a take. Rerunning the
+same command continues where it stopped. `--force` regenerates deliberately.
+
+**Logged.** Every load, generation and release is written to `progress.log`
+and flushed immediately, with resident memory when `psutil` is installed. A
+killed process loses whatever is buffered, so the flushed file is what says
+which engine and which passage were in flight.
+
+Verified end to end with fake engines: a mid-run failure left the finished
+engines intact, the resume loaded only the failed one, and the incomplete
+engine was excluded from labelling while the other three still produced a
+usable blind test.
+
 ## Running it
 
 On the Mac, with the Chatterbox environment already working:
 
     pip install kokoro                       # the only new dependency
+    pip install psutil                       # optional: memory in the log
     python tools/voice_bakeoff.py --device mps --out experiments/results/bakeoff
+
+If it is killed again, run the identical command. Finished clips are kept.
 
 It prints its roster first, saying which candidates can run and why any cannot.
 **A missing candidate weakens the test rather than failing it** — but the
