@@ -127,6 +127,81 @@ class AssembledChunk:
 
 
 @dataclass
+class BudgetFit:
+    """What of an assembled chunk still fits the episode's remaining time."""
+
+    #: The sentences that may be spoken, in order. Possibly empty.
+    spoken: list
+    #: What did not fit, in order. `spoken + remainder` is always the input.
+    remainder: list
+    #: True when something was dropped - the episode ends here, as in legacy.
+    truncated: bool
+    #: Estimated seconds the spoken half will take, by the same formula
+    #: `pipeline._speak_one` uses.
+    estimated_seconds: float
+
+    @property
+    def text(self) -> str:
+        return " ".join(self.spoken)
+
+    @property
+    def words(self) -> int:
+        return count_words(self.text)
+
+
+def fit_to_budget(sentences: list, remaining_seconds: float, wpm: float,
+                  gap: float, grace: float) -> BudgetFit:
+    """The largest run of complete sentences that legacy would have spoken.
+
+    Batching creates a decision legacy never had to make. `pipeline._speak_one`
+    asks the question once per sentence:
+
+        estimated = words / (wpm / 60) + SENTENCE_GAP
+        if estimated > pace.remaining_seconds + OVERRUN_GRACE: stop
+
+    A chunk is several sentences in one synthesis call, so the same question has
+    to be asked *before* the call, for each sentence in turn. Accepting or
+    rejecting the whole chunk would turn the allowed overshoot into
+    `OVERRUN_GRACE + one chunk`, or throw away sentences that fit. Neither is
+    the contract. So the chunk is cut at the last sentence boundary that fits,
+    and the rest is handed back.
+
+    Only the final kept sentence can cross the budget, and by at most `grace` -
+    exactly as in legacy. Sentences are never split: a boundary is the smallest
+    unit here, because cutting inside one damages meaning and because cutting at
+    a sentence boundary is why the pipeline works in sentences at all.
+
+    `gap` and `grace` are required rather than defaulted: they belong to
+    `pipeline` (`SENTENCE_GAP`, `OVERRUN_GRACE`) and a copy of them here would
+    be a second source of truth for the duration contract.
+
+    Note what this cannot do that legacy can. Legacy re-plans the speaking rate
+    between sentences via `PaceController.next_wpm`, so it may speed up as time
+    runs short and fit one more sentence. A chunk is one synthesis call at one
+    rate, so this walks at a fixed `wpm`. The effect is conservative - it fits
+    the same or fewer words, never more - which is the safe direction for a
+    duration contract.
+    """
+    budget = max(0.0, remaining_seconds)
+    per_second = max(wpm, 1.0) / 60.0
+    spoken: list = []
+    for index, sentence in enumerate(sentences):
+        estimated = count_words(sentence) / per_second + gap
+        if estimated > budget + grace:
+            return BudgetFit(spoken=spoken, remainder=list(sentences[index:]),
+                             truncated=True,
+                             estimated_seconds=_estimate(spoken, per_second, gap))
+        spoken.append(sentence)
+        budget = max(0.0, budget - estimated)
+    return BudgetFit(spoken=spoken, remainder=[], truncated=False,
+                     estimated_seconds=_estimate(spoken, per_second, gap))
+
+
+def _estimate(sentences: list, per_second: float, gap: float) -> float:
+    return sum(count_words(s) / per_second + gap for s in sentences)
+
+
+@dataclass
 class SpeechAssembler:
     """Whole sentences in, speech-sized chunks out. Never splits, never reorders.
 
