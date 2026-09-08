@@ -42,8 +42,10 @@ import pytest
 #: setting is a deliberate two-line change and not an invisible one.
 FAM_ENVIRONMENT = (
     "ALLOW_TOPUPS", "ANSWER_FIRST", "ANSWER_FIRST_SHARE", "ANTHROPIC_API_KEY",
-    "CACHE_BACKEND", "CACHE_ENABLED", "CACHE_PATH", "CACHE_SEMANTIC_KEY",
-    "CACHE_TTL_SECONDS", "CACHE_TTL_VOLATILE", "CANONICAL_KEY_MODEL",
+    "CACHE_BACKEND", "CACHE_ENABLED", "CACHE_SEMANTIC_KEY",
+    "CACHE_TTL_SECONDS", "CACHE_TTL_VOLATILE", "CACHE_VECTOR",
+    "CACHE_VECTOR_OVERLAP", "CACHE_VECTOR_SCAN", "CACHE_VECTOR_THRESHOLD",
+    "CANONICAL_KEY_MODEL",
     "CHATTERBOX_DEVICE", "CHATTERBOX_REFERENCE", "DURATION_TOLERANCE",
     "ANSWER_FIRST_MAX_SHARE", "EFFORT", "ENABLE_WEB_SEARCH", "ESPEAK_BIN",
     "ESPEAK_VOICE",
@@ -54,14 +56,34 @@ FAM_ENVIRONMENT = (
     "TTS_ENGINE",
 )
 
+#: Where each database lives is per-machine state too. These reach config.py
+#: and the stores through `paths.data_path` rather than a bare
+#: `os.environ.get`, so the guard test's source scan cannot see them - they are
+#: listed by hand for the same reason the voice directories are. A leaked one
+#: would point the suite at a developer's real cache or account store.
+DATA_ENVIRONMENT = (
+    "ACCOUNTS_DB", "ATTACHMENTS_PATH", "CACHE_PATH", "MIXES_DB", "MYFAM_DB",
+    "SOCIAL_DB",
+)
+
+#: The embedding backend, which decides whether near matching is lexical or
+#: semantic - and therefore what half the cache tests are actually measuring.
+EMBED_ENVIRONMENT = ("FAM_EMBED_BACKEND", "FAM_EMBED_MODEL")
+
 #: Where voices live is per-machine state too, and reaches tts.py rather than
 #: config.py, so it is not in the list above.
 VOICE_ENVIRONMENT = ("FAM_VOICES_DIR", "VOICES_DIR")
 
+#: Everything the suite clears, in one name so a new group cannot be added to
+#: the list above and forgotten at the two places that use it.
+LEAKY_ENVIRONMENT = (
+    FAM_ENVIRONMENT + VOICE_ENVIRONMENT + DATA_ENVIRONMENT + EMBED_ENVIRONMENT
+)
+
 #: Set, not cleared: it is what stops config.py reading the two env files.
 os.environ["FAM_IGNORE_DOTENV"] = "1"
 
-for name in FAM_ENVIRONMENT + VOICE_ENVIRONMENT:
+for name in LEAKY_ENVIRONMENT:
     os.environ.pop(name, None)
 
 
@@ -80,7 +102,7 @@ def hermetic_environment():
     leaves one, whichever order they run in. A test that wants a setting sets
     it inside its own body, where it is visible.
     """
-    names = FAM_ENVIRONMENT + VOICE_ENVIRONMENT
+    names = LEAKY_ENVIRONMENT
     saved = {name: os.environ[name] for name in names if name in os.environ}
     for name in names:
         os.environ.pop(name, None)
@@ -102,3 +124,24 @@ def config_environment_names() -> set:
               / "config.py").read_text()
     return set(re.findall(r'(?:os\.environ\.(?:get|pop)|_env_int|_env_float|'
                           r'_env_bool)\(\s*"([A-Z_]+)"', source))
+
+
+@pytest.fixture(autouse=True)
+def isolated_accounts(tmp_path, monkeypatch):
+    """Every test gets its own sessions and credentials.
+
+    Without this the suite would mint session rows into the real accounts.db in
+    the project root - the store holding password hashes, which is the last one
+    that should collect debris from a test run.
+    """
+    import accounts as accounts_mod
+    import app as appmod
+
+    # In a subdirectory, not tmp_path itself: a test that asserts no store
+    # followed the working directory looks for these filenames in the cwd, and
+    # this fixture's own file would otherwise look like the very stray it hunts.
+    monkeypatch.setattr(
+        appmod,
+        "ACCOUNTS",
+        accounts_mod.AccountStore(str(tmp_path / "auth" / "accounts.db")),
+    )

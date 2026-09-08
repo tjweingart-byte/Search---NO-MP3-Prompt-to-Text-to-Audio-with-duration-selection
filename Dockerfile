@@ -18,13 +18,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Databases live on a mounted disk where the host provides one, so mixes and
-# listening history survive a redeploy. Without a disk they are ephemeral and
-# every deploy is a fresh start - which is fine for a preview and not for real
-# listeners.
+# All five databases live on a mounted disk where the host provides one, so
+# they survive a redeploy. Without a disk they are ephemeral and every deploy
+# is a fresh start - which is fine for a preview and not for real listeners.
+#
+# Every one of the five is named here on purpose. Three used to be, and the two
+# that were missing (social, attachments) were written to the image's WORKDIR
+# instead of the disk, so every redeploy silently discarded every listener's
+# name, handle and echo. A store added later must be added here too, and
+# tests/test_data_paths.py fails if one is not.
 ENV CACHE_PATH=/data/scripts.db \
     MYFAM_DB=/data/myfam.db \
     MIXES_DB=/data/mixes.db \
+    SOCIAL_DB=/data/social.db \
+    ATTACHMENTS_PATH=/data/attachments.db \
+    ACCOUNTS_DB=/data/accounts.db \
     PORT=8000
 RUN mkdir -p /data
 

@@ -29,7 +29,9 @@ import threading
 import time
 from typing import Optional, Protocol
 
+import embeddings
 from config import settings
+from paths import data_path
 
 log = logging.getLogger(__name__)
 
@@ -226,6 +228,116 @@ def cache_key(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def key_bucket(
+    minutes: int, canonical_context: str = "", searched: bool = False
+) -> str:
+    """Everything in `cache_key` *except* the question.
+
+    A near match is only allowed to look at entries that are otherwise the same
+    kind of episode. Duration is not a formatting detail - a 3-minute script is
+    written differently from a 10-minute one, not cut down from it - and a
+    follow-up, a researched episode and a different model all produce different
+    words for identical text. Comparing across those would be comparing two
+    things that were never interchangeable in the first place.
+
+    The vector space is in here too, so switching embedding backend or width
+    retires the old vectors instead of comparing coordinates that no longer
+    mean the same thing.
+    """
+    payload = json.dumps(
+        {
+            "m": int(minutes),
+            "ctx": canonical_context or "",
+            "search": bool(searched),
+            "model": settings.model,
+            "wpm": settings.target_wpm,
+            "space": embeddings.space(),
+            "v": 2,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _token_set(query: str) -> set:
+    """The words a match has to share, counted the same way the vector counts
+    them.
+
+    Through `embeddings.tokens` rather than `.split()` so that spelled-out
+    numbers fold to digits here too. They did not at first, and the two halves
+    of the decision then disagreed with each other: "week five" and "week 5"
+    were one question to the vector and two to the overlap guard, so a perfect
+    match was refused for having only half its words in common.
+    """
+    return set(embeddings.tokens(normalize_query(query)))
+
+
+def comparable(asked: str, stored: str) -> str:
+    """"" if these two questions may share an episode, else why they may not.
+
+    The cosine on its own is not enough, and the failure it permits is the
+    expensive one. A cache miss costs a cent and a few seconds; a *false* hit
+    plays a confident answer to a question nobody asked, which breaks the first
+    duty of an episode - satisfy the thing that brought them. So the score has
+    to clear a bar, and then survive three checks that a vector is known to be
+    bad at:
+
+    * **Numbers must be identical.** "NFL week 5" and "NFL week 6" score 0.70
+      here and are different episodes. Digits are the detail an embedding blurs
+      and a listener notices immediately.
+    * **The questions must overlap lexically.** A vector can be talked into a
+      high score by shared shape; requiring real shared words means a wrong
+      match has to be wrong in two independent ways at once.
+    * **They must agree about needing today's facts.** Answering a durable
+      question from an episode written to be current, or the reverse, is wrong
+      even when the subject matches - and freshness is already decided
+      elsewhere in this module, for free.
+
+    Returns the reason rather than a bool for the same reason `research_reason`
+    does: a heuristic nobody can see the workings of is a heuristic nobody can
+    tune. The bench prints these.
+    """
+    if embeddings.numbers(asked) != embeddings.numbers(stored):
+        return "different numbers"
+    if needs_fresh_information(asked) != needs_fresh_information(stored):
+        return "one needs today's facts and the other does not"
+    a, b = _token_set(asked), _token_set(stored)
+    if not a or not b:
+        return "nothing left after normalising"
+    overlap = len(a & b) / float(len(a | b))
+    if overlap < settings.cache_vector_overlap:
+        return f"only {overlap:.2f} of the words in common"
+    return ""
+
+
+def best_match(
+    query: str,
+    rows,
+    threshold: Optional[float] = None,
+) -> Optional[tuple[str, float]]:
+    """The closest stored question that may stand in for `query`.
+
+    `rows` is `(key, stored_query, vector_blob)`. Kept as a plain function on
+    plain tuples so both cache backends and the bench share one implementation
+    of the decision - the alternative is two copies that disagree about what a
+    hit is, which is the same shape of bug as a setting documented in two
+    places.
+    """
+    limit = settings.cache_vector_threshold if threshold is None else threshold
+    wanted = embeddings.embed(normalize_query(query))
+    best: Optional[tuple[str, float]] = None
+    for key, stored_query, blob in rows:
+        if not blob or not stored_query:
+            continue
+        score = embeddings.cosine(wanted, embeddings.unpack(blob))
+        if score < limit or (best and score <= best[1]):
+            continue
+        if comparable(query, stored_query):
+            continue
+        best = (key, score)
+    return best
+
+
 class ScriptCache(Protocol):
     def get(self, key: str) -> Optional[list[str]]: ...
     def put(
@@ -237,6 +349,9 @@ class ScriptCache(Protocol):
     def thread(self, key: str) -> str: ...
     #: Live entries, newest first. Explore replays these and never generates.
     def recent(self, limit: int = 40) -> list[dict]: ...
+    #: The closest *near* match in the same bucket, or None. Only consulted
+    #: after an exact lookup has already missed.
+    def nearest(self, bucket: str, query: str) -> Optional[tuple[str, float]]: ...
 
 
 class MemoryScriptCache:
@@ -244,6 +359,9 @@ class MemoryScriptCache:
 
     def __init__(self) -> None:
         self._data: dict[str, tuple[float, list[str], str, str, int]] = {}
+        #: key -> (bucket, packed vector). Kept beside the entries rather than
+        #: in the tuple so the shape the tests already assert on is unchanged.
+        self._vectors: dict[str, tuple[str, bytes]] = {}
         self.hits = 0
         self.misses = 0
 
@@ -257,9 +375,22 @@ class MemoryScriptCache:
 
     def put(
         self, key: str, sentences: list[str], ttl: int, query: str = "",
-        thread: str = "", minutes: int = 0
+        thread: str = "", minutes: int = 0, bucket: str = ""
     ) -> None:
         self._data[key] = (time.time() + ttl, list(sentences), thread, query, int(minutes))
+        if bucket and query:
+            self._vectors[key] = (bucket, embeddings.pack(embeddings.embed(normalize_query(query))))
+
+    def nearest(self, bucket: str, query: str) -> Optional[tuple[str, float]]:
+        if not settings.cache_vector or not bucket:
+            return None
+        now = time.time()
+        rows = [
+            (key, self._data[key][3], vec)
+            for key, (b, vec) in self._vectors.items()
+            if b == bucket and key in self._data and self._data[key][0] >= now
+        ]
+        return best_match(query, rows)
 
     def recent(self, limit: int = 40) -> list[dict]:
         live = [
@@ -290,7 +421,9 @@ class SqliteScriptCache:
     """
 
     def __init__(self, path: str | None = None) -> None:
-        self.path = path or settings.cache_path
+        # Through data_path so an explicit path gets the same directory
+        # guarantee as the configured one.
+        self.path = data_path("CACHE_PATH", "scripts.db", path or settings.cache_path)
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(
@@ -312,11 +445,24 @@ class SqliteScriptCache:
                 # Explore replays cached scripts, and a script cannot be
                 # replayed without knowing how long it was written to run.
                 ("minutes", "ALTER TABLE scripts ADD COLUMN minutes INTEGER NOT NULL DEFAULT 0"),
+                # The near-match pair. `bucket` is everything about the episode
+                # except the question, so a scan only ever compares entries
+                # that were interchangeable to begin with; `vector` is the
+                # question itself, embedded once at write time. Rows written
+                # before this migration simply have no vector and are invisible
+                # to near matching - they still serve exact hits.
+                ("bucket", "ALTER TABLE scripts ADD COLUMN bucket TEXT NOT NULL DEFAULT ''"),
+                ("vector", "ALTER TABLE scripts ADD COLUMN vector BLOB"),
             ):
                 try:
                     conn.execute(ddl)
                 except sqlite3.OperationalError:
                     pass  # already there
+            # After the ALTERs, so a cache file created before this release
+            # gets the column before anything tries to index it.
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS scripts_bucket ON scripts(bucket, expires)"
+            )
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -346,21 +492,61 @@ class SqliteScriptCache:
 
     def put(
         self, key: str, sentences: list[str], ttl: int, query: str = "",
-        thread: str = "", minutes: int = 0
+        thread: str = "", minutes: int = 0, bucket: str = ""
     ) -> None:
+        """Store the script, and the vector for the question that produced it.
+
+        The embedding happens **here**, on the write, and that is the whole
+        design. Doing it on the read would put work in front of the first word
+        - the one cost this product refuses - and would have to be repeated for
+        every lookup. Doing it once, after the episode has already been
+        generated and the listener is already hearing it, costs nothing anyone
+        can perceive.
+        """
         if not sentences:
             return
         try:
             now = time.time()
+            vector = None
+            if bucket and query:
+                vector = embeddings.pack(embeddings.embed(normalize_query(query)))
             self._conn().execute(
                 "INSERT OR REPLACE INTO scripts"
-                " (key, expires, created, hits, query, sentences, thread, minutes)"
-                " VALUES (?, ?, ?, 0, ?, ?, ?, ?)",
+                " (key, expires, created, hits, query, sentences, thread, minutes,"
+                "  bucket, vector)"
+                " VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
                 (key, now + ttl, now, query[:500], json.dumps(sentences),
-                 thread[:200], int(minutes)),
+                 thread[:200], int(minutes), bucket, vector),
             )
         except Exception:
             log.exception("script cache write failed; continuing")
+
+    def nearest(self, bucket: str, query: str) -> Optional[tuple[str, float]]:
+        """The closest live entry in this bucket, or None.
+
+        Brute force, deliberately. `sqlite-vec` was the obvious thing to reach
+        for and is premature: measured here, an exact scan of 1,000 vectors
+        takes 0.06 ms and 100,000 takes 2.4 ms, against a live cache bounded by
+        a 24-hour TTL. An extension adds a loadable binary to every deployment
+        to save a number nobody can perceive. Revisit when the scan is the
+        slowest thing on the miss path, which it is nowhere near being.
+
+        `CACHE_VECTOR_SCAN` caps the rows considered, newest first, so the cost
+        stays bounded however large the cache grows.
+        """
+        if not settings.cache_vector or not bucket:
+            return None
+        try:
+            rows = self._conn().execute(
+                "SELECT key, query, vector FROM scripts"
+                " WHERE bucket = ? AND expires >= ? AND vector IS NOT NULL"
+                " ORDER BY created DESC LIMIT ?",
+                (bucket, time.time(), int(settings.cache_vector_scan)),
+            ).fetchall()
+        except Exception:
+            log.exception("near-match scan failed; treating as a miss")
+            return None
+        return best_match(query, rows)
 
     def thread(self, key: str) -> str:
         try:

@@ -146,6 +146,13 @@ def load_fixtures() -> dict:
             {"id": "say:Tara", "label": "Tara", "engine": "say", "detail": "en-IN"},
             {"id": "say:Tessa", "label": "Tessa", "engine": "say", "detail": "en-ZA"},
         ], "default": "piper:en_GB-alba-medium"},
+        # The preview shows a signed-in listener, because that is the state
+        # with something to look at - the signed-out one is two buttons.
+        "/api/auth/me": {
+            "user_id": "preview-listener",
+            "email": "ian@example.com",
+            "authenticated": True,
+        },
         "/api/profile": {
             "listener": "preview-listener", "played": 34, "finished": 21,
             "searched": 12, "open_threads": 2,

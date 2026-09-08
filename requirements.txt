@@ -12,6 +12,22 @@ anthropic>=1.2.0
 # to. A tone cannot be mistaken for FAM.
 fastapi>=0.110
 uvicorn[standard]>=0.27
+# app.py imports BaseModel and Field directly. fastapi happens to pull pydantic
+# in, so this has always been present by luck rather than by declaration - and
+# a dependency that is only there by luck is one nobody notices losing.
+pydantic>=2.0
+
+# Not part of the deep-learning stack, and needed without it. `pcm_from_float`
+# converts a float waveform to 16-bit PCM on the synthesis path, and the engine
+# contract tests exercise that path with chatterbox and torch stubbed out - so
+# the one environment that has neither still needs this. It was undeclared, and
+# CI caught it the only way an undeclared dependency is ever caught: six tests
+# failing with ModuleNotFoundError on a machine that did not happen to have it.
+#
+# Not replaceable with the stdlib here: a 3-minute episode at 24 kHz is ~4.3M
+# samples, and converting those one at a time in Python would put seconds on
+# the synthesis path.
+numpy>=1.24
 
 # Development only
 pytest>=8.0

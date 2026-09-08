@@ -150,8 +150,11 @@ def test_a_bad_mix_returns_a_message_a_listener_can_read(client):
 
 
 def test_deleting_someone_elses_mix_is_a_404(client):
-    made = client.post("/api/mixes", json={"user": "alice", "name": "M"}).json()
-    assert client.delete(f"/api/mixes/{made['id']}?user=bob").status_code == 404
+    """Two TestClients are two cookie jars, which is now the only way to be two
+    listeners - the identity is the session, not a string in the request."""
+    made = client.post("/api/mixes", json={"name": "M"}).json()
+    somebody_else = TestClient(appmod.app)
+    assert somebody_else.delete(f"/api/mixes/{made['id']}").status_code == 404
 
 
 def test_the_picker_serves_the_whole_bank(client):

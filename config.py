@@ -10,6 +10,7 @@ import pathlib
 from dataclasses import dataclass, field
 
 import voice_store
+from paths import data_path
 
 
 def shared_env_path() -> pathlib.Path:
@@ -224,7 +225,12 @@ class Settings:
         default_factory=lambda: os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")
     )
     cache_backend: str = field(default_factory=lambda: os.environ.get("CACHE_BACKEND", "sqlite"))
-    cache_path: str = field(default_factory=lambda: os.environ.get("CACHE_PATH", "scripts.db"))
+    # Absolute, and derived from the project root when unset - a bare
+    # filename would follow the working directory and quietly open a
+    # different, empty cache. See paths.data_path.
+    cache_path: str = field(
+        default_factory=lambda: data_path("CACHE_PATH", "scripts.db")
+    )
     # Default lifetime for a cached script.
     cache_ttl_seconds: int = _env_int("CACHE_TTL_SECONDS", 86400)
     # Lifetime for queries that read as time-sensitive ("latest", "today").
@@ -238,6 +244,31 @@ class Settings:
     canonical_key_model: str = field(
         default_factory=lambda: os.environ.get("CANONICAL_KEY_MODEL", "claude-haiku-4-5")
     )
+
+    # Match a question against *near* neighbours in the cache, not only the
+    # identical one. The vector is computed when a script is written, so a
+    # lookup costs a local scan (microseconds) rather than the model call
+    # CACHE_SEMANTIC_KEY pays on every request. See embeddings.py.
+    #
+    # Off by default, and the reason is not cost: a false near match plays a
+    # confident answer to a question nobody asked, and the shipped embedding
+    # backend is lexical rather than semantic (no model is bundled yet), so
+    # the thresholds below are tuned against measured pairs and not against
+    # meaning. Turn it on once tools/bench_vector_cache.py has been run on
+    # traffic that looks like yours.
+    cache_vector: bool = field(
+        default_factory=lambda: os.environ.get("CACHE_VECTOR", "0") not in ("0", "false", "False")
+    )
+    # Cosine a near match must clear, and the share of words it must literally
+    # share. Both measured, not chosen: tools/bench_vector_cache.py sweeps them
+    # against 41 re-phrasings that should collapse and 20 pairs that must not.
+    # This is the highest-recall setting at which *every* must-not-collapse
+    # pair is refused by a guard rather than by the threshold - so there is no
+    # near miss waiting for a query slightly unlike the ones measured.
+    cache_vector_threshold: float = _env_float("CACHE_VECTOR_THRESHOLD", 0.68)
+    cache_vector_overlap: float = _env_float("CACHE_VECTOR_OVERLAP", 0.6)
+    # Rows a near-match scan will look at, newest first.
+    cache_vector_scan: int = _env_int("CACHE_VECTOR_SCAN", 400)
 
     # --- Duration / pacing ------------------------------------------------
     min_minutes: int = 1

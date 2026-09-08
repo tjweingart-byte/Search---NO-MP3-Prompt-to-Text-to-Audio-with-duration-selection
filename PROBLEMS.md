@@ -2774,3 +2774,457 @@ question that took a user report to surface.
 Unrelated but worth recording: `tools/compare_search.py` passes `search=`
 explicitly, so it was never affected. The measurements it produces were always
 going to be right; it is the app that was not searching.
+
+## 63. Two pieces of state, and the schema that was nearly adopted instead
+
+A schema was proposed for the app - `USERS`, `EPISODES`, `EPISODE_HISTORY`,
+`LIKES`, `TAGS`/`EPISODE_TAGS`, `SAVED_SEARCHES`, `DAILY_FEED`, `MESSAGES`, on
+Postgres. It is a competent schema for a podcast catalogue and the wrong one
+for this app, and the reasons are worth recording because they will be
+proposed again.
+
+**There is no episode to have a table.** An episode here is generated from a
+query at the moment of the tap and never stored; what persists is the *script*,
+keyed on `(normalized query, minutes)` in `cache.py`, expiring. `podcast_name`
+has nothing to point at. Worse, some episodes must never become rows at all:
+`_VOLATILE` queries refuse caching, `_PERSONAL` ones refuse sharing, and an
+episode carrying attachments is never cached. A foreign key to `episodes.id`
+would have to reference things the design forbids storing.
+
+**`EPISODE_HISTORY` as one mutable row per (user, episode) is the log inverted.**
+`topics.py` is append-only with time decay - a 14-day half-life and a 3-day
+trending window - and none of that is computable from a row that only remembers
+the latest state. The proposal offered session-level rows as an optional child
+table; here that is the primary and the collapsed view is a query.
+
+**`pause_reason` would have been invented data.** `skip` already carries the
+negative signal at -1.5. Inferring "distracted" from an app going to background
+is a guess stored as a fact, which is exactly what `summary()` exists to avoid.
+
+**`LIKES` duplicates signal, and the explicit-endorsement primitive already
+exists** - an echo, which points at a *query* rather than an episode id, which
+is the shape this app actually has.
+
+Two things in the proposal were real, and both are now built.
+
+**Identity (`social.py`).** `people` had a row only once someone chose a display
+name, so the app could not answer "who is out there" or "when were they last
+here" for nearly all of its listeners - they had a taste profile and no record.
+`seen()` makes every listener id a row with `joined` (first sighting, already
+there) and `last_seen`; `active_since()` is the recency signal a daily feed
+needs, because a decayed event log tells you what someone liked, not whether
+they came back. No email, no fingerprint, no counters - `known` distinguishes
+"never been here" from "here, unnamed", which the profile page could not do.
+When accounts arrive the work is attaching credentials to rows that exist,
+rather than inventing a user table underneath live data. `seen()` is called
+from `/api/myfam`, `/api/event` and `/api/profile`, and on `/api/audio` only
+after the pipeline is built and beside the existing play - never in front of
+the first word.
+
+**Impressions with an algo version (`topics.py`).** The one genuinely good idea
+in the proposal was `DAILY_FEED.algo_version`: one row per recommendation, so
+"why did we show this" is answerable and two rankings are comparable. It is
+built as an event kind rather than its own table, so decay and windowing stay
+uniform, with `section` and `algo` columns and `ALGO_VERSION` stamped on each.
+
+**The trap in it, which is the load-bearing part.** A feed load shows ~18 tiles.
+`for_user` is capped at 400 rows and is what `taste()` reads. Logged naively,
+roughly twenty visits to myFAM would push every play, completion and search out
+of the window, and the taste model would be trained on what the feed showed
+instead of on what the listener did - a recommender learning its own output.
+So impressions are excluded from `for_user`, carry no `EVENT_WEIGHT`, and are
+read only by `impressions_for`, which nothing in the ranking path calls. Four
+tests pin that from both ends. They are also the only writer that grows the
+table quickly, so `IMPRESSION_TTL` prunes them at 30 days - at most hourly, and
+never touching a behavioural event.
+
+`build_feed` stays a pure function of the log; the write happens at the request
+boundary in `app.py`. A ranker that writes cannot be called from a test.
+
+**Both migrations widen tables that already hold data.** The script cache can be
+dropped and regenerated; the event log cannot, so the `ALTER TABLE` path is
+tested against the exact legacy schemas rather than assumed - including opening
+the same store twice, which every worker on the machine does at startup.
+
+**On Postgres.** Right eventually, wrong now, and for a different reason than
+the proposal gave. The trigger is not row counts - this will not see tens of
+millions of rows - it is process count. The five SQLite files are shared by
+every worker *on one machine*; the moment there are two machines they are not
+shared, cache hit rate collapses and every miss costs ~$0.03 again. That is the
+migration signal, and it moves the same five schemas into one database rather
+than re-modelling them.
+
+Nothing here needs an API key, and none of it touches generation, the player,
+or the script.
+
+## 64. The databases followed the working directory, and two never reached the disk
+
+Every store defaulted to a bare filename - `myfam.db`, `social.db`, `mixes.db`,
+`scripts.db`, `attachments.db`. A bare filename is resolved against the
+**current working directory**, which is not a property of the app: it is a
+property of wherever the person starting the process happened to be standing.
+
+**The failure pointed the wrong way.** Nothing raised. SQLite created a second,
+empty set of files, so the app came up with a cold script cache (every episode
+paying ~$0.03 again), an empty feed, no echoes and no mixes - and it read as a
+broken feature rather than a wrong path. `tools/seed_demo.py` was caught by
+exactly this: it constructs `EventStore()` and `SocialStore()` with no
+arguments, so seeding from one directory and serving from another leaves
+Explore empty however much you tap it, which is precisely the symptom §50 built
+`demo.sh` to prevent.
+
+The env vars already existed and were already read in `app.py` and `config.py`.
+What did not exist was a **default that did not move**, so the fix is one
+resolver rather than five call sites. `paths.py` derives `PROJECT_ROOT` from
+`__file__`, and `data_path(env_var, filename)` gives:
+
+* nothing set - the file sits in the project root, the same place however the
+  process was started;
+* an absolute env var - used exactly as given, which is what a deployment does;
+* a relative env var - resolved against the project root too, **and logged**.
+  Quietly reinterpreting it would put back the ambiguity this removes.
+
+Each store now takes `path: str | None = None` and resolves its own variable,
+so the mapping lives with the store instead of being restated in `app.py`, and
+anything constructing a store directly gets the right file for free.
+
+**Two variables were missing from the Dockerfile, and that one was not
+theoretical.** It pinned `CACHE_PATH`, `MYFAM_DB` and `MIXES_DB` to the mounted
+`/data` disk but not `SOCIAL_DB` or `ATTACHMENTS_PATH`, so in a deployed
+container those two were written to the image's WORKDIR - **every redeploy
+silently discarded every listener's name, handle and echo.** The comment above
+them said "mixes and listening history survive a redeploy", which was true and
+was the reason nobody read further. All five are named now, and a test fails if
+a sixth store is ever added without one.
+
+**`.env.example` ships no value for any of them, deliberately.** A default that
+named a directory would be wrong on every machine but the one it was written
+on, and `tests/test_env_example.py` compares the example against live settings,
+so a literal there would now be a permanent disagreement. They are documented
+as commented lines that say to use absolute paths.
+
+**The static mount had the same bug and was hiding this one.** `app.py` mounted
+`StaticFiles(directory="static")`, also cwd-relative. That one failed loudly -
+starting the server anywhere else raised `Directory 'static' does not exist` -
+which meant the *server* never got far enough to demonstrate the quiet database
+version. It is resolved from `PROJECT_ROOT` too, and a test rejects any bare
+`directory="..."` in `app.py`.
+
+Verified rather than inspected, per §52: the server was started from an
+unrelated directory with no path variables set. It served the interface (200),
+answered `/api/myfam` (200), wrote the listener and six impressions into the
+**project-root** databases, and created **zero** files in the directory it was
+started from. 23 new tests; 388 pass.
+
+## 65. A missing directory said nothing useful, and health reported one store of five
+
+Two gaps left over from §64, both about a database saying what it is doing.
+
+**A missing directory failed in sqlite's words, not the app's.** Pointing a
+variable at a directory that did not exist yet raised `unable to open database
+file` from inside `sqlite3`, at import time - naming neither the setting that
+was wrong nor the directory that was missing, and killing the app before it
+logged anything of its own. Since §64 put five path variables in
+`.env.example`, that was a foreseeable first experience. `paths._ensure_parent`
+now creates the directory (announced, and matching the `RUN mkdir -p /data` the
+Dockerfile already did by hand) and, when it cannot, raises `DataPathError`
+naming the variable, the path and the directory.
+
+**`/api/health` reported the script cache and nothing else.** It returned
+`"status": "ok"` while the other four could be pointed anywhere or be
+unwritable, and no runtime surface named a single path. That is exactly the
+§52 failure - confirming configuration instead of verifying readiness - inside
+the endpoint whose job is to report readiness. It now lists all five with the
+path each store is *actually* holding, whether the variable was set, size, and
+a real read.
+
+**The first version of that check was the same mistake again, and a test caught
+it.** It used `SELECT 1`, which is a constant expression: sqlite answers it
+without touching the file, so a path containing nothing but rubbish came back
+`readable: true`. The check is now `SELECT count(*) FROM sqlite_master`, which
+forces the header and schema to be parsed, and there is a test that writes
+garbage to a file and asserts health calls it broken. Worth recording plainly:
+§52 was written after four consecutive failures of this shape, and the fifth
+happened while writing the fix for it.
+
+`writable` is `os.access`, and is labelled a permission check rather than
+dressed up as a performed action - writing on every health poll would cost more
+than it tells anyone. 392 pass.
+
+## 66. Accounts, and the shape that kept the app usable without one
+
+A listener was whatever id the browser sent. `famUserId()` made one up with
+`Math.random()`, kept it in localStorage and put it in the query string of
+every request; nothing checked it. So `?user=<someone else>` read their
+profile, renamed them, deleted their mixes and echoed as them. That was
+defensible while everything was stateless. §49 keyed a durable listener table
+on that id, which made it a real hole rather than a theoretical one.
+
+**The shape of the fix mattered more than the fix.** "Add accounts" reads as
+"put a login in front of the app", and that is wrong twice: it puts a form in
+front of the first word, which the one-sentence spec forbids, and it discards
+the history of everyone who has used the app so far. So:
+
+> An identity is a **session**. An account is **credentials attached to a
+> session's identity**.
+
+Every request resolves a session from an HttpOnly cookie. With no cookie the
+server *mints* one - `secrets.token_urlsafe`, high entropy, never chosen by the
+client. That listener is anonymous and everything works for them: search,
+myFAM, Go Deeper, mixes, echoes. Signing up attaches an email and password to
+the id they already have, so there is **no migration and nothing to claim** -
+it is the same `user_id`, and their history is simply theirs now, on any device
+they log in from. Logging out drops the session and the next request mints a
+fresh anonymous one.
+
+That gets the property that actually matters - an id can no longer be forged -
+without a login screen in front of anybody.
+
+**Its own database.** `accounts.db` rather than a table in social.db, because
+it is the only store holding secrets; mixing password hashes into the file that
+holds echoes would give the whole thing the strictest of those properties by
+accident. The §64 guard earned its keep here: adding a sixth store made
+`test_the_dockerfile_puts_every_database_on_the_mounted_disk` fail until the
+Dockerfile pinned it to the mounted disk, which is exactly the redeploy
+data-loss bug §64 found, caught before it happened this time.
+
+Details worth keeping:
+
+* `hashlib.scrypt`, standard library, no new dependency. ~47 ms per attempt.
+  Parameters travel with each hash so the cost can be raised later.
+* **The session token is never stored** - only its SHA-256 - so a leaked
+  database yields no live sessions.
+* Login mints a *fresh* token rather than repointing the current one, or a
+  token captured before login would keep working after it (session fixation).
+* Wrong password and unknown address return the identical message, and the
+  unknown-address path still pays the hashing cost. Otherwise the form is an
+  account-enumeration oracle.
+* Changing a password ends every session, including the one that changed it.
+
+**Two mistakes worth recording, both caught by tests.**
+
+The first was mine in the test rather than the code: an expiry test asserted a
+session was dead past its TTL, but the earlier assertion in the same test had
+*used* the session, which slides the expiry forward by design. Split into two
+tests - one for an unused session expiring, one documenting the slide.
+
+The second was a real gap in §65's own fix. `_ensure_parent` covered the env
+var and the default but not a path passed directly to a store, so the moment a
+fixture pointed at a new subdirectory it failed with the exact `unable to open
+database file` that §65 exists to prevent. `data_path` now takes the explicit
+path as an `override` and gives it the same guarantee, so there is one function
+that owns every path decision instead of two routes with different promises.
+
+**Known gaps, named rather than discovered later.** There is no password reset,
+because it needs email delivery the app has no route to - a forgotten password
+today is a lost account, and that must be said before anyone relies on it.
+There is no admin, no email verification, and nothing is *gated* on having an
+account: it buys you your data on a second device, and nothing else yet.
+
+Verified on a running server, not just in tests: an anonymous listener finished
+an episode, signed up, and kept the same id and their history; a second cookie
+jar logged in and saw that history; `?user=<their id>` returned an empty
+profile and failed to rename them; and the cookie came back
+`HttpOnly; SameSite=lax`. 426 pass.
+
+## 67. The preview proves layout; this one proves storage
+
+`build_preview.py` ships `static/index.html` with every `fetch` answered from
+fixtures. That is the right tool for layout, flow and interaction on a phone,
+and it proves nothing about state: tap the same tile twice and the second tap
+is the same canned JSON as the first, so nothing about the event log, the
+cache or identity is exercised.
+
+`build_live_preview.py` takes the **same interface** and swaps only that one
+layer. The fixture shim becomes a small API implemented against the Artifact
+`db` capability, mirroring the response shape of every route `app.py` serves,
+so `static/index.html` runs **unmodified** - which is the whole claim: what you
+click is the shipped frontend, not a mock of it.
+
+Real: the append-only event log, impressions carrying `section` and
+`ALGO_VERSION` (read from `topics.py` at build time rather than retyped),
+`for_user` excluding them, the normalised cache key with its hit counter,
+sessions, accounts attaching to the id a listener already has, mixes, echoes,
+the listener table. Synthetic: `/api/audio` returns silence of the right
+length, and `/api/topics`, `/api/voices` and `/api/health` are reference data.
+There is no model and no speech engine in a published page.
+
+**The verification is the repo's own smoke test.** `tools/smoke_preview.py`
+takes a path, so it drives this build exactly as it drives the fixture one -
+all fourteen named behaviours pass against the database. Five of them failed
+first, every one for the same reason: a fresh store is empty where the fixture
+preview ships pre-populated. That is §50's point again - Explore replays other
+listeners' episodes and cannot generate one - so the shim seeds on first boot
+only when the store is genuinely empty, the browser equivalent of
+`tools/seed_demo.py`.
+
+Two things the browser run corrected. The health fixture has no `mode`, so the
+app fell through to "Audio server unreachable - start it with ./run.sh": true
+of a server and useless advice inside a published page. Health now reports
+`demo`, and the shim replaces that one sentence with what is actually true of
+this build. And the session token lives in `localStorage` rather than the
+HttpOnly cookie the server sets, because a published page has no cookie of its
+own - the single divergence, stated in the badge the shim renders.
+
+## 68. The near-match cache, and the measurement that says the vector is not earning it
+
+**The problem.** The script cache keys on a SHA-256 of `normalize_query`, which
+is an exact token set. It collapses punctuation, word order and filler, and
+nothing else - it does not stem, and it has no idea that "the fall of the roman
+empire" and "why did the roman empire fall" are one episode. Measured on a
+corpus of 20 questions asked three ways each, **9 of 41 re-phrasings found the
+episode already sitting in the cache**. The other 32 paid ~$0.0096 and several
+seconds to write a script that existed.
+
+`cache.canonical_key` was the existing answer and it is off by default for a
+good reason: it puts a model call (~300-500 ms, ~$0.0002) in front of *every*
+request, which is pure overhead on a miss. That is the wrong side of the
+one-sentence spec to spend on.
+
+**The idea, and why it belongs at write time.** Embed the question once when
+its script is stored, and compare locally when the next question arrives. The
+lookup then costs a scan, not a round trip. This is the same trade the whole
+prefetch plan rests on - do the expensive part before the listener is waiting -
+applied to matching rather than generating.
+
+**What was built.** `embeddings.py` (one vector per query, two backends),
+a `vector BLOB` and a `bucket TEXT` column added to `scripts` by the existing
+additive-`ALTER` pattern, `cache.best_match` / `cache.comparable`, a
+`nearest()` on both cache backends, `CACHE_VECTOR` off by default, and
+`tools/bench_vector_cache.py` to measure it.
+
+`bucket` is everything in the cache key **except** the question - duration,
+context, whether it was researched, the model, and the vector space - so a scan
+only ever compares entries that were interchangeable to begin with. Putting the
+vector space in it means switching embedding backend retires the old vectors
+instead of comparing coordinates that no longer mean the same thing.
+
+**sqlite-vec was the obvious thing to reach for and is premature.** Benchmarked
+here, exact cosine KNN over 384-dim vectors takes 0.06 ms at 1,000 vectors,
+0.39 ms at 10,000 and 2.35 ms at 100,000, against a live cache bounded by a
+24-hour TTL. An extension means a loadable binary on every deployment to save a
+number nobody can perceive. The scan is brute force, capped at
+`CACHE_VECTOR_SCAN` rows, and measures 5.5 ms over 400 vectors in pure Python -
+which is the entire miss-path overhead, against 3-5 seconds of generation.
+
+**The guards matter more than the threshold.** A cache miss costs a cent; a
+false hit plays a fluent, confident answer to a question nobody asked, which
+fails the first duty of an episode - *satisfy the thing that brought them* -
+before a single word of it is wrong. So a score has to clear a bar and then
+survive three checks a vector is known to be bad at: numbers must be identical,
+the questions must share a set fraction of their actual words, and they must
+agree about needing today's facts. `comparable()` returns the *reason* rather
+than a bool, for the same cause `research_reason` does.
+
+Two of those guards were written because the bench found the failure, not
+because they seemed wise:
+
+* **"the causes of world war one" and "the causes of world war two" score
+  0.756.** With the threshold at 0.76, four thousandths of cosine were the only
+  thing between a listener and the wrong war. The digit guard could not see it
+  because the numbers were spelled. `embeddings._NUMERALS` folds spelled
+  numbers to digits, which closes it - and pays for itself on the other side,
+  since "week five" now reaches the episode cached for "week 5".
+* **The two halves of the decision disagreed with each other.** The vector
+  folded numerals and the overlap guard did not, so "week five" and "week 5"
+  were one question to one half and two to the other, and a perfect match was
+  refused for having half its words in common. `_token_set` now goes through
+  `embeddings.tokens` too.
+
+**The result, and it is not the one the idea predicted.**
+
+| | re-phrasings found, of 41 | wrong episodes served, of 20 |
+|---|---|---|
+| exact keys only (today) | 9 | 0 |
+| + near matching, shipped defaults | 23 | 0 |
+| the guards alone, cosine ignored | **23** | 0 |
+
+Near matching is worth **+14 of the 32 missed re-phrasings** - a 22% hit rate
+becomes 56% on this corpus. But the third row is the finding: at the safe
+operating point **the vector contributes nothing**. Everything the cosine finds,
+the free token-overlap guard finds too. The cosine only adds recall (26 of 41)
+at an overlap floor of 0.5, and there the margin to the nearest wrong answer
+collapses to 0.024 - a false hit waiting for a question phrased slightly
+differently, which is not a trade worth making for three matches.
+
+That is what a **lexical** embedding is worth here, and the bench says so in
+its own output rather than leaving it to be inferred. The shipped backend is
+signed hashing over words and character 3-grams: no dependency, microseconds,
+deterministic across workers - and permanently unable to know that "car" and
+"automobile" are the same thing. The mechanism is not the problem. The
+embedding is.
+
+**So the defaults are conservative on purpose.** `CACHE_VECTOR=0`.
+`CACHE_VECTOR_THRESHOLD=0.68` and `CACHE_VECTOR_OVERLAP=0.6` are the
+highest-recall setting at which *every* must-not-collapse pair is refused by a
+guard rather than by a threshold - so there is no near miss waiting for a query
+slightly unlike the ones measured. The bench prints a `margin` column for
+exactly that distinction: zero false hits is not the same as being safe.
+
+**What is untested.** `embeddings._OnnxEmbedder` loads a real sentence model
+from `~/.fam/embed`, on the same reasoning as the voice models - it ships with
+the app rather than billing per call. **No model exists on this machine, so
+that path has never produced a vector.** It is in the same position the Piper
+ONNX path was in before `verify_voice.py`: written, plausible, unproven. The
+honest next step is not more tuning of the lexical backend - it is installing a
+model, re-running the bench, and watching whether the "guards alone" row stops
+matching the row above it. That single line is how anyone will know the
+embedding started earning its place.
+
+`describe()` reports which backend is live, `/api/health` carries it whenever
+near matching is on, and the bench refuses to print numbers without a header
+saying whether they measure meaning or spelling. Reporting the setting without
+the backend would be §52 in a new place: "vector matching is on" reads like
+semantics, and with no model installed it is not.
+
+## 69. numpy was needed and undeclared, and only a clean install could tell
+
+**The problem.** The first CI run on PR #2 failed six tests, all with
+`ModuleNotFoundError: No module named 'numpy'` at `tts.py:477`. `./dev.sh
+check` had passed 852 tests locally minutes earlier.
+
+**The cause.** `tts.pcm_from_float` and `ChatterboxEngine._synth_blocking`
+import numpy, and `requirements.txt` did not list it. Every machine anyone had
+developed on already had numpy sitting there as somebody else's transitive
+dependency - piper pulled it in when piper was still a dependency, torch pulls
+it on a GPU box. CI installs `requirements.txt` and `pytest` and nothing else,
+so CI is the only environment that is a genuinely clean install, and therefore
+the only one that could see it.
+
+Reproduced before fixing, rather than assumed: hiding numpy behind a
+`sys.meta_path` blocker locally produces the identical six failures.
+
+**Why the fix is a declaration and not a skip.** Marking those tests
+`importorskip("numpy")` would have turned CI green in one line. It would also
+have deleted the only coverage the production voice has on a machine that
+cannot run it - the engine contract tests exist precisely to check the
+Chatterbox adapter with `chatterbox` and `torch` stubbed out, which is the one
+configuration CI can exercise. Green by removing the check is the §51 failure
+in a new costume.
+
+numpy is also not filed under the deep-learning stack, tempting as that is.
+`pcm_from_float` runs on the synthesis path with torch absent, and the stdlib
+is not a substitute: a 3-minute episode at 24 kHz is ~4.3M samples, and
+converting those one at a time in Python would put seconds on the one path this
+product refuses to spend seconds on.
+
+**`pydantic` went in at the same time**, for the same reason one step earlier.
+`app.py` imports `BaseModel` and `Field` directly, and it has always worked
+because fastapi happens to require pydantic. A dependency present by luck is
+one nobody notices losing.
+
+**The general fix: `tests/test_requirements.py`.** Every third-party import in
+the shipped root modules must either be declared in `requirements.txt` or be
+named in `DELIBERATELY_OPTIONAL` with the reason it is safe to be missing.
+Seven are legitimately optional - chatterbox and torch belong in
+`requirements-chatterbox.txt`; onnxruntime and tokenizers are the embedding
+model `embeddings.py` falls back from and says so; h2 and httpx2 are imports
+whose *absence* is what `diagnose_api.py` reports. The list makes an eighth a
+deliberate two-line change instead of an invisible one, and a second test
+fails when a name outlives the import it was written for.
+
+This is the same shape as §54 (`.env.example` disagreeing with `config.py`) and
+§64 (a path resolved against the working directory): the thing was true where
+it was written and false where it ran, and nothing compared the two. It is
+worth noticing that all three were caught by an environment that was *poorer*
+than the developer's, not richer.
