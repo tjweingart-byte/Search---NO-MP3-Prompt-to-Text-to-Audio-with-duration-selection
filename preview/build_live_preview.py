@@ -65,6 +65,7 @@ LIVE_SHIM = r"""
   var FIXTURES = __FIXTURES__;
   var SAMPLE_RATE = 22050;
   var ALGO = __ALGO__;
+  var TAG_WORDS = __TAG_WORDS__;   // topics.TAG_WORDS, verbatim
   var realFetch = window.fetch.bind(window);
 
   // ------------------------------------------------------------ db plumbing
@@ -128,6 +129,53 @@ LIVE_SHIM = r"""
     return out.sort().join(" ");
   }
   function keyFor(q, m) { return normalize(q).replace(/\s+/g, "-").slice(0, 60) + "--" + m + "m"; }
+
+  // topics.tags_for_text: the same keyword pass the server uses, so an episode
+  // someone typed is categorised the same way a bank tile is.
+  function tagsForText(text) {
+    var low = " " + String(text).toLowerCase().replace(/[^\w\s]/g, " ") + " ";
+    var out = [];
+    Object.keys(TAG_WORDS).forEach(function (tag) {
+      for (var i = 0; i < TAG_WORDS[tag].length; i++) {
+        if (low.indexOf(" " + TAG_WORDS[tag][i]) !== -1) { out.push(tag); return; }
+      }
+    });
+    return out;
+  }
+
+  // The real pipeline gets the follow-up from the model's trailing <<NEXT:>>
+  // line and stores it beside the script. There is no model here, so this is a
+  // deterministic stand-in keyed on the episode's own category - enough for
+  // Go Deeper to be driven by what was actually listened to, which is the
+  // behaviour being shown, rather than by a fixture.
+  var FOLLOW = {
+    sports: "what that changes for next season",
+    business: "who actually profits from it",
+    money: "what it does to prices",
+    tech: "how it is actually built",
+    science: "what the evidence still cannot settle",
+    culture: "why it caught on when it did",
+    health: "what the research does not claim",
+    world: "who it leaves out"
+  };
+  // Cut on a word, never mid-word: these become card titles, and
+  // "...does to interes" is the kind of thing nobody ships on purpose.
+  function shorten(text, words) {
+    var parts = String(text).split(/\s+/).filter(Boolean).slice(0, words || 5);
+    return parts.join(" ").replace(/[,.;:\u2014-]+$/, "");
+  }
+  function followUp(topicId, text) {
+    var t = BY_ID[topicId];
+    var tags = t ? (t.tags || []) : tagsForText(text || "");
+    var lead = FOLLOW[tags[0]] || "What happens next";
+    var subject = t
+      // Six words carries a whole bank title ("New College Football Arms
+      // Race"); a typed question rarely needs more before it reads as a topic.
+      ? shorten(t.title.replace(/^(The|A|An|How|Why|What|Inside)\s+/i, ""), 6)
+      : shorten(String(text || "").replace(/^(how|why|what|who|when|tell me about)\s+/i, ""), 5);
+    if (!subject) return lead.charAt(0).toUpperCase() + lead.slice(1);
+    return lead.charAt(0).toUpperCase() + lead.slice(1) + " \u2014 " + subject.toLowerCase();
+  }
 
   // ------------------------------------------------------------- the reads
   // topics.EventStore.for_user: behavioural rows only. Impressions are
@@ -225,8 +273,11 @@ LIVE_SHIM = r"""
       listener: UID,
       played: c.play, finished: c.complete, searched: c.search,
       open_threads: threads().length,
-      subjects: Object.keys(t).filter(function (k) { return t[k] > 0; })
-        .sort(function (a, b) { return t[b] - t[a]; }).slice(0, 5),
+      // Top four categories by episodes actually listened to, not by decayed
+      // taste weight: the profile is answering "what do you listen to", and a
+      // count is the honest answer to that. Ties break on taste so the order
+      // is stable rather than arbitrary.
+      subjects: categories(4),
       since: beh.length ? Math.min.apply(null, beh.map(function (e) { return e.at; })) : 0,
       name: person.name || "", handle: person.handle || "",
       joined: person.joined || 0, last_seen: person.last_seen || 0,
@@ -242,16 +293,41 @@ LIVE_SHIM = r"""
     };
   }
 
-  // Go Deeper: the follow-up each finished episode left behind.
+  // Every episode this listener actually heard, categorised, most-played first.
+  // Free-text searches are categorised with the same keyword pass the server
+  // uses, so "why the Fed keeps rates high" counts as money like a tile would.
+  function categories(n) {
+    var counts = {}, t = taste(UID);
+    behavioural(UID).forEach(function (e) {
+      if (e.kind !== "play" && e.kind !== "complete") return;
+      var tags = e.tags ? String(e.tags).split(",").filter(Boolean) : [];
+      if (!tags.length) tags = tagsForText(e.text || "");
+      tags.forEach(function (g) { counts[g] = (counts[g] || 0) + 1; });
+    });
+    return Object.keys(counts)
+      .sort(function (a, b) {
+        return (counts[b] - counts[a]) || ((t[b] || 0) - (t[a] || 0)) || a.localeCompare(b);
+      })
+      .slice(0, n || 4);
+  }
+
+  // Go Deeper: the follow-up each recently heard episode left behind.
   function threads() {
     var seen = {}, out = [];
-    behavioural(UID).filter(function (e) { return e.kind === "complete" && e.thread; })
+    // Anything actually heard, newest first - a play counts, not only a
+    // completion, so the section moves as soon as you listen to something.
+    behavioural(UID)
+      .filter(function (e) { return e.kind === "play" || e.kind === "complete"; })
       .sort(function (a, b) { return b.at - a.at; })
       .forEach(function (e) {
-        if (seen[e.thread]) return; seen[e.thread] = 1;
+        var thread = e.thread || followUp(e.topic_id, e.text);
+        if (!thread || seen[thread]) return;
+        seen[thread] = 1;
         var t = BY_ID[e.topic_id];
-        out.push({ thread: e.thread, title: e.thread,
-                   from_title: t ? t.title : (e.text || "an episode"), at: e.at });
+        out.push({
+          thread: thread, title: thread,
+          from_title: t ? t.title : (e.text || "an episode"), at: e.at
+        });
       });
     return out.slice(0, 8);
   }
@@ -531,8 +607,10 @@ LIVE_SHIM = r"""
         var tid = qs.get("topic_id") || "";
         addDoc("events", {
           user_id: UID, kind: "play", topic_id: tid, text: q,
-          tags: tid && BY_ID[tid] ? (BY_ID[tid].tags || []).join(",") : "",
-          at: now(), thread: "", section: "", algo: ""
+          // Free text is categorised on the way in, exactly as app.py does it,
+          // so the profile can count it.
+          tags: (tid && BY_ID[tid] ? (BY_ID[tid].tags || []) : tagsForText(q)).join(","),
+          at: now(), thread: followUp(tid, q), section: "", algo: ""
         }).then(paint);
       });
       return silence(mins * 60);
@@ -553,56 +631,163 @@ LIVE_SHIM = r"""
     });
   };
 
-  // ----------------------------------------------------------------- badge
-  // Small, out of the way, and honest about what this is. It also carries the
-  // reset, because a shared database with no way to clear it is a trap.
-  function paint() {
-    if (!badge) return;
-    var ev = rows("events"), imp = ev.filter(function (e) { return e.kind === "impression"; }).length;
-    var sc = rows("scripts");
-    var plays = sc.reduce(function (a, s) { return a + (s.hits || 0); }, 0);
-    var hits = Math.max(0, plays - sc.length);
-    badge.querySelector("b").textContent =
-      (db ? "live db" : "in memory") + " · " + ev.length + " events (" + imp + " imp) · " +
-      sc.length + " scripts · " + (plays ? Math.round(hits / plays * 100) : 0) + "% hit";
+  // ------------------------------------------------------------- inspector
+  // The panel beside the app. Its whole job is to make the storage visible:
+  // which collection each tap lands in, what the row looks like, and the two
+  // counters that carry the design - every event row against the subset the
+  // ranking is allowed to read, and the cache hit rate that decides the bill.
+  var COLTAB = "events", panel = null;
+  var SCHEMA = {
+    events:   ["kind", "topic_id", "tags", "section", "algo", "at"],
+    scripts:  ["id", "query", "minutes", "hits", "expires"],
+    people:   ["id", "name", "handle", "joined", "last_seen"],
+    sessions: ["id", "user_id", "expires", "last_used"],
+    accounts: ["id", "email", "created", "last_login"],
+    mixes:    ["name", "user_id", "items", "public"],
+    echoes:   ["user_id", "query", "minutes", "at"]
+  };
+  var FILE = {
+    events: "myfam.db", scripts: "scripts.db", people: "social.db",
+    sessions: "accounts.db", accounts: "accounts.db", mixes: "mixes.db",
+    echoes: "social.db"
+  };
+  var fresh = {}, lastSeenIds = {};
+
+  function esc(v) {
+    return String(v).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
   }
-  function makeBadge() {
-    badge = document.createElement("div");
-    badge.style.cssText = "position:fixed;right:8px;top:8px;z-index:99999;display:flex;gap:6px;" +
-      "align-items:center;font:500 9.5px/1.4 ui-monospace,monospace;color:#e9bc63;" +
-      "background:rgba(12,10,18,.9);border:1px solid #3a3348;border-radius:6px;padding:4px 7px;";
-    badge.innerHTML = '<b style="font-weight:500"></b>' +
-      '<button style="font:inherit;color:#a79eba;background:#262233;border:1px solid #3a3348;' +
-      'border-radius:4px;padding:2px 5px;cursor:pointer">reset</button>';
-    badge.querySelector("button").onclick = function () {
+  function fmt(col, r, f) {
+    var v = f === "id" ? r.id : r[f];
+    if (v === undefined || v === "" || v === null) return '<i>-</i>';
+    if (["at", "created", "joined", "last_seen", "last_login", "expires", "last_used"].indexOf(f) > -1) {
+      return new Date(v * 1000).toLocaleTimeString();
+    }
+    if (col === "events" && f === "kind") {
+      return '<em class="' + (v === "impression" ? "imp" : "beh") + '">' + esc(v) + '</em>';
+    }
+    var t = String(v);
+    return esc(t.length > 30 ? t.slice(0, 29) + "\u2026" : t);
+  }
+
+  function paint() {
+    if (!panel) return;
+    // Mark rows that appeared since the last paint, so a write is visible.
+    COLS.forEach(function (c) {
+      var ids = {};
+      rows(c).forEach(function (r) {
+        ids[r.id] = 1;
+        if (lastSeenIds[c] && !lastSeenIds[c][r.id]) fresh[r.id] = Date.now();
+      });
+      lastSeenIds[c] = ids;
+    });
+
+    var all = rows("events");
+    var imps = all.filter(function (e) { return e.kind === "impression"; }).length;
+    var sc = rows("scripts");
+    var plays = sc.reduce(function (a, x) { return a + (x.hits || 0); }, 0);
+    var hits = Math.max(0, plays - sc.length);
+    var rate = plays ? Math.round(hits / plays * 100) : 0;
+
+    panel.querySelector(".fd-state").textContent =
+      db ? "connected \u00b7 persistent and shared" : "in memory \u00b7 nothing is kept";
+    panel.querySelector(".fd-dot").className = "fd-dot " + (db ? "on" : "off");
+
+    panel.querySelector(".fd-metrics").innerHTML =
+      metric("rows in events", all.length, (all.length - imps) + " behavioural + " + imps + " impressions", "") +
+      metric("the ranking reads", all.length - imps, "impressions excluded, so the feed cannot train on itself", "good") +
+      metric("cache hit rate", rate + "%", hits + " of " + plays + " plays reused a script", rate >= 50 ? "good" : "warn") +
+      metric("model spend", "$" + (sc.length * 0.0096).toFixed(3), "$" + (hits * 0.0096).toFixed(3) + " saved by the cache", "");
+
+    panel.querySelector(".fd-tabs").innerHTML = COLS.map(function (c) {
+      return '<button class="fd-tab' + (COLTAB === c ? " on" : "") + '" data-col="' + c + '">' +
+        c + ' <u>' + rows(c).length + '</u></button>';
+    }).join("");
+
+    var fields = SCHEMA[COLTAB];
+    var list = rows(COLTAB).slice().sort(function (a, b) {
+      return (b.at || b.created || b.last_seen || b.joined || 0) -
+             (a.at || a.created || a.last_seen || a.joined || 0);
+    }).slice(0, 60);
+    panel.querySelector(".fd-table").innerHTML =
+      '<thead><tr>' + fields.map(function (f) { return '<th>' + f + '</th>'; }).join("") + '</tr></thead>' +
+      '<tbody>' + (list.length ? list.map(function (r) {
+        var isNew = fresh[r.id] && Date.now() - fresh[r.id] < 6000;
+        return '<tr' + (isNew ? ' class="new"' : '') + '>' + fields.map(function (f) {
+          return '<td>' + fmt(COLTAB, r, f) + '</td>';
+        }).join("") + '</tr>';
+      }).join("") :
+        '<tr><td colspan="' + fields.length + '" class="fd-empty">No rows yet in <b>' +
+        COLTAB + '</b> &mdash; it lives in <b>' + FILE[COLTAB] + '</b>.</td></tr>') + '</tbody>';
+  }
+  function metric(label, value, note, tone) {
+    return '<div class="fd-metric ' + (tone || "") + '"><span>' + label + '</span><b>' +
+      value + '</b><em>' + note + '</em></div>';
+  }
+
+  function makePanel() {
+    panel = document.getElementById("famDb");
+    if (!panel) return;
+
+    // Gather the app's own top-level nodes into one grid cell. Done here, not
+    // in the markup: a wrapper element inserted around the body was closed
+    // early by the app's own HTML, which left every section as its own grid
+    // child. Scripts are left where they are - they do not render, so they
+    // create no cell, and moving one is a needless risk.
+    var stage = document.createElement("div");
+    stage.id = "famStage";
+    document.body.insertBefore(stage, panel);
+    Array.prototype.slice.call(document.body.children).forEach(function (el) {
+      if (el === stage || el === panel || el.tagName === "SCRIPT") return;
+      stage.appendChild(el);
+    });
+    panel.innerHTML =
+      '<div class="fd-head"><h2>Live database</h2>' +
+      '<p>Every tap on the phone writes here. Rows that just arrived are green.</p>' +
+      '<div class="fd-status"><i class="fd-dot"></i><span class="fd-state"></span></div></div>' +
+      '<div class="fd-metrics"></div>' +
+      '<div class="fd-tabs"></div>' +
+      '<div class="fd-scroll"><table class="fd-table"></table></div>' +
+      '<div class="fd-foot"><button class="fd-btn" id="fdReset">Clear all data</button>' +
+      '<span class="fd-note">Session token is in localStorage here; the server uses an HttpOnly cookie.</span></div>';
+    panel.querySelector(".fd-tabs").addEventListener("click", function (e) {
+      var b = e.target.closest(".fd-tab"); if (!b) return;
+      COLTAB = b.getAttribute("data-col"); paint();
+    });
+    document.getElementById("fdReset").onclick = function () {
       if (!confirm("Delete every document this prototype has written?")) return;
       var jobs = [];
       COLS.forEach(function (c) { rows(c).forEach(function (r) { jobs.push(del(c, r.id)); }); });
       Promise.all(jobs).then(function () {
-        try { localStorage.removeItem("fam_live_session"); localStorage.removeItem("fam_resume"); } catch (e) {}
+        try {
+          localStorage.removeItem("fam_live_session");
+          localStorage.removeItem("fam_resume");
+        } catch (e) {}
         location.reload();
       });
     };
-    document.body.appendChild(badge);
     paint();
+    setInterval(paint, 2000);   // ages out the green highlight
+
     // The app's own DEMO MODE sentence tells you to add a key to .env and
-    // restart. Accurate for a server, meaningless in a published page, so the
-    // shim states what is actually true of this build instead. Left to the
-    // app's own element and styling - only the words change.
+    // restart. Accurate for a server, meaningless in a published page, so say
+    // what is actually true of this build instead. The app's element and
+    // styling are left alone - only the words change.
     setTimeout(function () {
       var el = document.getElementById("audioMode");
       if (!el) return;
       el.style.color = "var(--copper)";
-      el.textContent = "PROTOTYPE \u00b7 the database is real and every tap is stored; " +
-        "there is no model and no speech engine here, so playback is silence of the " +
+      el.textContent = "PROTOTYPE \u00b7 the database on the right is real and every tap is " +
+        "stored; there is no model and no speech engine here, so playback is silence of the " +
         "right length and no script is written.";
       var canned = document.getElementById("famLoadingStatus");
       if (canned) canned.textContent = "Prototype \u2014 no script is being written\u2026";
     }, 1200);
   }
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", makeBadge);
-  } else { makeBadge(); }
+    document.addEventListener("DOMContentLoaded", makePanel);
+  } else { makePanel(); }
 
   // ------------------------------------------------------------------ seed
   // The equivalent of tools/seed_demo.py, and there for the same reason it is:
@@ -700,6 +885,87 @@ LIVE_SHIM = r"""
 """
 
 
+STAGE = """
+<style>
+/* The app is untouched; it is simply put in the left column of a stage and an
+   inspector added on the right. Only .toast is position:fixed in the app, and
+   it is fixed to the viewport either way, so nothing here disturbs it. */
+  body { background: #14111c; }
+  #famStage { min-width: 0; }
+  #famDb {
+    display: none; min-width: 0; color: #f1eef7;
+    font-family: 'Public Sans', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  @media (min-width: 1040px) {
+    /* The app needs about 620px; everything past that is dead space beside a
+       phone, and the table would rather have it. */
+    body { display: grid; grid-template-columns: minmax(0, 640px) minmax(420px, 1fr);
+           align-items: start; gap: 0; justify-content: center; }
+    #famStage { justify-self: center; width: 100%; }
+    #famDb { display: block; position: sticky; top: 0; height: 100vh;
+             border-left: 1px solid #3a3348; background: #1c1926;
+             display: flex; flex-direction: column; }
+  }
+  /* Below that width the phone is the whole point; the panel goes underneath
+     rather than squeezing it. */
+  @media (max-width: 1039px) {
+    #famDb { display: block; border-top: 1px solid #3a3348; background: #1c1926; }
+  }
+  #famDb .fd-head { padding: 16px 18px 13px; border-bottom: 1px solid #3a3348; }
+  #famDb h2 { font-family: 'Fraunces', Georgia, serif; font-size: 19px; font-weight: 600;
+              margin: 0 0 4px; color: #f1eef7; letter-spacing: -.01em; }
+  #famDb .fd-head p { margin: 0; font-size: 12.5px; color: #a79eba; line-height: 1.45; }
+  #famDb .fd-status { display: flex; align-items: center; gap: 7px; margin-top: 9px;
+                      font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: #a79eba; }
+  #famDb .fd-dot { width: 7px; height: 7px; border-radius: 50%; background: #7c7391; }
+  #famDb .fd-dot.on { background: #6bc2a8; box-shadow: 0 0 0 3px rgba(107,194,168,.16); }
+  #famDb .fd-dot.off { background: #de8fa8; }
+  #famDb .fd-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+                       background: #3a3348; border-bottom: 1px solid #3a3348; }
+  #famDb .fd-metric { background: #1c1926; padding: 11px 14px; }
+  #famDb .fd-metric span { font-family: 'JetBrains Mono', monospace; font-size: 9px;
+                           letter-spacing: .09em; text-transform: uppercase; color: #7c7391; }
+  #famDb .fd-metric b { display: block; font-family: 'Fraunces', Georgia, serif;
+                        font-size: 21px; line-height: 1.15; margin: 1px 0 2px; }
+  #famDb .fd-metric em { font-style: normal; display: block; font-size: 11px;
+                         color: #a79eba; line-height: 1.35; }
+  #famDb .fd-metric.good b { color: #6bc2a8; }
+  #famDb .fd-metric.warn b { color: #e9bc63; }
+  #famDb .fd-tabs { display: flex; flex-wrap: wrap; gap: 5px; padding: 11px 14px;
+                    border-bottom: 1px solid #3a3348; }
+  #famDb .fd-tab { background: #262233; border: 1px solid #3a3348; border-radius: 7px;
+                   padding: 4px 9px; font-family: 'JetBrains Mono', monospace;
+                   font-size: 10.5px; color: #a79eba; cursor: pointer; }
+  #famDb .fd-tab.on { background: #302a40; color: #f1eef7; border-color: #8a6a22; }
+  #famDb .fd-tab u { text-decoration: none; color: #e9bc63; font-weight: 700; }
+  #famDb .fd-scroll { flex: 1; overflow: auto; }
+  #famDb table { width: 100%; border-collapse: collapse;
+                 font-family: 'JetBrains Mono', monospace; font-size: 10.5px; }
+  #famDb th { position: sticky; top: 0; background: #262233; text-align: left;
+              padding: 7px 10px; font-size: 9px; letter-spacing: .07em;
+              text-transform: uppercase; color: #7c7391; font-weight: 500;
+              border-bottom: 1px solid #3a3348; white-space: nowrap; }
+  #famDb td { padding: 6px 10px; border-bottom: 1px solid #2a2536; color: #a79eba;
+              white-space: nowrap; }
+  #famDb td i { color: #5d5670; font-style: normal; }
+  #famDb tr.new td { background: #17322c; }
+  #famDb td em { font-style: normal; padding: 1px 5px; border-radius: 4px;
+                 font-size: 9px; font-weight: 700; letter-spacing: .04em;
+                 text-transform: uppercase; }
+  #famDb td em.imp { background: #1e2739; color: #86a9de; }
+  #famDb td em.beh { background: #17322c; color: #6bc2a8; }
+  #famDb .fd-empty { white-space: normal; padding: 20px; text-align: center; color: #a79eba; }
+  #famDb .fd-foot { padding: 10px 14px; border-top: 1px solid #3a3348;
+                    display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #famDb .fd-btn { background: #262233; border: 1px solid #3a3348; border-radius: 7px;
+                   padding: 6px 11px; font-size: 12px; color: #a79eba; cursor: pointer;
+                   font-family: inherit; }
+  #famDb .fd-btn:hover { color: #f1eef7; border-color: #8a6a22; }
+  #famDb .fd-note { font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+                    color: #7c7391; line-height: 1.4; flex: 1; min-width: 150px; }
+</style>
+"""
+
 def build() -> pathlib.Path:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     audio_js = (STATIC / "fam-audio.js").read_text(encoding="utf-8")
@@ -717,10 +983,20 @@ def build() -> pathlib.Path:
     shim = (LIVE_SHIM
             .replace("__FIXTURES__", json.dumps(bp.load_fixtures()))
             .replace("__ALGO__", json.dumps(topics.ALGO_VERSION))
+            .replace("__TAG_WORDS__", json.dumps(
+                {k: list(v) for k, v in topics.TAG_WORDS.items()}))
             .replace("__STATIC_PATHS__", json.dumps(list(STATIC_PATHS))))
 
     at = html.index("<script>")
     html = html[:at] + shim + html[at:]
+
+    # The inspector is appended; the app's own nodes are gathered into a stage
+    # column by the shim at load time rather than by wrapping them here. An
+    # HTML wrapper was tried first and the app's markup closed it early, so
+    # body ended up with seven grid children instead of two.
+    html = html.replace("</head>", STAGE + "</head>", 1)
+    html = html.replace("</body>", '\n<aside id="famDb"></aside>\n</body>', 1)
+
     OUT.write_text(html, encoding="utf-8")
     return OUT
 
