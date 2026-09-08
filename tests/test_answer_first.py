@@ -58,6 +58,14 @@ def _run(pipe, plan, stats):
     asyncio.run(go())
 
 
+def _episode(generator, minutes: int = 3) -> GenerationStats:
+    """One researched episode, run to the end, with its stats."""
+    stats = GenerationStats()
+    _run(PodcastPipeline(generator=generator, engine=DebugEngine(), cache=None),
+         plan_episode("latest news on the fed", minutes), stats)
+    return stats
+
+
 @pytest.fixture
 def on(monkeypatch):
     patched = dataclasses.replace(pipeline_mod.settings, answer_first=True)
@@ -187,3 +195,143 @@ def test_a_whole_episode_gets_neither_brief():
 def test_each_half_carries_its_own_brief(role):
     plan = dataclasses.replace(plan_episode("latest news on the fed", 3), role=role)
     assert ROLE_BRIEFS[role].strip()[:40] in build_prompt(plan)
+
+
+# --------------------------------------------------------------------------
+# the handover must not be a silence
+#
+# The 4090 run starved on the researched question. `_answer_first` treated
+# ANSWER_FIRST_SHARE as a deadline: the cover stopped at the ceiling and the
+# next line blocked on `research.next()`, so a listener already mid-episode
+# heard nothing until the search returned. The ceiling is about sharing, and
+# dead air is a worse outcome than an over-long opening - especially since the
+# opening is a real answer rather than filler.
+# --------------------------------------------------------------------------
+def test_the_cover_keeps_speaking_when_research_is_not_ready_yet(on):
+    """The fix. Past the ceiling, silence is the alternative, so it keeps
+    going - and records that it did, so the trade is visible."""
+    generator = TwoHalves(research_delay=0.6)
+    stats = _episode(generator, minutes=1)
+    assert stats.cover_overran is True, "the cover stopped at the ceiling"
+    assert stats.cover_seconds > 0
+
+
+def test_the_cover_still_gives_way_the_moment_research_lands(on):
+    """Overrunning is only ever to avoid silence. The instant research has a
+    sentence, the episode moves to it."""
+    generator = TwoHalves(research_delay=0.0)
+    stats = _episode(generator, minutes=3)
+    assert stats.handover_reason == "research ready"
+    assert stats.cover_overran is False, "it overran with research already up"
+
+
+def test_the_cover_cannot_eat_the_episode(on):
+    """The failure the ceiling was written to prevent, which ignoring the
+    ceiling would have reintroduced.
+
+    Synthesis runs several times faster than research, so a cover with no cap
+    finishes the whole episode while the search is still reading - and the
+    listener gets an unresearched answer to a question that was researched
+    *because* it needed today's facts.
+    """
+    from config import settings as cfg
+
+    generator = TwoHalves(research_delay=5.0)
+    stats = _episode(generator, minutes=1)
+    plan_seconds = stats.plan_seconds
+    assert stats.cover_seconds <= plan_seconds * cfg.answer_first_max_share + 5
+    assert stats.handover_reason == "cover cap reached"
+
+
+def _short_cover(sentences: int):
+    """A TwoHalves whose from-knowledge half runs out almost immediately."""
+    original = TwoHalves.stream_sentences
+
+    async def short(self, plan, notes=None):
+        if plan.search:
+            async for sentence in original(self, plan, notes):
+                yield sentence
+        else:
+            for i in range(sentences):
+                yield f"Known sentence {i} explaining how the thing works."
+
+    return original, short
+
+
+def test_the_cover_running_out_is_not_a_gap_while_the_buffer_holds(on, caplog):
+    """The 4090 case, reproduced.
+
+    The cover exhausted at 85.8s of audio having taken 24.7s of wall clock, so
+    the listener had ~66s buffered; research's first item arrived 3.9s later.
+    The run warned of silence and the listener heard none - the same run
+    reported a tightest playback margin of +9.95s.
+
+    Whether a handover is audible is not "is research ready", which is a fact
+    about the producer. It is whether the wait outlasts the audio already made
+    and not yet played.
+    """
+    import logging
+
+    original, short = _short_cover(6)
+    TwoHalves.stream_sentences = short
+    try:
+        with caplog.at_level(logging.INFO, logger="pipeline"):
+            stats = _episode(TwoHalves(research_delay=0.4), minutes=3)
+    finally:
+        TwoHalves.stream_sentences = original
+
+    assert stats.handover_reason == "instant half exhausted"
+    assert stats.handover_stall_seconds > 0, "the stall was not measured"
+    assert stats.handover_buffer_seconds > stats.handover_stall_seconds
+    assert stats.handover_gap_seconds == 0, (
+        f"reported {stats.handover_gap_seconds:.2f}s of silence the listener "
+        "did not hear")
+    assert not any("GAP" in r.getMessage() for r in caplog.records), (
+        "warned of a silence that the buffer covered")
+    assert any("no silence reached the listener" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_a_gap_the_listener_would_hear_is_reported_as_one(on, caplog):
+    """The other half of the same rule, so the warning keeps its teeth.
+
+    One short cover sentence is a thin buffer; research five seconds away
+    outlasts it. That is real silence, and it must still be named.
+    """
+    import logging
+
+    original, short = _short_cover(1)
+    TwoHalves.stream_sentences = short
+    try:
+        with caplog.at_level(logging.WARNING, logger="pipeline"):
+            stats = _episode(TwoHalves(research_delay=5.0), minutes=3)
+    finally:
+        TwoHalves.stream_sentences = original
+
+    assert stats.handover_reason == "instant half exhausted"
+    assert stats.handover_gap_seconds > 0, "real silence went unreported"
+    assert any("GAP" in r.getMessage() for r in caplog.records), caplog.text
+    assert any("heard" in r.getMessage() for r in caplog.records)
+
+
+def test_the_gap_is_the_stall_less_the_buffer_and_never_negative(on):
+    """The arithmetic itself, so the definition cannot drift."""
+    original, short = _short_cover(6)
+    TwoHalves.stream_sentences = short
+    try:
+        stats = _episode(TwoHalves(research_delay=0.3), minutes=3)
+    finally:
+        TwoHalves.stream_sentences = original
+
+    expected = max(0.0, stats.handover_stall_seconds
+                   - stats.handover_buffer_seconds)
+    assert stats.handover_gap_seconds == pytest.approx(expected, abs=0.01)
+    assert stats.handover_gap_seconds >= 0
+
+
+def test_the_share_is_a_ceiling_and_the_cap_is_above_it():
+    """Two numbers that must not cross, or the cover would be capped before it
+    was allowed to start."""
+    from config import settings as cfg
+
+    assert 0 < cfg.answer_first_share <= cfg.answer_first_max_share <= 1.0

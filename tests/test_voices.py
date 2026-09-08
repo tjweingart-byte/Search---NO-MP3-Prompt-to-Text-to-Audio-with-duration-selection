@@ -46,10 +46,16 @@ def test_a_voice_routes_to_the_engine_that_owns_it():
 
 
 def test_an_unavailable_voice_falls_back_rather_than_failing():
-    """A listener whose chosen voice was uninstalled should still hear audio."""
+    """A listener whose chosen voice was uninstalled should still hear audio.
+
+    The set is whatever `build_engine` can return: the production engine, the
+    interim one while that slot is empty, or the tone generator on a machine
+    that has neither. `chatterbox` was missing from it because this predates
+    the production slot existing.
+    """
     engine = engine_for_voice("nosuchengine:whoever")
     assert engine is not None
-    assert engine.name in {"piper", "say", "espeak", "debug"}
+    assert engine.name in {"chatterbox", "piper", "say", "espeak", "debug"}
 
 
 def test_the_script_cache_ignores_voice():

@@ -149,13 +149,64 @@ def test_a_burst_of_cheap_reads_is_allowed_then_bounded(client, monkeypatch):
     assert 429 in codes[8:], "the ceiling never applied"
 
 
-def test_generation_is_still_paced(client, monkeypatch):
+class InstantGenerator:
+    """A script with no model call behind it, so the test measures the limiter
+    and not the network.
+
+    Without this the endpoint's duration depends on whether the machine happens
+    to hold an API key: with one, `/api/script` makes a real Claude call, which
+    takes longer than the pacing window, and the second request below arrives
+    after the window has already passed. The limiter was right and the test was
+    reading the machine.
+    """
+
+    async def stream_sentences(self, plan, notes=None):
+        yield "One sentence, generated instantly."
+
+
+@pytest.fixture
+def instant(monkeypatch):
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "ScriptGenerator", lambda: InstantGenerator())
+
+
+def test_generation_is_still_paced(client, monkeypatch, instant):
     """The expensive path keeps its limit - that is what it was for."""
     monkeypatch.setattr(appmod, "_read_limit", lambda request: None)
     first = client.post("/api/script", json={"query": "why the sky is blue", "minutes": 1})
     second = client.post("/api/script", json={"query": "why the sea is blue", "minutes": 1})
     assert first.status_code == 200
     assert second.status_code == 429, "two generations back to back went through"
+
+
+def test_the_pace_bounds_starts_so_a_slow_episode_paces_itself(client, monkeypatch):
+    """What the limiter actually promises, stated so it cannot be misread.
+
+    `_rate_limit` stamps the clock when a request *arrives*, not when it
+    finishes. So the guarantee is one generation started per client per window
+    - and a generation that takes longer than the window has already spaced the
+    next one by taking that long. That is the intended shape rather than a hole
+    in it: the limit exists to bound model spend, and spend is per start.
+
+    This is the behaviour that made the paced test above look broken on a
+    machine with an API key, so it is asserted rather than left as folklore.
+    """
+    import asyncio
+
+    class SlowGenerator:
+        async def stream_sentences(self, plan, notes=None):
+            await asyncio.sleep(appmod.settings.rate_limit_seconds + 0.2)
+            yield "A sentence that took a while."
+
+    monkeypatch.setattr(appmod, "_read_limit", lambda request: None)
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "ScriptGenerator", lambda: SlowGenerator())
+    first = client.post("/api/script", json={"query": "why the sky is blue", "minutes": 1})
+    second = client.post("/api/script", json={"query": "why the sea is blue", "minutes": 1})
+    assert first.status_code == 200
+    assert second.status_code == 200, (
+        "a generation slower than the window should have paced itself; the "
+        "limiter is meant to bound starts, not to add a second wait")
 
 
 def test_explore_replays_are_not_paced(client):

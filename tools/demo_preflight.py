@@ -97,9 +97,12 @@ def main() -> int:
     if voices:
         say(f"  speech     {voices} voice(s)  ·  engine {engine}")
     else:
-        say(f"  speech     {BOLD}NO VOICE MODEL{RESET} - engine is \"{engine}\", which "
+        say(f"  speech     {BOLD}NO VOICE{RESET} - engine is \"{engine}\", which "
             f"plays a placeholder tone,")
-        say(f"{DIM}             not speech. Run: python setup_voices.py{RESET}")
+        say(f"{DIM}             not speech. There is no second engine to fall back "
+            f"to: Chatterbox needs")
+        say(f"             a GPU and requirements-chatterbox.txt. "
+            f"See RUNPOD_PRODUCTION.md.{RESET}")
         worst = max(worst, 2)
 
     if episodes < 0:

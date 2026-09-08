@@ -44,7 +44,7 @@ This is the only one that shows a real wait, because the wait is real.
 
     pip install -r requirements.txt
     python setup_key.py                    # stored in ~/.fam/env, once, for good
-    python setup_voices.py                 # optional; without it you get a tone
+    pip install -r requirements-chatterbox.txt   # GPU only; without it, a tone
     ./run.sh
 
 Then <http://localhost:8000>, and:

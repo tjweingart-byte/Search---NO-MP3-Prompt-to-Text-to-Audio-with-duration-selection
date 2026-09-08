@@ -1,7 +1,15 @@
 anthropic>=1.2.0
-# The neural voice ships with the app rather than relying on the host OS.
-# Voice models are installed by `python setup_voices.py` into voices/.
-piper-tts>=1.7.0
+# No speech engine here on purpose. FAM's production voice is Chatterbox,
+# which needs torch and is installed separately by
+# `pip install -r requirements-chatterbox.txt` - gigabytes, and only useful on
+# a machine with a GPU. A laptop, a CI runner and the preview build must all be
+# able to install FAM and run its tests without a deep-learning stack; there,
+# `/api/health` reports `interim: true` and a placeholder tone plays.
+#
+# Piper used to sit here as an interim voice and is gone. A second engine that
+# can speak is a second engine that can be selected, and an app that quietly
+# sounds worse than intended is the failure this project has lost the most time
+# to. A tone cannot be mistaken for FAM.
 fastapi>=0.110
 uvicorn[standard]>=0.27
 

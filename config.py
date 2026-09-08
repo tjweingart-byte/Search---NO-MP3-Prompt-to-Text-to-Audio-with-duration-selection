@@ -114,6 +114,20 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+#: Which generation pipeline a request runs through.
+#:
+#: `legacy` is the shipped path: `pipeline._start` pumps every sentence
+#: `script_generator.stream_sentences` produces into a bounded queue that the
+#: synthesiser drains, one sentence per synthesis call.
+#:
+#: `phase6` is the validated streaming architecture - a character-bounded
+#: script buffer between the reader and the voice, and speech-sized chunks
+#: after the first. It is **not wired to anything yet**: selecting it today
+#: changes no behaviour. The flag exists first so that when the path does
+#: land, turning it off is one environment variable and a restart.
+STREAMING_PIPELINES = ("legacy", "phase6")
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- Claude -----------------------------------------------------------
@@ -180,6 +194,31 @@ class Settings:
     # unresearched answer to a question that was researched *because* it needed
     # today's facts. Reserving the rest means the research always gets said.
     answer_first_share: float = _env_float("ANSWER_FIRST_SHARE", 0.5)
+    # How far past that ceiling the cover may go when research is *still not
+    # ready*, as a share of the episode.
+    #
+    # The ceiling above is about sharing. Enforced as a deadline it produced
+    # the failure this pair exists to balance: the cover stopped, research had
+    # nothing yet, and the pipeline blocked on it - silence in the middle of an
+    # episode that had already started. Dead air is worse than an over-long
+    # opening, and the opening is a real answer rather than filler.
+    #
+    # So past the ceiling the cover keeps speaking, and this is where that
+    # stops: at 0.8 the researched half still gets a fifth of the episode,
+    # which is enough for it to be worth having said. Beyond here, covering has
+    # stopped buying anything - research would have nothing left to speak into
+    # - so the gap is accepted and logged rather than hidden.
+    answer_first_max_share: float = _env_float("ANSWER_FIRST_MAX_SHARE", 0.8)
+    # legacy | phase6 - see STREAMING_PIPELINES above.
+    #
+    # Defaults to `legacy` and will keep defaulting to it until the Phase 6
+    # path has been measured through the real interface. An unrecognised value
+    # is refused at import rather than falling back: a typo that quietly picks
+    # a pipeline is exactly the silent-success failure this project has paid
+    # for more than once.
+    streaming_pipeline: str = field(
+        default_factory=lambda: os.environ.get("STREAMING_PIPELINE", "legacy").strip().lower()
+    )
 
     cache_enabled: bool = field(
         default_factory=lambda: os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")
@@ -217,15 +256,32 @@ class Settings:
     sample_width: int = 2  # 16-bit signed little-endian PCM
 
     # --- TTS --------------------------------------------------------------
-    # auto | piper | espeak | debug
+    # auto | espeak | say | debug
+    # A **development** override, not a production setting. Production does
+    # not choose an engine: there is one production slot
+    # (`tts.PRODUCTION_ENGINES`), filled by Chatterbox. This names a
+    # development engine for deterministic local tests, and `auto` - the
+    # default, and the only value a deployment should ever have - means "the
+    # production engine, or a placeholder tone if this machine cannot run it".
+    # It cannot name a production engine into existence: nothing here is one.
     tts_engine: str = field(default_factory=lambda: os.environ.get("TTS_ENGINE", "auto"))
-    # Voice models live in one shared per-user folder (~/.fam/voices by
-    # default), NOT inside the project, so a new version of the app finds the
-    # voices already downloaded instead of fetching them again. Override with
+    # --- Chatterbox: the production voice --------------------------------
+    # Where the model runs. `auto` picks cuda, then mps, and refuses cpu -
+    # Chatterbox on a CPU is slower than speech, so an episode would starve.
+    chatterbox_device: str = field(
+        default_factory=lambda: os.environ.get("CHATTERBOX_DEVICE", "auto"))
+    # The recording Chatterbox clones. Per-machine state, never in the repo:
+    # it is somebody's voice. Defaults to reference_3.wav in the shared voice
+    # folder, and a rights record must sit beside it clearing consent,
+    # commercial use and synthetic voice, or the engine reports unavailable.
+    chatterbox_reference: str = field(
+        default_factory=lambda: os.environ.get("CHATTERBOX_REFERENCE", ""))
+    # Per-machine voice state lives in one shared per-user folder
+    # (~/.fam/voices by default), NOT inside the project, so a new version of
+    # the app finds it already there instead of fetching it again. This is
+    # where Chatterbox's reference recording lives. Override with
     # FAM_VOICES_DIR. See voice_store.py.
     voices_dir: str = field(default_factory=lambda: str(voice_store.voices_dir()))
-    # Pin one of them as the default; otherwise the first installed is used.
-    piper_model: str = field(default_factory=lambda: os.environ.get("PIPER_MODEL", ""))
     espeak_binary: str = field(
         default_factory=lambda: os.environ.get("ESPEAK_BIN", "espeak-ng")
     )
@@ -243,6 +299,38 @@ class Settings:
     # a pace. Opening a tab fires several at once, so anything that throttles
     # a burst throttles correct use. 0 switches it off.
     read_limit_per_window: int = _env_int("READ_LIMIT_PER_WINDOW", 60)
+    # How much *audio* must exist before the response starts. A quantity, not
+    # a delay: at TARGET_WPM this is 3.75 words, so any ordinary opening
+    # sentence satisfies it on the first chunk and it costs nothing. It exists
+    # because models stream in bursts, and because it is the last point at
+    # which a failed generation can still become an HTTP error rather than a
+    # silent empty episode. See app.PREROLL_SECONDS.
+    preroll_seconds: float = _env_float("PREROLL_SECONDS", 1.5)
+
+    def __post_init__(self) -> None:
+        """Refuse a configuration that names a pipeline that does not exist.
+
+        Deliberately at construction, so it also catches
+        `dataclasses.replace(settings, ...)` - which `pipeline._answer_first`
+        uses - and not only the environment. The app failing to start is the
+        correct outcome: a misconfigured deployment that serves the wrong
+        generation path is worse than one that refuses to serve.
+        """
+        if self.preroll_seconds <= 0:
+            # Zero is not "no preroll", it is a broken contract: on `fmt=wav`
+            # the 44-byte header alone satisfies a zero gate, the
+            # empty-episode guard then fires, and a perfectly good episode
+            # comes back as a 502.
+            raise ValueError(
+                f"PREROLL_SECONDS={self.preroll_seconds} must be greater than "
+                "zero. At zero a streamed WAV's header alone satisfies the "
+                "gate and every episode is refused as empty."
+            )
+        if self.streaming_pipeline not in STREAMING_PIPELINES:
+            raise ValueError(
+                f"STREAMING_PIPELINE={self.streaming_pipeline!r} is not a "
+                f"pipeline. Use one of: {', '.join(STREAMING_PIPELINES)}."
+            )
 
     @property
     def bytes_per_second(self) -> int:

@@ -11,6 +11,7 @@ Endpoints
 from __future__ import annotations
 
 import os
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -122,12 +123,27 @@ WAV_HEADER_BYTES = 44
 # times faster than speech, so a few seconds of audio arrives in a fraction of
 # a second. It is the difference between "starts instantly" and "starts
 # instantly and keeps going".
-PREROLL_SECONDS = 1.5
+#
+# A **quantity**, not a delay: the gate below counts bytes of audio, not
+# elapsed time. At TARGET_WPM this is 3.75 words, so an ordinary opening
+# sentence satisfies it on the first chunk and it costs nothing at all. It
+# only forces a second synthesis when the opening is very short - which is the
+# case the Phase 6 first-chunk rule deliberately allows, so the two interact.
+#
+# Configurable since the preroll sweep, so the value can be measured rather
+# than argued about. The default is unchanged, and zero is refused in
+# `config.Settings.__post_init__`.
+PREROLL_SECONDS = settings.preroll_seconds
 
 _last_request: dict[str, float] = defaultdict(float)
 #: Recent cheap-read timestamps per client, for the burst-tolerant limiter.
 _read_hits: dict[str, deque] = defaultdict(deque)
 READ_WINDOW_SECONDS = 10.0
+
+
+def _ms(value: float | None) -> str:
+    """A mark as milliseconds, or a dash when it never happened."""
+    return "-" if value is None else f"{value * 1000:.0f}ms"
 
 
 def friendly_error(exc: Exception) -> str:
@@ -657,10 +673,21 @@ async def audio(
     # failure becomes a proper error the interface can show.
     primed: list[bytes] = []
     preroll_bytes = int(PREROLL_SECONDS * sample_rate * 2)
+    # Instrumentation only - nothing below changes what is served. These are
+    # the marks that turn the interval between "audio exists" and "the client
+    # has a byte" from an invisible cost into a measured one.
+    first_pcm_at: float | None = None
+    preroll_at: float | None = None
+    first_byte_at: float | None = None
+    chunks_primed = 0
     try:
         async for chunk in source:
             primed.append(chunk)
+            chunks_primed += 1
+            if first_pcm_at is None and len(chunk) > WAV_HEADER_BYTES:
+                first_pcm_at = time.monotonic() - started
             if sum(len(c) for c in primed) - WAV_HEADER_BYTES >= preroll_bytes:
+                preroll_at = time.monotonic() - started
                 break
     except NotCached as exc:
         # Expected, not a fault: the entry expired between listing and tapping.
@@ -680,9 +707,15 @@ async def audio(
             "log, and that ANTHROPIC_API_KEY is set and a speech engine is installed.",
         )
 
+    primed_bytes = max(0, sum(len(c) for c in primed) - WAV_HEADER_BYTES)
+    primed_seconds = primed_bytes / (sample_rate * 2)
+
     async def body():
+        nonlocal first_byte_at
         try:
             for chunk in primed:
+                if first_byte_at is None:
+                    first_byte_at = time.monotonic() - started
                 yield chunk
             async for chunk in source:
                 if await request.is_disconnected():
@@ -695,7 +728,13 @@ async def audio(
             log.exception("audio stream failed mid-flight")
         finally:
             log.info(
-                "episode q=%r %s wall=%.1fs", plan.query, stats.as_dict(), time.monotonic() - started
+                "episode q=%r %s wall=%.1fs preroll=%.2fs chunks_primed=%d "
+                "audio_primed=%.2fs first_pcm=%s preroll_satisfied=%s "
+                "first_byte=%s marks=%s",
+                plan.query, stats.as_dict(), time.monotonic() - started,
+                PREROLL_SECONDS, chunks_primed, primed_seconds,
+                _ms(first_pcm_at), _ms(preroll_at), _ms(first_byte_at),
+                json.dumps(stats.marks.to_dict(), default=str),
             )
 
     # Recorded here rather than client-side: audio is being served, so the
@@ -719,6 +758,16 @@ async def audio(
             "X-Accel-Buffering": "no",  # tell nginx not to buffer the stream
             "X-Sample-Rate": str(sample_rate),
             "X-Requested-Seconds": str(plan.target_seconds),
+            # Measurement headers. Additive: the player reads none of them,
+            # and `tools/preroll_sweep.py` reads all of them.
+            "X-Preroll-Seconds": f"{PREROLL_SECONDS:g}",
+            "X-Chunks-Primed": str(chunks_primed),
+            "X-Audio-Primed-Seconds": f"{primed_seconds:.3f}",
+            "X-First-PCM-Seconds": f"{first_pcm_at:.4f}" if first_pcm_at is not None else "",
+            "X-Preroll-Satisfied-Seconds": f"{preroll_at:.4f}" if preroll_at is not None else "",
+            # The episode's own marks, so a client-side probe can read the
+            # server's view of the same request rather than inferring it.
+            "X-Episode-Marks": json.dumps(stats.marks.summary(), default=str),
         },
     )
 

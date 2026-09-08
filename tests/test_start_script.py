@@ -42,11 +42,24 @@ def test_a_missing_key_reaches_the_setup_script_without_a_gate(script):
     assert "read -r answer" not in script, "the self-answering read is back"
 
 
-def test_piper_is_what_the_launcher_sets_up(script):
+def test_chatterbox_is_the_voice_the_launcher_checks(script):
     """The voice runs on the listener's machine. No key, no quota, no
     per-word cost - which is the property the hosted experiment failed on."""
-    assert "setup_voices.py" in script
-    assert "PiperEngine.available()" in script
+    assert "ChatterboxEngine.available()" in script
+
+
+def test_the_launcher_reports_the_voice_rather_than_installing_one(script):
+    """It used to download a Piper voice when it found none. There is nothing
+    to download now, and the two things it can find - no GPU, and no reference
+    recording with rights cleared - are not a launcher's decision to make."""
+    assert "setup_voices.py" not in script, "the launcher is installing a voice again"
+    assert "diagnose()" in script, "a failure must name its reason, not just fail"
+
+
+def test_no_second_engine_can_be_installed_by_the_launcher(script):
+    """Piper is gone. A launcher that can put a voice back is a way for one to
+    come back."""
+    assert "piper" not in script.lower()
 
 
 def test_nothing_hosted_survived_the_removal(script):

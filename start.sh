@@ -71,13 +71,19 @@ else
 fi
 
 # --- Voice ------------------------------------------------------------------
+# There is exactly one voice, and there is nothing to download: Chatterbox
+# fetches its own weights and clones a reference recording you provide. So this
+# reports, and does not install. It cannot offer to fix what it finds, because
+# the two things it can find - no GPU, and no reference recording with rights
+# cleared - are not things a launcher may decide on your behalf.
 say "Checking the voice"
-if "$PY" -c 'import sys; from tts import PiperEngine; sys.exit(0 if PiperEngine.available() else 1)' 2>/dev/null; then
-  ok "Piper voice installed"
+if "$PY" -c 'import sys; from tts import ChatterboxEngine; sys.exit(0 if ChatterboxEngine.available() else 1)' 2>/dev/null; then
+  ok "Chatterbox ready - $("$PY" -c 'from tts import ChatterboxEngine; print(ChatterboxEngine.diagnose()[1])' 2>/dev/null)"
 else
-  warn "No Piper voice yet - without one you would hear a placeholder tone."
-  printf '  Downloading one now (about 60 MB, once)…\n\n'
-  "$PY" setup_voices.py || warn "The voice download did not finish - you would hear a placeholder tone. Run ./start.sh again to retry."
+  warn "No voice on this machine - you will hear a placeholder tone, not FAM."
+  printf '  Reason: %s\n' "$("$PY" -c 'from tts import ChatterboxEngine; print(ChatterboxEngine.diagnose()[1])' 2>/dev/null || echo 'could not be determined')"
+  printf '  Chatterbox needs a GPU, `pip install -r requirements-chatterbox.txt`,\n'
+  printf '  and a reference recording with its rights record. See RUNPOD_PRODUCTION.md.\n\n'
 fi
 
 # --- What you are about to hear ---------------------------------------------

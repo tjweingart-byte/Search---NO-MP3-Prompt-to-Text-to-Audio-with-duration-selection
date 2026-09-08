@@ -43,16 +43,24 @@ On macOS the built-in `say` voice is used automatically — nothing to install.
 ```bash
 pip install -r requirements.txt
 
-# A voice. espeak-ng is instant and zero-config; piper sounds far better.
-# A voice. macOS already has one (`say`) - nothing to do there.
-sudo apt-get install espeak-ng        # Linux
-
 cp .env.example .env                  # add your ANTHROPIC_API_KEY
 ./run.sh                              # http://localhost:8000
 ```
 
-For a natural voice, download a [Piper](https://github.com/rhasspy/piper) voice
-and set `PIPER_BIN` / `PIPER_MODEL`; it is selected automatically when present.
+That runs everything except the voice. FAM's production voice is
+**Chatterbox**, which needs a GPU and a multi-gigabyte torch stack, so it is
+installed separately:
+
+```bash
+pip install -r requirements-chatterbox.txt
+python verify_voice.py                # reports whether this machine can speak
+```
+
+Without it `/api/health` reports `interim: true` and playback is a placeholder
+tone — **not a lower-quality voice**. There is no second engine: Piper held that
+slot and was removed, because an engine that can speak is an engine that can be
+selected, and an app that quietly sounds worse than intended is the failure this
+project has lost the most time to. See `RUNPOD_PRODUCTION.md`.
 
 ## How it works
 
@@ -87,13 +95,12 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 | `app.py` | FastAPI server and streaming endpoints |
 | `pipeline.py` | Joins Claude → TTS → socket; owns duration correction |
 | `script_generator.py` | Duration → word budget, streaming Claude calls |
-| `tts.py` | Pluggable speech engines (piper / espeak / debug), all raw PCM |
+| `tts.py` | Chatterbox (production) plus development engines, all raw PCM |
 | `audio_utils.py` | Live WAV header, silence, the pacing controller |
 | `cache.py` | Shared script cache: key normalization, TTL policy, SQLite store |
 | `demo_script.py` | Built-in sample script used when there are no credentials |
 | `voice_store.py` | Resolves the one shared voice folder every entry point uses |
-| `setup_voices.py` | Installs the neural voices into the shared folder |
-| `verify_voice.py` | Proves the voices work on this machine, and how fast |
+| `verify_voice.py` | Proves the voice works on this machine, and how fast |
 | `write.py` | Print a briefing as text in seconds, to judge the writing |
 | `examples/` | Sample briefings that teach the model the house voice |
 | `compare_models.py` | Generate one query on several models and compare cost, speed and text |
@@ -178,9 +185,14 @@ First time only:
 
 ```bash
 pip install -r requirements.txt
-python setup_voices.py       # downloads into ~/.fam/voices
-python verify_voice.py       # proves they work, and how fast
+pip install -r requirements-chatterbox.txt   # torch; GPU machines only
+python verify_voice.py                       # proves it works, and how fast
 ```
+
+Chatterbox downloads its own weights on first load (~4 GB, cached) and clones a
+**reference recording** you provide at `~/.fam/voices/reference_3.wav`, with a
+rights record beside it clearing consent, commercial use and synthetic voice.
+No record, no synthesis — a cloned voice is somebody's voice.
 
 Every version after that:
 
@@ -189,24 +201,21 @@ pip install -r requirements.txt
 ./run.sh
 ```
 
-`setup_voices.py` is safe to re-run: it downloads only what is missing, and it
-first adopts any voices an older project folder already downloaded. Override the
-location with `FAM_VOICES_DIR` if you need to.
-
-| Engine | Quality | Where it comes from |
+| Engine | What it is | When it speaks |
 |---|---|---|
-| **Piper** | Neural, natural | **Ships with the app** — a pip dependency plus models in `voices/` |
-| macOS `say` | Good | Fallback: built into macOS only |
-| espeak-ng | Robotic | Last resort: only if apt-installed |
+| **Chatterbox** | The production voice | Wherever the machine has a GPU and a cleared reference recording |
+| `debug` tone | Not a voice | Everywhere else — announced as such, never mistakable for FAM |
+| macOS `say`, espeak-ng | Development only | Only via `TTS_ENGINE=`, never in production |
 
-Piper is the voice the product is meant to have, and it is deliberately part of
-the project rather than something the host provides. espeak only exists if
-someone installed it and macOS `say` does not exist on a Linux server at all, so
-an app relying on either sounds different — and worse — once deployed.
+There is deliberately nothing between those first two rows. Piper used to sit
+there and was removed entirely — engine, config, package and dependency. It
+reached listeners three ways nobody chose: `build_engine` fell through to it,
+`engine_for_voice` fell back to it, and `list_voices` offered it whenever the
+production slot was empty. A tone cannot be mistaken for the product; a flat
+neural voice can.
 
-`setup_voices.py` fetches four voices (two US, two UK). They are a few tens of
-MB each and are never committed. For deployment, run it as a build step with
-`FAM_VOICES_DIR` pointing somewhere on the image or a mounted volume.
+For deployment, install `requirements-chatterbox.txt` as a build step and mount
+the reference recording with `FAM_VOICES_DIR` pointing at it.
 
 Voice is deliberately **not** part of the script cache key: it changes the audio,
 not the words. Switching voice reuses the cached script, so it costs no model
@@ -293,6 +302,6 @@ the interface rather than playing silence. See `PROBLEMS.md` §12.
 
 ## Known limitations
 
-See `PROBLEMS.md` §10 — in short: espeak sounds robotic (install piper), the
-rate limiter is in-process, there is no authentication, and the player is a live
-stream with no seeking.
+See `PROBLEMS.md` §10 — in short: a machine without a GPU has no voice at all
+(a placeholder tone, announced as one), the rate limiter is in-process, there
+is no authentication, and the player is a live stream with no seeking.
