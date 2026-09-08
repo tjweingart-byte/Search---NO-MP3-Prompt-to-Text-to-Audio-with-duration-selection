@@ -29,6 +29,8 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 
+from paths import data_path
+
 log = logging.getLogger(__name__)
 
 #: Biggest file accepted, before base64. Large enough for a long report, small
@@ -249,8 +251,8 @@ def build(kind: str, name: str = "", data_b64: str = "", url: str = "") -> Attac
 class AttachmentStore:
     """Short-lived, per-listener. Not a document store - context for a search."""
 
-    def __init__(self, path: str = "attachments.db") -> None:
-        self.path = path
+    def __init__(self, path: str | None = None) -> None:
+        self.path = path or data_path("ATTACHMENTS_PATH", "attachments.db")
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(

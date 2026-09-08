@@ -39,6 +39,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from paths import data_path
+
 log = logging.getLogger(__name__)
 
 MAX_NAME = 40
@@ -76,8 +78,8 @@ def clean_handle(handle: str) -> str:
 
 
 class SocialStore:
-    def __init__(self, path: str = "social.db") -> None:
-        self.path = path
+    def __init__(self, path: str | None = None) -> None:
+        self.path = path or data_path("SOCIAL_DB", "social.db")
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(

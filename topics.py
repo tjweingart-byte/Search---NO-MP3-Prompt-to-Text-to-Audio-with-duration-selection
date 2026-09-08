@@ -50,6 +50,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
+from paths import data_path
+
 log = logging.getLogger(__name__)
 
 #: How long an event keeps influencing ranking, in seconds. A taste that never
@@ -289,8 +291,10 @@ class EventStore:
     """Append-only interaction log. SQLite for the same reasons as the cache:
     no new dependency, survives restarts, shared by every worker."""
 
-    def __init__(self, path: str = "myfam.db") -> None:
-        self.path = path
+    def __init__(self, path: str | None = None) -> None:
+        # None means "the app's own database", resolved from the project
+        # root rather than the cwd. See paths.py for why that matters.
+        self.path = path or data_path("MYFAM_DB", "myfam.db")
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(

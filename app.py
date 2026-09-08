@@ -30,6 +30,7 @@ from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import attachments as attachments_mod
 import topics as topics_mod
+from paths import PROJECT_ROOT
 import mixes as mixes_mod
 import social as social_mod
 import voice_store
@@ -152,9 +153,7 @@ def friendly_error(exc: Exception) -> str:
 # One cache shared by every request this worker serves - and, with the SQLite
 # backend, by every other worker on the machine too.
 SCRIPT_CACHE = build_cache()
-ATTACHMENTS = attachments_mod.AttachmentStore(
-    os.environ.get("ATTACHMENTS_PATH", "attachments.db")
-)
+ATTACHMENTS = attachments_mod.AttachmentStore()
 
 # With no credentials the app runs on a built-in sample script instead of
 # refusing to start. Everything downstream of the model - streaming, pacing,
@@ -307,9 +306,12 @@ async def script(req: ScriptRequest, request: Request) -> dict:
     }
 
 
-EVENTS = topics_mod.EventStore(os.environ.get("MYFAM_DB", "myfam.db"))
-MIXES = mixes_mod.MixStore(os.environ.get("MIXES_DB", "mixes.db"))
-SOCIAL = social_mod.SocialStore(os.environ.get("SOCIAL_DB", "social.db"))
+# Each store resolves its own path (env var, else the project root), so the
+# mapping from variable to file lives in one place per store rather than
+# being restated here.
+EVENTS = topics_mod.EventStore()
+MIXES = mixes_mod.MixStore()
+SOCIAL = social_mod.SocialStore()
 
 
 class MixRequest(BaseModel):
@@ -752,7 +754,14 @@ async def http_error(_: Request, exc: HTTPException):
     return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Also resolved from the project root, and for the same reason as the
+# databases: a relative directory follows the working directory. This one
+# at least fails loudly - starting the server from anywhere else raised
+# "Directory 'static' does not exist" - but it made the app impossible to
+# launch from outside its own folder, which is how the quiet database
+# version of this bug stayed hidden behind it.
+app.mount("/", StaticFiles(directory=str(PROJECT_ROOT / "static"), html=True),
+          name="static")
 
 
 if __name__ == "__main__":

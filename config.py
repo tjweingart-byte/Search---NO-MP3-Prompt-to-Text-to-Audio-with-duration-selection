@@ -10,6 +10,7 @@ import pathlib
 from dataclasses import dataclass, field
 
 import voice_store
+from paths import data_path
 
 
 def shared_env_path() -> pathlib.Path:
@@ -185,7 +186,12 @@ class Settings:
         default_factory=lambda: os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")
     )
     cache_backend: str = field(default_factory=lambda: os.environ.get("CACHE_BACKEND", "sqlite"))
-    cache_path: str = field(default_factory=lambda: os.environ.get("CACHE_PATH", "scripts.db"))
+    # Absolute, and derived from the project root when unset - a bare
+    # filename would follow the working directory and quietly open a
+    # different, empty cache. See paths.data_path.
+    cache_path: str = field(
+        default_factory=lambda: data_path("CACHE_PATH", "scripts.db")
+    )
     # Default lifetime for a cached script.
     cache_ttl_seconds: int = _env_int("CACHE_TTL_SECONDS", 86400)
     # Lifetime for queries that read as time-sensitive ("latest", "today").

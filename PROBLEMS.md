@@ -2856,3 +2856,62 @@ than re-modelling them.
 
 Nothing here needs an API key, and none of it touches generation, the player,
 or the script.
+
+## 64. The databases followed the working directory, and two never reached the disk
+
+Every store defaulted to a bare filename - `myfam.db`, `social.db`, `mixes.db`,
+`scripts.db`, `attachments.db`. A bare filename is resolved against the
+**current working directory**, which is not a property of the app: it is a
+property of wherever the person starting the process happened to be standing.
+
+**The failure pointed the wrong way.** Nothing raised. SQLite created a second,
+empty set of files, so the app came up with a cold script cache (every episode
+paying ~$0.03 again), an empty feed, no echoes and no mixes - and it read as a
+broken feature rather than a wrong path. `tools/seed_demo.py` was caught by
+exactly this: it constructs `EventStore()` and `SocialStore()` with no
+arguments, so seeding from one directory and serving from another leaves
+Explore empty however much you tap it, which is precisely the symptom §50 built
+`demo.sh` to prevent.
+
+The env vars already existed and were already read in `app.py` and `config.py`.
+What did not exist was a **default that did not move**, so the fix is one
+resolver rather than five call sites. `paths.py` derives `PROJECT_ROOT` from
+`__file__`, and `data_path(env_var, filename)` gives:
+
+* nothing set - the file sits in the project root, the same place however the
+  process was started;
+* an absolute env var - used exactly as given, which is what a deployment does;
+* a relative env var - resolved against the project root too, **and logged**.
+  Quietly reinterpreting it would put back the ambiguity this removes.
+
+Each store now takes `path: str | None = None` and resolves its own variable,
+so the mapping lives with the store instead of being restated in `app.py`, and
+anything constructing a store directly gets the right file for free.
+
+**Two variables were missing from the Dockerfile, and that one was not
+theoretical.** It pinned `CACHE_PATH`, `MYFAM_DB` and `MIXES_DB` to the mounted
+`/data` disk but not `SOCIAL_DB` or `ATTACHMENTS_PATH`, so in a deployed
+container those two were written to the image's WORKDIR - **every redeploy
+silently discarded every listener's name, handle and echo.** The comment above
+them said "mixes and listening history survive a redeploy", which was true and
+was the reason nobody read further. All five are named now, and a test fails if
+a sixth store is ever added without one.
+
+**`.env.example` ships no value for any of them, deliberately.** A default that
+named a directory would be wrong on every machine but the one it was written
+on, and `tests/test_env_example.py` compares the example against live settings,
+so a literal there would now be a permanent disagreement. They are documented
+as commented lines that say to use absolute paths.
+
+**The static mount had the same bug and was hiding this one.** `app.py` mounted
+`StaticFiles(directory="static")`, also cwd-relative. That one failed loudly -
+starting the server anywhere else raised `Directory 'static' does not exist` -
+which meant the *server* never got far enough to demonstrate the quiet database
+version. It is resolved from `PROJECT_ROOT` too, and a test rejects any bare
+`directory="..."` in `app.py`.
+
+Verified rather than inspected, per §52: the server was started from an
+unrelated directory with no path variables set. It served the interface (200),
+answered `/api/myfam` (200), wrote the listener and six impressions into the
+**project-root** databases, and created **zero** files in the directory it was
+started from. 23 new tests; 388 pass.
