@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FAM — the loading screen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#18151F; --paper:#F4EFE4;
+    --page-bg:#1E1B27; --bg:#2A2733; --surface:#38334A; --surface-2:#423C56;
+    --copper:#E0B563; --coral:#E2694F; --sage:#8FAE9A; --gold:#E0B563;
+    --text:#F4EFE4; --text-muted:#ABA3C4; --text-faint:#8A83A0;
+    --border:rgba(244,239,228,0.10); --border-strong:rgba(244,239,228,0.20);
+    --muted:rgba(244,239,228,0.56); --ink-muted:#ABA3C4;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body{
+    margin:0; min-height:100vh; background:var(--page-bg); color:var(--paper);
+    font-family:'Space Grotesk', sans-serif;
+    padding:34px 18px 60px; display:flex; flex-direction:column; align-items:center; gap:22px;
+  }
+  .lead{ max-width:430px; text-align:center; }
+  .lead h1{ font-family:'Fraunces', serif; font-weight:500; font-size:25px;
+    color:var(--copper); margin:0 0 8px; }
+  .lead p{ font-size:12.5px; line-height:1.6; color:var(--text-muted); margin:0; }
+  /* The same 300x620 frame the preview uses, so proportions are honest. */
+  .phone{ width:300px; height:620px; position:relative; }
+  .frame{
+    position:absolute; inset:0; border-radius:34px; overflow:hidden;
+    background:var(--bg); border:1px solid var(--border-strong);
+    box-shadow:0 30px 70px -24px rgba(0,0,0,0.7);
+  }
+  .controls{ display:flex; flex-wrap:wrap; gap:7px; justify-content:center; max-width:430px; }
+  .controls button{
+    background:var(--surface); color:var(--text); border:1px solid var(--border-strong);
+    border-radius:20px; padding:8px 13px; font-family:'JetBrains Mono', monospace;
+    font-size:10.5px; cursor:pointer;
+  }
+  .controls button:active{ transform:scale(0.96); }
+  .controls button.on{ background:var(--copper); color:var(--ink); border-color:var(--copper); }
+  .note{ max-width:430px; text-align:center; font-family:'JetBrains Mono', monospace;
+    font-size:10px; line-height:1.7; color:var(--muted); }
+  .note b{ color:var(--copper); font-weight:500; }
+
+  /* -------- the loading screen -------- */
+  /* Shown for every wait on every surface: a search, a myFAM tile, a DailyFAM
+     mix. The chevrons of the FAM mark rise and repeat; the dots fill one at a
+     time and reset. It says "received, and working" without claiming to know
+     how long - the line underneath does that honestly. */
+  .fam-loading{
+    position:absolute; inset:0; z-index:60; border-radius:34px;
+    background:
+      radial-gradient(420px 300px at 50% 42%, rgba(224,181,99,0.10), transparent 70%),
+      #0A0912;
+    display:none; flex-direction:column; align-items:center; justify-content:center; gap:22px;
+    padding:0 32px; text-align:center;
+  }
+  .fam-loading.active{ display:flex; }
+  .fam-loading-wm{ display:flex; align-items:center; gap:1px; color:var(--copper); opacity:.92; }
+  .fam-loading-wm .wm-glyph, .fam-loading-wm .wm-a{ width:26px; height:26px; display:block; }
+  .fam-loading-wm svg{ width:100%; height:100%; display:block; }
+
+  .fam-loading-mark{ width:96px; height:88px; color:var(--copper); margin-top:4px; }
+  .fam-loading-mark svg{ width:100%; height:100%; overflow:visible; }
+  .fam-loading-mark .chev{
+    opacity:0; transform-origin:50% 50%;
+    filter:drop-shadow(0 0 9px rgba(224,181,99,0.55));
+    animation:famRise 2.4s cubic-bezier(.4,0,.2,1) infinite;
+  }
+  .fam-loading-mark .c1{ animation-delay:0s; }
+  .fam-loading-mark .c2{ animation-delay:.22s; }
+  .fam-loading-mark .c3{ animation-delay:.44s; }
+  @keyframes famRise{
+    0%   { opacity:0; transform:translateY(11px); }
+    20%  { opacity:1; transform:translateY(0); }
+    62%  { opacity:1; transform:translateY(0); }
+    100% { opacity:0; transform:translateY(-11px); }
+  }
+
+  .fam-loading-word{
+    font-family:'Fraunces', serif; font-style:italic; font-size:21px;
+    color:var(--copper); letter-spacing:0.01em;
+  }
+  .fam-loading-dots{ display:flex; gap:9px; }
+  .fam-loading-dots i{
+    width:8px; height:8px; border-radius:50%; background:var(--copper);
+    opacity:.22; animation:famDot 2.4s linear infinite;
+  }
+  .fam-loading-dots i:nth-child(2){ animation-delay:.24s; }
+  .fam-loading-dots i:nth-child(3){ animation-delay:.48s; }
+  .fam-loading-dots i:nth-child(4){ animation-delay:.72s; }
+  .fam-loading-dots i:nth-child(5){ animation-delay:.96s; }
+  @keyframes famDot{
+    0%   { opacity:.22; transform:scale(.78); }
+    9%   { opacity:1;   transform:scale(1); }
+    88%  { opacity:1;   transform:scale(1); }
+    100% { opacity:.22; transform:scale(.78); }
+  }
+
+  /* Motion is decoration here; the words are the information. Anyone who has
+     asked for less of it still gets the full status line. */
+  @media (prefers-reduced-motion: reduce){
+    .fam-loading-mark .chev{ animation:none; opacity:1; }
+    .fam-loading-dots i{ animation:none; opacity:.7; }
+  }
+
+
+  .gen-text{
+    font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--text-muted);
+    line-height:1.5; max-width:250px;
+  }
+</style>
+</head>
+<body>
+  <div class="lead">
+    <h1>The loading screen</h1>
+    <p>Held still so it can be looked at. In the app it is shown the moment a
+    search, a tile or a mix is tapped, and cleared the instant the first audio
+    arrives — so it lasts as long as the wait does, and no longer.</p>
+  </div>
+
+  <div class="phone"><div class="frame">
+      <div class="fam-loading" id="famLoading" role="status" aria-live="polite">
+        <div class="fam-loading-wm" aria-label="FAM">
+          <span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.55 4.55 12.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V9.2A3.2 3.2 0 0 1 9.2 6H16"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.55 4.55 16.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.55 4.55 14.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span>
+        </div>
+
+        <div class="fam-loading-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 44" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+            <path class="chev c1" d="M6 38l18-16 18 16"/>
+            <path class="chev c2" d="M6 26l18-16 18 16"/>
+            <path class="chev c3" d="M6 14l18-16 18 16"/>
+          </svg>
+        </div>
+
+        <div class="fam-loading-word">FAMiliarizing…</div>
+        <div class="fam-loading-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+
+        <!-- The honest wait, kept. PROBLEMS.md 55 removed the filler and put
+             this in its place: what it is waiting for, and how long it has
+             been. A brand animation that replaced it would be the same
+             mistake in a nicer font. -->
+        <div class="gen-text" id="famLoadingStatus">Writing your episode…</div>
+      </div>
+  </div></div>
+
+  <div class="controls" id="controls">
+      <button onclick="setStatus(0)">Instant answer</button>
+      <button onclick="setStatus(1)">Needs today's facts</button>
+      <button onclick="setStatus(2)">No API key</button>
+      <button onclick="setStatus(3)">Key rejected</button>
+      <button onclick="flash()">Show a cache hit (450ms)</button>
+  </div>
+
+  <div class="note">
+    The line underneath is the honest wait from <b>PROBLEMS.md §55</b>: it says
+    what is being waited for, never how good it will be. On a cache hit the
+    whole thing lasts 450ms — the floor added because 3ms read as a glitch
+    rather than as speed.
+  </div>
+
+<script>
+  var STATUSES = [
+    'Writing your episode…',
+    'Answering now — checking sources underneath… 6s',
+    'Playing the built-in sample script…',
+    "The server's API key was rejected — no episode can be written."
+  ];
+  var el = document.getElementById("famLoading");
+  var line = document.getElementById("famLoadingStatus");
+  var buttons = document.getElementById("controls").querySelectorAll("button");
+
+  function setStatus(i){
+    line.textContent = STATUSES[i];
+    el.classList.add("active");
+    buttons.forEach(function(b, n){ b.classList.toggle("on", n === i); });
+  }
+
+  // What a cache hit actually looks like: shown, then held to the floor and
+  // cleared. Anything shorter is the flash the floor exists to prevent.
+  function flash(){
+    el.classList.remove("active");
+    setTimeout(function(){ el.classList.add("active"); }, 260);
+    setTimeout(function(){ el.classList.remove("active"); }, 260 + 450);
+  }
+
+  setStatus(0);
+</script>
+</body>
+</html>

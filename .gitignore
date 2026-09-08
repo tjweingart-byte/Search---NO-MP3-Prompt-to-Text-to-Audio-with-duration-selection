@@ -19,3 +19,6 @@ voices/
 preview/fam-preview.html
 preview/fam-artifact.html
 attachments.db
+
+# The launcher installs into here; it is per-machine, never committed.
+.fam-venv/

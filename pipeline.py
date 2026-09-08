@@ -17,6 +17,7 @@ enough on its own:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
@@ -55,9 +56,6 @@ TOPUP_THRESHOLD = 4.0
 # Cap the number of extra requests, so a model that keeps under-writing cannot
 # turn one episode into an unbounded fan-out of API calls.
 MAX_TOPUPS = 2
-# Keep this much unspoken opener in hand: comfortably longer than one API call
-# (~1s) so a fill never interrupts speech, but low enough that we are not
-# re-fetching after every sentence.
 OPENER_BUFFER_TARGET = 6.0
 
 # How far ahead of the listener the opener keeps the stream. Enough that a slow
@@ -116,25 +114,6 @@ class _Pump:
             pass
 
 
-def _open_with_context(cold_open, plan, spoken: str):
-    """Call an opener with what has been said, falling back if it cannot take it.
-
-    DemoGenerator and any generator written before fills carried context still
-    take the plan alone; this keeps them working rather than making the second
-    argument a breaking change.
-    """
-    try:
-        return cold_open(plan, spoken)
-    except TypeError:
-        return cold_open(plan)
-
-
-def _buffered_seconds(sentences: list[str]) -> float:
-    """Roughly how long the unspoken opener sentences would take to say."""
-    words = sum(count_words(s) for s in sentences)
-    return words / settings.target_wpm * 60.0
-
-
 async def _replay(sentences: list[str]) -> AsyncIterator[str]:
     """Feed a cached script back through the normal speaking path."""
     for sentence in sentences:
@@ -155,9 +134,9 @@ class GenerationStats:
     truncated: bool = False
     topups: int = 0
     #: "hit" | "miss" | "off" - whether this episode reused a shared script.
+    answered_first: bool = False
+    handover_seconds: float = 0.0
     cache: str = "off"
-    #: Whether a fast-model opener covered the research latency.
-    cold_open: bool = False
     #: When generation began, for audio-produced vs wall-clock comparisons.
     started_at: float = field(default_factory=time.perf_counter)
     #: Total seconds spent inside the speech engine.
@@ -169,8 +148,6 @@ class GenerationStats:
     starved: bool = False
     #: Wall clock at which the first audio left the pipeline.
     first_audio_at: float = 0.0
-    #: How many times the opener was topped up while waiting for the script.
-    opener_fills: int = 0
     script: list[str] = field(default_factory=list)
     #: The thread the episode left open, phrased as the follow-up a listener
     #: would ask for. Drives the one-tap suggestion in Go Deeper; empty when
@@ -192,13 +169,13 @@ class GenerationStats:
             "voice": self.voice,
             "truncated": self.truncated,
             "topups": self.topups,
+            "answered_first": self.answered_first,
+            "handover_seconds": round(self.handover_seconds, 2),
             "cache": self.cache,
-            "cold_open": self.cold_open,
             "synth_seconds": round(self.synth_seconds, 2),
             "min_headroom": round(self.min_headroom, 1) if self.min_headroom < 999 else None,
             "starved": self.starved,
             "first_audio_at": round(self.first_audio_at, 2),
-            "opener_fills": self.opener_fills,
             "thread": self.thread,
         }
 
@@ -210,9 +187,18 @@ class PodcastPipeline:
         engine: Optional[TTSEngine] = None,
         cache: ScriptCache | None | str = AUTO,
         voice: Optional[str] = None,
+        cache_writes: bool = True,
     ):
         """`cache` takes a store, or AUTO to build the configured one, or None
         to disable caching.
+
+        `cache_writes=False` reads the cache but never adds to it. That is not
+        a tuning knob - it is what demo mode needs. Without credentials the
+        writer is a canned sample script that describes how the audio pipeline
+        works, and caching it stores that text under whatever the listener
+        actually asked, where Explore and every other listener will later be
+        served it as a real episode. Reads must stay on, because replaying is
+        the one thing that needs no credentials at all.
 
         The explicit AUTO sentinel exists because `cache=None` previously meant
         "build the default", so passing None to switch caching *off* silently
@@ -222,6 +208,7 @@ class PodcastPipeline:
         self.generator = generator or ScriptGenerator()
         self.engine = engine or build_engine()
         self.cache = build_cache() if cache is AUTO else cache
+        self.cache_writes = cache_writes
         #: Passed to the engine on every sentence. The script is unaffected by
         #: it, which is why the script cache deliberately ignores voice.
         self.voice = voice
@@ -335,161 +322,76 @@ class PodcastPipeline:
         yield pcm
         yield gap
 
-    async def _run_cold_open(
+    async def _answer_first(
         self,
         plan: EpisodePlan,
-        cold_open,
-        opener: "_Pump",
-        body: "_Pump",
         pace: PaceController,
         stats: GenerationStats,
+        notes: ScriptNotes,
     ) -> AsyncIterator[bytes]:
-        """Keep talking until the researched script arrives.
+        """Answer immediately from knowledge; let research take over underneath.
 
-        The opener exists to cover research latency. Its old failure was running
-        out: a fixed number of refills covered about twenty seconds, and a
-        researched call can take longer than that, so the listener heard the
-        difference as dead air.
+        The listener asked something that needs today's facts, and researching
+        it costs 10-25 seconds before a word can be written. Both halves start
+        at once: one with no tools, which begins writing straight away, and one
+        with web search, which is still reading. The first is spoken while the
+        second works, and the moment the researched half has a sentence ready
+        the episode moves to it.
 
-        Three things are needed, and for a long time only two were here:
+        This is the shape the cold open had and the content it lacked. The
+        opener was told to state no facts, so the seconds it covered were
+        worthless and there were only five of them. Here the cover *is* the
+        answer - the durable half of it - written by the same model at full
+        length, so a listener who never reaches the handover has still been
+        told something true.
 
-        * **The budget is time, not a refill count.** More material is fetched
-          for as long as the script is still coming.
-        * **Refills are started before the current batch runs out**, not after.
-          Fetching only once the last sentence has been spoken leaves a hole the
-          width of an API call, every time.
-        * **Every fill in flight is drained, not just the newest.** Starting a
-          refill used to rebind the single `opener` name, orphaning whatever the
-          previous call had not yet queued. Those sentences were written, paid
-          for, and thrown away - measured at 52 written against 20 spoken on a
-          30s script - while the listener sat in silence waiting for the
-          replacement. See PROBLEMS.md §46.
-
-        Past `COLD_OPEN_MAX_SECONDS` it stops regardless: at some point a gap is
-        better than talking indefinitely about nothing.
+        The two halves are divided by **content, not by text**. The opening
+        cannot know what the research will find and the research cannot know
+        the opening's words, so neither is asked to: the opening takes what
+        does not change week to week, the continuation takes what is current
+        and is told to correct the opening in passing if its sources disagree.
         """
-        spoken_any = False
-        fills = 0
-        buffer: list[str] = []
-        # What the listener has actually heard, so a fill continues it rather
-        # than opening the episode a second time.
-        said: list[str] = []
-        waiting = asyncio.create_task(body.prime())
-        # Every opener call still in flight, oldest first. A list rather than a
-        # single name because a refill must *add* a source of sentences, not
-        # replace the one that is still delivering.
-        live: list[_Pump] = [opener]
-        pumps = [opener]
+        instant_plan = dataclasses.replace(plan, search=False, role="opening")
+        research_plan = dataclasses.replace(plan, search=True, role="continuation")
+
+        instant = self._start(self.generator.stream_sentences(instant_plan, ScriptNotes()))
+        research = self._start(self.generator.stream_sentences(research_plan, notes))
+        stats.answered_first = True
+        handover = time.perf_counter()
+
         try:
-            # Let the script fail before committing to an opener: playing an
-            # introduction to an episode that then dies is the silent-failure
-            # bug all over again.
-            await asyncio.wait({waiting}, timeout=settings.cold_open_grace)
-            if waiting.done():
-                try:
-                    first = waiting.result()
-                except Exception:  # pragma: no cover - defensive
-                    first = None
-                if first is None or isinstance(first, Exception):
-                    return
-
-            deadline = time.perf_counter() + settings.cold_open_max_seconds
-            spoken_count = 0
-
-            # The control law: keep the listener a fixed distance ahead of
-            # themselves, and no further.
-            #
-            # Audio is synthesised many times faster than it is heard, so a
-            # wall-clock budget lets the opener run away - an earlier version
-            # produced 75 seconds of preamble to cover a 30 second wait.
-            # Instead, speak only while the audio produced is less than
-            # OPENER_HEADROOM_TARGET seconds ahead of the wall clock. That is
-            # exactly the buffer needed to never fall silent, and it paces the
-            # opener to roughly real time, so a fast script wastes almost none
-            # of it.
-            while True:
-                if waiting.done() and spoken_count > 0:
+            # Speak the instant half one sentence at a time, checking after each
+            # whether research has arrived. Checking between sentences rather
+            # than mid-sentence is what makes the handover inaudible.
+            # The instant half may cover at most this much of the episode. Past
+            # it, the researched half is owed the remainder - see
+            # answer_first_share in config.py for why this ceiling exists.
+            cover_ceiling = plan.target_seconds * settings.answer_first_share
+            while not research.ready() and pace.elapsed < cover_ceiling:
+                item = await instant.next()
+                if item is None or isinstance(item, Exception):
+                    # The instant half ended or failed before research landed.
+                    # Nothing to cover with; wait for the researched half, which
+                    # is the episode either way.
+                    if isinstance(item, Exception):
+                        log.warning("instant half failed; waiting for research",
+                                    exc_info=item)
                     break
-                if time.perf_counter() >= deadline:
-                    log.warning("opener hit its %.0fs ceiling; the script is very slow",
-                                settings.cold_open_max_seconds)
-                    break
-
-                wall = time.perf_counter() - stats.started_at
-                headroom = pace.elapsed - wall
-
-                if spoken_count > 0 and headroom >= OPENER_HEADROOM_TARGET:
-                    # Comfortably ahead: stop talking and wait for the script.
-                    await asyncio.wait({waiting}, timeout=0.25)
-                    continue
-
-                # Drain every fill that is still delivering, oldest first, so
-                # sentences arrive in the order they were written.
-                for pump in list(live):
-                    while pump.ready():
-                        item = await pump.next()
-                        if item is None:
-                            live.remove(pump)
-                            break
-                        if isinstance(item, Exception):
-                            log.warning("cold open failed; continuing", exc_info=item)
-                            live.remove(pump)
-                            break
-                        buffer.append(item)
-
-                # Top up on seconds of speech held, and start the next fill
-                # before the buffer drains so the API call overlaps with speech.
-                held = _buffered_seconds(buffer)
-                if (
-                    held < OPENER_BUFFER_TARGET
-                    and not waiting.done()
-                    and fills < MAX_OPENER_FILLS
-                    and time.perf_counter() < deadline
-                    # Only when every fill already in flight has finished
-                    # delivering. `ready()` is false whenever a streaming call
-                    # is merely between sentences, so testing that fired a new
-                    # request every few hundred milliseconds and bought far
-                    # more opener than could ever be spoken.
-                    and not live
-                ):
-                    fills += 1
-                    log.info(
-                        "opener fill %d (%.1fs held, %.1fs spoken, %.1fs headroom)",
-                        fills, held, pace.elapsed, headroom,
-                    )
-                    nxt = self._start(
-                        _open_with_context(cold_open, plan, " ".join(said + buffer))
-                    )
-                    live.append(nxt)
-                    pumps.append(nxt)
-
-                if not buffer:
-                    if waiting.done():
-                        break
-                    # Wake on the script, or on any fill delivering a sentence.
-                    watch = {waiting}
-                    watch |= {asyncio.ensure_future(p.peek()) for p in live}
-                    await asyncio.wait(
-                        watch, timeout=0.5, return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    continue
-
-                sentence = buffer.pop(0)
-                async for chunk in self._speak_one(sentence, pace, stats):
-                    spoken_any = True
+                async for chunk in self._speak_one(item, pace, stats):
                     yield chunk
-                said.append(sentence)
-                spoken_count += 1
                 if stats.truncated:
-                    break
-
-            stats.cold_open = spoken_any
-            stats.opener_fills = fills
+                    return
         finally:
-            for pump in pumps:
-                await pump.close()
-            if not waiting.done():
-                await asyncio.wait({waiting})
+            await instant.close()
+
+        stats.handover_seconds = time.perf_counter() - handover
+        if not research.ready():
+            log.info("answered from knowledge for %.0fs; now waiting on research",
+                     pace.elapsed)
+        log.info("research took over after %.1fs of answering from knowledge",
+                 stats.handover_seconds)
+        async for chunk in self._speak(research, pace, stats):
+            yield chunk
 
     async def _cache_key(self, plan: EpisodePlan) -> str:
         """Where this episode lives in the shared cache. "" when caching is off."""
@@ -560,20 +462,17 @@ class PodcastPipeline:
         stats.cache = "miss" if self.cache else "off"
 
         # --- Generate ------------------------------------------------------
-        # Start the researched call FIRST so web search is already running
-        # while the cold open is being written and spoken.
+        # Nothing is spoken until the real script arrives. The opener that used
+        # to cover this wait is gone: see PROBLEMS.md 55.
         notes = ScriptNotes()
-        body = self._start(self.generator.stream_sentences(plan, notes))
-        cold_open = getattr(self.generator, "cold_open", None)
-        if settings.enable_cold_open and plan.reserved_words and cold_open:
-            opener = self._start(cold_open(plan))
-            async for chunk in self._run_cold_open(
-                plan, cold_open, opener, body, pace, stats
-            ):
-                yield chunk
 
-        async for chunk in self._speak(body, pace, stats):
-            yield chunk
+        if plan.search and settings.answer_first:
+            async for chunk in self._answer_first(plan, pace, stats, notes):
+                yield chunk
+        else:
+            body = self._start(self.generator.stream_sentences(plan, notes))
+            async for chunk in self._speak(body, pace, stats):
+                yield chunk
 
         # The model under-wrote. Rather than pad minutes of silence, buy more
         # script: a top-up request is small, cheap and arrives while the
@@ -596,7 +495,7 @@ class PodcastPipeline:
 
         stats.thread = notes.thread
 
-        if self.cache and shareable and stats.script:
+        if self.cache and self.cache_writes and shareable and stats.script:
             ttl = ttl_for(plan.query)
             self.cache.put(key, stats.script, ttl, plan.query, stats.thread, plan.minutes)
             log.info("cached %d sentences for %r (ttl %ds)", len(stats.script), plan.query, ttl)

@@ -24,12 +24,60 @@ Two shorter forms:
 ./dev.sh preview   # rebuild the preview file only
 ```
 
+## Showing the product (`./demo.sh`)
+
+`./dev.sh` is the development loop. `./demo.sh` is the product, running, with
+every tab able to play a real episode:
+
+```sh
+./demo.sh
+```
+
+It checks what this machine will actually do *before* starting the server —
+whether there is an API key (without one every episode is the same canned
+sample), whether a real voice model is installed (without one playback is a
+placeholder tone), and whether the shared cache has anything in it. It refuses
+to start quietly broken; `./demo.sh --anyway` overrides that when you only want
+to look at the interface.
+
+Then it offers to seed, and prints where to press on each tab and what that
+proves.
+
+### Seeding, and why a demo needs it
+
+```sh
+python tools/seed_demo.py --dry-run   # what it would write, spends nothing
+python tools/seed_demo.py             # 8 real episodes, 8 model calls, no audio
+```
+
+**Explore cannot fill itself.** It replays episodes other listeners generated
+and refuses to generate — that guarantee lives in the pipeline, not in the
+interface's good intentions — so on a fresh database it is a dead tab no matter
+how much you tap it. myFAM's Trending rail has the same problem from the other
+direction: it ranks a global event log, and an empty log ranks nothing.
+
+The seeder writes that history. It generates real scripts into the shared
+cache, records three other listeners having played them at plausible times
+across the last few days, and adds two echoes so an Explore card can say who
+sent it. It costs one model call per episode and no speech synthesis at all —
+audio is regenerated from the script in milliseconds, so seeding it would be
+storing the cheap half.
+
+It **refuses to run without an API key**. The server happily falls back to a
+canned script, and a cache seeded with that looks exactly like a cache of real
+episodes until you press play, which is worse than an empty Explore.
+
+After seeding, Trending ranks immediately; "Your circle is on this" stays empty
+until you play something, because it ranks overlap with *you*. That is the
+feature working, not a seed that failed.
+
 ## Three ways to look at it, and what each one proves
 
 | | Opens on a phone | Real scripts & audio | Needs |
 |---|---|---|---|
 | **Preview artifact** | anywhere, one tap | no — fixtures and silence | nothing |
 | **`./dev.sh`** | same wifi only | yes | this machine running |
+| **`./demo.sh`** | same wifi only | yes, every tab | this machine + API key |
 | **Hosted deploy** | anywhere | yes | a host + API key |
 
 The preview is the interface running for real against fake data: taps, swipes,

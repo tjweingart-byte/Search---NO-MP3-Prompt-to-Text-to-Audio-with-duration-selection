@@ -6,9 +6,98 @@ tuned without touching code (12-factor style).
 from __future__ import annotations
 
 import os
+import pathlib
 from dataclasses import dataclass, field
 
 import voice_store
+
+
+def shared_env_path() -> pathlib.Path:
+    """The per-machine settings file, alongside the shared voice store.
+
+    `~/.fam/env` is deliberately outside any project folder. A key kept in a
+    project `.env` is lost every time the app is unpacked somewhere new, and
+    the workaround for that is pasting the key again - into a terminal, into a
+    chat, into whatever is to hand. One file per machine, set once.
+    """
+    override = os.environ.get("FAM_ENV_FILE")
+    if override:
+        return pathlib.Path(override).expanduser()
+    return pathlib.Path.home() / ".fam" / "env" if pathlib.Path.home() else pathlib.Path(".fam-env")
+
+
+def key_source() -> str:
+    """Where the key in force came from. A key that works is not much comfort
+    when you cannot tell which file the app actually read."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return "nowhere - no key is set"
+    project = pathlib.Path(__file__).resolve().parent / ".env"
+    for path, label in ((project, "the project .env"), (shared_env_path(), str(shared_env_path()))):
+        try:
+            if any(line.strip().lstrip("export ").startswith("ANTHROPIC_API_KEY=")
+                   for line in path.read_text().splitlines()):
+                return label
+        except (OSError, UnicodeDecodeError):
+            continue
+    return "the environment"
+
+
+def _load_dotenv() -> None:
+    """Read .env into the environment, if it is not already there.
+
+    The shell scripts source .env before starting the server, so for a long
+    time nothing in Python needed to. Then `python app.py` - which app.py
+    itself offers, in its __main__ block - started the server without it, the
+    key was invisible, and the app fell back to the canned demo script while
+    .env sat there with a perfectly good key in it. Loading it here means the
+    key is found however the app is started.
+
+    A real environment variable always wins: this only fills in what is unset,
+    so `MODEL=... python app.py` still overrides the file.
+    """
+    # Tests must not change result because of what is in a developer's .env -
+    # a key there would flip the app out of demo mode mid-suite. conftest.py
+    # sets this before anything imports config.
+    if os.environ.get("FAM_IGNORE_DOTENV"):
+        return
+    lines: list[str] = []
+    # ~/.fam/env first, project .env second, so the project can override the
+    # machine-wide setting. The shared file exists for the same reason
+    # ~/.fam/voices does: every new copy of the app is a fresh folder with no
+    # .env in it, and re-pasting a key into each one is how keys get pasted
+    # into the wrong places.
+    for path in (shared_env_path(), pathlib.Path(__file__).resolve().parent / ".env"):
+        try:
+            lines += path.read_text().splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+    if not lines:
+        return
+    # Last occurrence wins, which is what `source .env` does. A loader that took
+    # the first would disagree with the shell scripts about the same file - and
+    # a .env that has been appended to twice (an old key, then the corrected
+    # one) would authenticate with the wrong one, silently.
+    found: dict[str, str] = {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        # Tolerate `export FOO=bar` and quoted values, which is what people
+        # actually write in a .env.
+        if name.startswith("export "):
+            name = name[len("export "):].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if name:
+            found[name] = value
+    for name, value in found.items():
+        if name not in os.environ:
+            os.environ[name] = value
+
+
+_load_dotenv()
 
 
 def _env_int(name: str, default: int) -> int:
@@ -53,46 +142,45 @@ class Settings:
     allow_topups: bool = field(
         default_factory=lambda: os.environ.get("ALLOW_TOPUPS", "0") not in ("0", "false", "False")
     )
-    # OFF by default. Web search is the single biggest cost in time-to-first-word
-    # - it front-loads 10-25 seconds before the model writes anything - and the
-    # whole product promise is that audio starts almost immediately. Turn it on
-    # per request with `search=1`, for a question that genuinely needs today's
-    # facts and where the listener will accept waiting for them.
+    # auto | never | always.
+    #
+    # `auto` reads the question: one that names a moving target - "latest",
+    # "today", "score", "breaking" - gets researched and waits for it; one that
+    # does not is answered from what the model already knows, immediately.
+    # Search front-loads 10-25 seconds before the first word, so paying that on
+    # every episode meant paying it mostly for questions that did not need it.
+    # A request can still say search=1 or search=0 explicitly and win.
+    search_mode: str = field(
+        default_factory=lambda: (
+            "always" if os.environ.get("ENABLE_WEB_SEARCH", "") in ("1", "true", "True")
+            else os.environ.get("SEARCH_MODE", "auto").lower()
+        )
+    )
+    #: Kept so existing callers and the health report still have a boolean to
+    #: read; "does this specific episode search" is now a per-question answer.
     enable_web_search: bool = field(
-        default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "0") not in ("0", "false", "False")
+        default_factory=lambda: os.environ.get("ENABLE_WEB_SEARCH", "0") not in ("0", "false", "False", "")
     )
-    # Each search adds seconds before the first researched sentence, and the
-    # listener hears that wait as preamble. Three is enough for a briefing.
-    max_web_searches: int = _env_int("MAX_WEB_SEARCHES", 3)
+    max_web_searches: int = _env_int("MAX_WEB_SEARCHES", 3)  # a ceiling, not a target
+    # Answer first, research underneath. When an episode is going to be
+    # researched, run a second call with no tools that starts writing
+    # immediately, speak that while the search runs, and hand over the moment
+    # the researched half has a sentence ready. The listener never waits, and
+    # what covers the wait is the answer rather than filler - which is the one
+    # thing the deleted cold open could never be. Costs a second model call on
+    # researched episodes only.
+    answer_first: bool = field(
+        default_factory=lambda: os.environ.get("ANSWER_FIRST", "1") not in ("0", "false", "False")
+    )
+    # The most of an episode the instant half may speak before it must give way.
+    #
+    # Without a ceiling this design quietly defeats itself: synthesis runs far
+    # faster than research, so the from-knowledge half can finish the entire
+    # episode in the time the search takes, and the listener gets an
+    # unresearched answer to a question that was researched *because* it needed
+    # today's facts. Reserving the rest means the research always gets said.
+    answer_first_share: float = _env_float("ANSWER_FIRST_SHARE", 0.5)
 
-    # --- Cold open --------------------------------------------------------
-    # A small, fast model writes one framing sentence with no tools while the
-    # main model is still researching, so speech starts almost immediately.
-    # OFF. The opener was prompted to state no facts, which made it filler by
-    # construction, and covering a long research wait meant 15-30 seconds of it.
-    # Nobody wants that. The interface now shows an honest loading state instead.
-    # ENABLE_COLD_OPEN=1 brings it back.
-    enable_cold_open: bool = field(
-        default_factory=lambda: os.environ.get("ENABLE_COLD_OPEN", "0") not in ("0", "false", "False")
-    )
-    cold_open_model: str = field(
-        default_factory=lambda: os.environ.get("COLD_OPEN_MODEL", "claude-haiku-4-5")
-    )
-    # Several short framing sentences, released only as long as the main script
-    # is still being written. Unused ones are discarded, so this is an upper
-    # bound on preamble, not a fixed cost.
-    cold_open_words: int = _env_int("COLD_OPEN_WORDS", 70)
-    # Longest the opener may keep talking while waiting for the main script.
-    # Past this a gap is preferable to endless preamble.
-    # Wall-clock ceiling on the opener. Long enough to cover a researched call
-    # (web search plus a slow model can run past 30s); past it a gap is better
-    # than talking indefinitely about nothing.
-    cold_open_max_seconds: float = _env_float("COLD_OPEN_MAX_SECONDS", 60.0)
-    # How long to let the main script fail before any opener is spoken, so a
-    # bad key produces a clean error rather than an intro to nothing.
-    cold_open_grace: float = _env_float("COLD_OPEN_GRACE", 0.35)
-
-    # --- Shared script cache ---------------------------------------------
     cache_enabled: bool = field(
         default_factory=lambda: os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")
     )
@@ -151,6 +239,10 @@ class Settings:
     port: int = _env_int("PORT", 8000)
     # Simple abuse guard: seconds between generations from one client.
     rate_limit_seconds: float = _env_float("RATE_LIMIT_SECONDS", 3.0)
+    # The cheap endpoints - JSON reads and cache lookups - need a ceiling, not
+    # a pace. Opening a tab fires several at once, so anything that throttles
+    # a burst throttles correct use. 0 switches it off.
+    read_limit_per_window: int = _env_int("READ_LIMIT_PER_WINDOW", 60)
 
     @property
     def bytes_per_second(self) -> int:
@@ -158,3 +250,18 @@ class Settings:
 
 
 settings = Settings()
+
+
+def describe_key(key: str = "") -> str:
+    """A safe fingerprint of the key in force, for error messages.
+
+    "invalid x-api-key" looks the same whichever wrong key produced it, and the
+    first question is always whether the one being sent is the one you think.
+    Never prints enough to be a secret: a prefix, a length and the last four.
+    """
+    key = key or settings.anthropic_api_key
+    if not key:
+        return "no key configured"
+    shape = "looks like an API key" if key.startswith("sk-ant-") else (
+        "DOES NOT start with sk-ant- - is this an API key?")
+    return f"{key[:8]}...{key[-4:]} ({len(key)} chars, {shape})"
