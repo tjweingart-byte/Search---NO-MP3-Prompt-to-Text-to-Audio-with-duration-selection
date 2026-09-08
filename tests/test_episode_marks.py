@@ -145,13 +145,46 @@ def test_every_synthesis_is_recorded_with_its_size_and_cost():
     assert [c.index for c in chunks] == list(range(len(chunks)))
 
 
-def test_the_decoupling_is_observed_not_asserted():
-    """`backlog_at_claude_complete` is the queue depth at the moment Claude
-    finished. Above zero means synthesis was behind and the model finished
-    anyway - which is the whole Phase 6 claim, seen."""
-    summary = episode("phase6").marks.summary()
+def test_the_decoupling_verdict_comes_from_the_two_instants_that_make_it():
+    """`claude_decoupled` is `first_tts_start < claude_complete`, and nothing
+    else.
+
+    It used to be `backlog_at_claude_complete > 0` - whether the bounded work
+    queue happened to be non-empty when speaking stopped. That is a different
+    question, and on a real 4090 run it reported COUPLED for a healthy episode
+    whose consumer had simply drained the queue. The backlog is still recorded,
+    as corroboration; it is not the verdict.
+    """
+    marks = episode("phase6").marks
+    summary = marks.summary()
+    assert summary["claude_decoupled"] is (
+        marks.events["first_tts_start"] < marks.events["claude_complete"])
     assert summary["backlog_at_claude_complete"] is not None
-    assert summary["claude_decoupled"] is not None
+
+
+def test_an_unmeasured_run_is_unknown_rather_than_coupled():
+    """"Not measured" and "measured and false" must not look alike: one is a
+    gap in the instrumentation, the other is a product failure."""
+    from episode_marks import EpisodeMarks
+
+    marks = EpisodeMarks()
+    assert marks.summary()["claude_decoupled"] is None
+    marks.mark("first_tts_start")
+    assert marks.summary()["claude_decoupled"] is None, (
+        "one instant is not a verdict")
+    marks.mark("claude_complete")
+    assert marks.summary()["claude_decoupled"] is True
+
+
+def test_a_queue_drained_at_the_end_is_not_reported_as_coupled():
+    """The exact 4090 failure: backlog zero on a decoupled run."""
+    from episode_marks import EpisodeMarks
+
+    marks = EpisodeMarks()
+    marks.mark("first_tts_start")
+    marks.mark("claude_complete")
+    marks.backlog_at_claude_complete = 0
+    assert marks.summary()["claude_decoupled"] is True
 
 
 def test_legacy_does_not_claim_a_backlog_it_cannot_measure():
@@ -159,14 +192,47 @@ def test_legacy_does_not_claim_a_backlog_it_cannot_measure():
     it stays absent rather than reporting a misleading zero."""
     summary = episode("legacy").marks.summary()
     assert summary["backlog_at_claude_complete"] is None
-    assert summary["claude_decoupled"] is None
 
 
-def test_a_truncated_episode_reports_no_claude_completion():
-    """It did not complete - we stopped it. Absent beats a number that would
-    read as "Claude took this long"."""
+def test_only_the_decoupled_pipeline_can_say_when_claude_finished():
+    """The difference between the two architectures, in one measurement.
+
+    Both mark the model's completion in the producer now. On a truncated
+    episode - which is most of them - only Phase 6 has one to report, and the
+    reason is the whole point:
+
+    * legacy's queue is bounded at QUEUE_DEPTH, so the reader is backpressured
+      by the voice. When truncation cancels it, Claude is *still writing*.
+      There is no completion to record because it never completed.
+    * Phase 6 puts a character-bounded buffer between the reader and the voice,
+      so the reader runs to the end of the model stream regardless of how far
+      behind synthesis is. It finishes, and says when.
+
+    So the absence in legacy and the presence in Phase 6 are the same fact seen
+    from two sides, and it is stronger evidence than the verdict flag: legacy
+    cannot even be asked the question.
+    """
+    assert episode("legacy").marks.summary()["claude_total"] is None
+    assert episode("phase6").marks.summary()["claude_total"] is not None
+
+
+def test_a_truncated_episode_still_records_when_claude_finished():
+    """Reversed, and the reversal is the point.
+
+    This used to assert `claude_total is None` on a truncated episode, on the
+    reasoning that Claude did not complete - we stopped it. That was true of
+    where the mark was taken, not of Claude: the mark was set by the *consumer*
+    on receiving the queue sentinel, which is the end of speaking, and a
+    truncated episode breaks before the sentinel arrives. Most episodes
+    truncate, so the model's completion was usually unrecorded and the
+    decoupling verdict had nothing to stand on.
+
+    The mark now belongs to the producer, which is the only place that knows
+    the stream ended. Truncation stops the speaking, not the reading, so the
+    model's finish is a real instant and it is recorded.
+    """
     summary = episode("phase6").marks.summary()
-    assert summary["claude_total"] is None
+    assert summary["claude_total"] is not None
     assert summary["speaking_total"] is not None
 
 

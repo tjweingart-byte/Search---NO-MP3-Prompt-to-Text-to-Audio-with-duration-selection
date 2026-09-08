@@ -485,11 +485,19 @@ def test_stream_pcm_routes_every_pump_through_the_selector():
     assert source.count("self._speak_pump(") == 3
 
 
-def test_legacy_start_differs_from_trunk_only_by_the_step_5_fix():
-    """`_start` was byte-identical to trunk through Step 4. Step 5 changed it
-    on purpose - and only in one place: the sentinel moved out of `finally`,
-    so a cancelled producer can no longer re-block delivering it. Everything
-    else about the method, including the queue and its depth, is untouched.
+def test_legacy_start_differs_from_trunk_only_by_two_deliberate_changes():
+    """`_start` was byte-identical to trunk through Step 4. Two changes since,
+    both on purpose, and this test exists to keep the list at two.
+
+    1. The sentinel moved out of `finally`, so a cancelled producer can no
+       longer re-block delivering it.
+    2. The model's completion is marked here, where the stream actually ends.
+       It was marked by the consumer on receiving the sentinel - the end of
+       *speaking* - and on a truncated episode the consumer breaks before the
+       sentinel arrives, so it was usually never marked at all.
+
+    Everything else about the method, including the queue and its depth, is
+    untouched: the legacy path must keep behaving exactly as it shipped.
     """
     import subprocess
 
@@ -509,14 +517,25 @@ def test_legacy_start_differs_from_trunk_only_by_the_step_5_fix():
     before = method(trunk, "_start")
     after = method(open(pipeline_module.__file__).read(), "_start")
 
-    # The defect, gone.
+    # Change 1: the defect gone, the fix present.
     assert "finally:\n                await queue.put(None)" in before
     assert "finally:" not in after
-    # The fix, present.
     assert "except asyncio.CancelledError:" in after
     assert "else:\n                await queue.put(None)" in after
-    # Everything up to the producer is identical, queue depth included.
+    # Change 2: the completion mark, and only inside the producer.
+    assert "marks.mark(completion_mark)" in after
+    assert "marks.mark(completion_mark)" not in before
+    # It must sit after the read loop - marking before the stream ends would
+    # report a completion that has not happened.
+    assert after.index("async for sentence in sentences:") < after.index(
+        "marks.mark(completion_mark)")
+    # Nothing else about what is queued changed.
+    assert before.count("await queue.put(sentence)") == after.count(
+        "await queue.put(sentence)")
+    # The queue and its depth are identical; only the signature gained the
+    # marks it writes to.
     head = "        queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_DEPTH)"
-    assert before.split(head)[0] == after.split(head)[0]
+    assert head in before and head in after
+    assert "QUEUE_DEPTH" in after
     assert "async for sentence in sentences:\n                    await queue.put(sentence)" in after
     assert "except Exception as exc:" in after and "await queue.put(exc)" in after

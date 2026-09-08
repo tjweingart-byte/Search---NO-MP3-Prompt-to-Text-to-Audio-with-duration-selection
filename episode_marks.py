@@ -65,9 +65,10 @@ class EpisodeMarks:
     started: float = field(default_factory=time.perf_counter)
     events: dict = field(default_factory=dict)
     chunks: list = field(default_factory=list)
-    #: Items waiting in the sentence queue when Claude finished. Greater than
-    #: zero means synthesis was behind and Claude finished anyway - the
-    #: decoupling, observed rather than asserted.
+    #: Items still queued when the speaking loop stopped. Corroboration for
+    #: the decoupling claim, never the claim itself: the queue is bounded at
+    #: QUEUE_DEPTH and a consumer that has just drained it reads zero on a
+    #: perfectly decoupled run. `claude_decoupled` is derived from the marks.
     backlog_at_claude_complete: Optional[int] = None
 
     def mark(self, name: str) -> float:
@@ -125,9 +126,27 @@ class EpisodeMarks:
             "chunks": len(self.chunks),
             "chunk_words": [c.words for c in self.chunks],
             "backlog_at_claude_complete": self.backlog_at_claude_complete,
-            "claude_decoupled": (None if self.backlog_at_claude_complete is None
-                                 else self.backlog_at_claude_complete > 0),
+            # The claim itself, from the two instants that make it: synthesis
+            # began strictly before the model stopped writing.
+            #
+            # This used to be `backlog > 0` - whether the work queue happened
+            # to be non-empty at the moment speaking stopped. That is a
+            # different question with a bounded queue behind it, and it made a
+            # healthy run report COUPLED because the consumer had just drained
+            # it. The backlog stays, as corroboration; it is not the verdict.
+            #
+            # None, not False, when either instant is missing: "not measured"
+            # and "measured and false" must not look alike.
+            "claude_decoupled": self._decoupled(),
         }
+
+    def _decoupled(self) -> Optional[bool]:
+        """Did synthesis start before the model finished writing?"""
+        started = self.events.get("first_tts_start")
+        finished = self.events.get("claude_complete")
+        if started is None or finished is None:
+            return None
+        return started < finished
 
     def to_dict(self) -> dict:
         return {"events": {k: round(v, 4) for k, v in self.events.items()},

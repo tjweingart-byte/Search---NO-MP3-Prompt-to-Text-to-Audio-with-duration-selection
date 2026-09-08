@@ -520,3 +520,35 @@ def test_a_slow_first_chunk_does_not_hide_a_later_stall():
 
 def test_no_chunks_is_unknown_not_continuous():
     assert episode.stall_analysis([]) is None
+
+
+def test_the_server_s_own_starvation_notes_are_read_back(tmp_path):
+    """A negative margin is a reconstruction; the server's WARNING is the
+    thing itself, and it names where the silence was."""
+    log = tmp_path / "server.log"
+    log.write_text(
+        "INFO something unrelated\n"
+        "WARNING STARVED after 12.4s: only 10.1s of audio made in 22.5s.\n"
+        "WARNING GAP: the cover ran out after 41.0s (instant half exhausted)\n"
+        "INFO research took over after 3.2s of answering from knowledge\n")
+    notes = episode.server_notes(log, 0)
+    assert len(notes) == 3
+    assert any("STARVED" in n for n in notes)
+    assert any("GAP:" in n for n in notes)
+
+
+def test_notes_from_a_previous_episode_are_not_attributed_to_this_one(tmp_path):
+    log = tmp_path / "server.log"
+    log.write_text("WARNING STARVED after 1.0s: an earlier episode.\n")
+    after = log.stat().st_size
+    with log.open("a") as handle:
+        handle.write("WARNING STARVED after 9.9s: this one.\n")
+    notes = episode.server_notes(log, after)
+    assert len(notes) == 1 and "9.9s" in notes[0]
+
+
+def test_a_clean_episode_has_nothing_to_report(tmp_path):
+    log = tmp_path / "server.log"
+    log.write_text("INFO episode played through with no trouble\n")
+    assert episode.server_notes(log, 0) == []
+    assert episode.server_notes(None, 0) == []

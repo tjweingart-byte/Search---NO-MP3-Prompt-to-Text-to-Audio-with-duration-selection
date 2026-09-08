@@ -176,11 +176,28 @@ def stall_analysis(chunks: list) -> dict | None:
             "continuous": worst >= 0.0, "final_lead_seconds": ahead}
 
 
+#: Lines the server writes when it knows it produced, or nearly produced, a
+#: silence. Read back so the report names the cause rather than leaving the
+#: reader to infer it from a negative margin.
+SERVER_WARNINGS = ("STARVED", "GAP:", "research took over after")
+
+
+def server_notes(log: "pathlib.Path | None", after: int) -> list:
+    """What the server said about this episode's playback, in its own words."""
+    if log is None or not log.exists():
+        return []
+    with log.open("r", encoding="utf-8", errors="replace") as handle:
+        handle.seek(after)
+        tail = handle.read()
+    return [line.strip() for line in tail.splitlines()
+            if any(marker in line for marker in SERVER_WARNINGS)]
+
+
 def _seconds(value) -> str:
     return "-" if value is None else f"{float(value):.2f}s"
 
 
-def report(run: dict, marks: dict | None) -> bool:
+def report(run: dict, marks: dict | None, notes: list | None = None) -> bool:
     headers = run["headers"]
     marks, chunks = normalise(marks)
     marks = marks or None
@@ -250,6 +267,14 @@ def report(run: dict, marks: dict | None) -> bool:
                       "STARVED      the player ran out; the listener heard "
                       "silence"))
 
+    if notes:
+        print("\nthe server's own account")
+        for line in notes:
+            # These are the lines the pipeline writes when it knows it went
+            # quiet. A starvation with no note behind it means the gap is
+            # somewhere this instrumentation does not reach.
+            print(f"  {line[-160:]}")
+
     decoupled = marks.get("claude_decoupled")
     print("\nverdict")
     if decoupled is True:
@@ -289,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     marks = (marks_from_log(log, after,
                             time.perf_counter() + LOG_GRACE_SECONDS)
              if log else None)
-    decoupled = report(run, marks)
+    decoupled = report(run, marks, server_notes(log, after))
 
     if args.out:
         out = pathlib.Path(args.out).expanduser()
@@ -309,6 +334,7 @@ def main(argv: list[str] | None = None) -> int:
                         if k.lower().startswith("x-")},
             "marks": marks,
             "playback": stall_analysis(normalise(marks)[1]),
+            "server_notes": server_notes(log, after),
         }, indent=2) + "\n", encoding="utf-8")
         print(f"\nwrote      {wav}  ({run['audio_seconds']:.0f}s of speech)")
         print(f"           {out / 'episode.json'}")

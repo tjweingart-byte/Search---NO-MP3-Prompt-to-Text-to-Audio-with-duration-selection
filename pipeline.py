@@ -20,7 +20,7 @@ import asyncio
 import dataclasses
 import logging
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Callable, Optional
 
 import time
 
@@ -140,6 +140,15 @@ class GenerationStats:
     #: "hit" | "miss" | "off" - whether this episode reused a shared script.
     answered_first: bool = False
     handover_seconds: float = 0.0
+    #: Audio seconds the from-knowledge half covered before research took over.
+    cover_seconds: float = 0.0
+    #: True when the cover ran past ANSWER_FIRST_SHARE because research was
+    #: still reading. Sharing gave way to not going silent; recorded so the
+    #: trade is visible rather than assumed.
+    cover_overran: bool = False
+    #: Why the cover stopped: "research ready" is the healthy one. The others
+    #: name the case, so a gap in the artifact says which.
+    handover_reason: str = ""
     cache: str = "off"
     #: When generation began, for audio-produced vs wall-clock comparisons.
     started_at: float = field(default_factory=time.perf_counter)
@@ -179,6 +188,9 @@ class GenerationStats:
             "topups": self.topups,
             "answered_first": self.answered_first,
             "handover_seconds": round(self.handover_seconds, 2),
+            "cover_seconds": round(self.cover_seconds, 2),
+            "cover_overran": self.cover_overran,
+            "handover_reason": self.handover_reason,
             "cache": self.cache,
             "synth_seconds": round(self.synth_seconds, 2),
             "min_headroom": round(self.min_headroom, 1) if self.min_headroom < 999 else None,
@@ -221,7 +233,9 @@ class PodcastPipeline:
         #: it, which is why the script cache deliberately ignores voice.
         self.voice = voice
 
-    def _start(self, sentences: AsyncIterator[str]) -> "_Pump":
+    def _start(self, sentences: AsyncIterator[str],
+               marks: Optional[EpisodeMarks] = None,
+               completion_mark: str = "claude_complete") -> "_Pump":
         """Begin consuming a sentence stream *now*, into a bounded queue.
 
         Starting is separated from speaking so two model calls can be in flight
@@ -236,6 +250,15 @@ class PodcastPipeline:
             try:
                 async for sentence in sentences:
                     await queue.put(sentence)
+                # Here, and only here, is where the model stopped writing.
+                # This used to be marked by the *consumer* on receiving the
+                # sentinel, which is the end of speaking rather than the end of
+                # generation - and on a truncated episode the consumer breaks
+                # before the sentinel arrives, so it was never marked at all.
+                # Most episodes truncate, so `claude_total` was usually absent
+                # and the decoupling verdict had nothing to stand on.
+                if marks is not None:
+                    marks.mark(completion_mark)
             except asyncio.CancelledError:
                 # `close()` cancelled us. The sentinel is deliberately NOT sent
                 # here, and this must not be a `finally`: on the close path
@@ -257,6 +280,9 @@ class PodcastPipeline:
         self,
         sentences: AsyncIterator[str],
         policy: Optional[AssemblyPolicy] = None,
+        marks: Optional[EpisodeMarks] = None,
+        completion_mark: str = "claude_complete",
+        headroom: Optional[Callable[[], Optional[float]]] = None,
     ) -> "_Pump":
         """`_start`, with the reader decoupled and the sentences assembled.
 
@@ -304,6 +330,12 @@ class PodcastPipeline:
                     async for sentence in sentences:
                         if sentence and sentence.strip():
                             await buffer.put(sentence)
+                    # The model stopped writing. Marked in the reader because
+                    # this is the only place that knows it: the consumer's
+                    # sentinel means speaking ended, which on a truncated
+                    # episode never happens at all.
+                    if marks is not None:
+                        marks.mark(completion_mark)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -329,10 +361,21 @@ class PodcastPipeline:
                         waiting = asyncio.ensure_future(buffer.get())
                     done, _ = await asyncio.wait({waiting},
                                                  timeout=ASSEMBLER_TICK)
+                    # What the listener has left to play. The assembler's
+                    # headroom rule - "batching stops mattering when the
+                    # listener is about to catch up" - is the whole defence
+                    # against a mid-episode gap, and it was dead: both calls
+                    # below passed no headroom, so it never once fired. The
+                    # margin it guards is thin by design, because the first
+                    # chunk is deliberately tiny: ~9 words is 3.6s of audio,
+                    # and a 45-word chunk takes ~3.9s to synthesise at 4.6x
+                    # realtime. Batching to the cap on a thin buffer is
+                    # silence.
+                    left = headroom() if headroom is not None else None
                     if not done:
                         # Nothing new: run the assembler's timer and headroom
                         # rules so text is never held indefinitely.
-                        for chunk in assembler.due():
+                        for chunk in assembler.due(left):
                             await queue.put(chunk)
                         continue
                     sentence, waiting = waiting.result(), None
@@ -340,7 +383,7 @@ class PodcastPipeline:
                         for chunk in assembler.flush():
                             await queue.put(chunk)
                         break
-                    for chunk in assembler.offer(sentence):
+                    for chunk in assembler.offer(sentence, left):
                         await queue.put(chunk)
                 await queue.put(None)
             except asyncio.CancelledError:
@@ -377,10 +420,10 @@ class PodcastPipeline:
             while True:
                 item = await pump.next()
                 if item is None:
-                    stats.marks.mark("claude_complete")
-                    # Waiting work at the moment Claude finished. Greater than
-                    # zero means synthesis was behind and the model finished
-                    # anyway, which is the decoupling seen rather than claimed.
+                    # The sentinel means the *queue* is drained, not that the
+                    # model finished - that is marked in the producer, which is
+                    # the only place that knows. Recorded here: what was still
+                    # waiting, as corroboration for the verdict, never as it.
                     stats.marks.backlog_at_claude_complete = pump.queue.qsize()
                     break
                 if isinstance(item, Exception):
@@ -488,7 +531,6 @@ class PodcastPipeline:
             while True:
                 item = await pump.next()
                 if item is None:
-                    stats.marks.mark("claude_complete")
                     break
                 if isinstance(item, Exception):
                     if fatal:
@@ -581,7 +623,26 @@ class PodcastPipeline:
     def _phase6(self) -> bool:
         return settings.streaming_pipeline == "phase6"
 
-    def _pump_for(self, sentences: AsyncIterator[str]) -> "_Pump":
+    @staticmethod
+    def _headroom_probe(pace: PaceController, stats: GenerationStats):
+        """Seconds of audio made but not yet played, read live.
+
+        The same quantity `_speak_chunk` compares against zero to declare
+        starvation, so there is one definition of "the listener is about to run
+        out" rather than two. It is deliberately conservative - it counts from
+        the start of generation rather than from the first byte, so it
+        understates the buffer by the time-to-first-audio and therefore ships
+        early rather than late.
+        """
+        def probe() -> Optional[float]:
+            return pace.elapsed - (time.perf_counter() - stats.started_at)
+
+        return probe
+
+    def _pump_for(self, sentences: AsyncIterator[str],
+                  stats: Optional[GenerationStats] = None,
+                  pace: Optional[PaceController] = None,
+                  completion_mark: str = "claude_complete") -> "_Pump":
         """Start a sentence stream under whichever architecture is selected.
 
         Each call builds its own pump, and under Phase 6 its own script buffer
@@ -589,7 +650,12 @@ class PodcastPipeline:
         concurrent streams from ever sharing assembler state or interleaving
         their text into one chunk.
         """
-        return self._start_phase6(sentences) if self._phase6() else self._start(sentences)
+        marks = stats.marks if stats is not None else None
+        if not self._phase6():
+            return self._start(sentences, marks, completion_mark)
+        probe = (self._headroom_probe(pace, stats)
+                 if pace is not None and stats is not None else None)
+        return self._start_phase6(sentences, None, marks, completion_mark, probe)
 
     def _speak_pump(self, pump: "_Pump", pace: PaceController,
                     stats: GenerationStats, fatal: bool = True) -> AsyncIterator[bytes]:
@@ -635,27 +701,58 @@ class PodcastPipeline:
         research_plan = dataclasses.replace(plan, search=True, role="continuation")
 
         stats.marks.mark("claude_start")
+        # Two streams, two completions. "Claude finished" means the half that
+        # carries the episode - the researched one - so the cover half marks a
+        # name of its own rather than winning the race to a shared one.
         instant = self._pump_for(
-            self.generator.stream_sentences(instant_plan, ScriptNotes()))
+            self.generator.stream_sentences(instant_plan, ScriptNotes()),
+            stats, pace, completion_mark="instant_complete")
         research = self._pump_for(
-            self.generator.stream_sentences(research_plan, notes))
+            self.generator.stream_sentences(research_plan, notes), stats, pace)
         stats.answered_first = True
         handover = time.perf_counter()
 
+        # The instant half may cover at most this much of the episode before
+        # the researched half is owed the remainder - see answer_first_share in
+        # config.py for why the ceiling exists.
+        #
+        # It is a ceiling on *sharing*, not a deadline. Enforced as a deadline
+        # it produced the one thing this whole design exists to avoid: the
+        # cover stopped while research was still reading, and the next line
+        # blocked on `research.next()`, so the listener heard silence in the
+        # middle of an episode that had already started. Dead air is a worse
+        # outcome than an over-long opening, and the opening is a real answer
+        # rather than filler, so past the ceiling the cover keeps speaking
+        # until research is actually ready.
+        cover_ceiling = plan.target_seconds * settings.answer_first_share
+        # Where covering stops buying anything. Past here the researched half
+        # would have nothing left to speak into, so a gap is the better trade
+        # and is logged rather than hidden. Synthesis runs several times faster
+        # than research, so without this the cover can finish the whole episode
+        # while the search is still reading - which is the failure the ceiling
+        # was written to prevent, reintroduced by ignoring it.
+        cover_cap = plan.target_seconds * settings.answer_first_max_share
         try:
             # Speak the instant half one sentence at a time, checking after each
             # whether research has arrived. Checking between sentences rather
             # than mid-sentence is what makes the handover inaudible.
-            # The instant half may cover at most this much of the episode. Past
-            # it, the researched half is owed the remainder - see
-            # answer_first_share in config.py for why this ceiling exists.
-            cover_ceiling = plan.target_seconds * settings.answer_first_share
-            while not research.ready() and pace.elapsed < cover_ceiling:
+            while not research.ready() and pace.elapsed < cover_cap:
+                if (pace.elapsed >= cover_ceiling
+                        and not stats.cover_overran):
+                    stats.cover_overran = True
+                    log.info(
+                        "the cover reached its %.0fs ceiling and research is "
+                        "still reading; continuing to %.0fs rather than going "
+                        "silent", cover_ceiling, cover_cap)
                 item = await instant.next()
                 if item is None or isinstance(item, Exception):
                     # The instant half ended or failed before research landed.
-                    # Nothing to cover with; wait for the researched half, which
-                    # is the episode either way.
+                    # There is nothing left to cover with: this is the one case
+                    # that still produces a gap, and it is recorded rather than
+                    # hidden so the artifact says which case a run hit.
+                    stats.handover_reason = ("instant half failed"
+                                             if isinstance(item, Exception)
+                                             else "instant half exhausted")
                     if isinstance(item, Exception):
                         log.warning("instant half failed; waiting for research",
                                     exc_info=item)
@@ -663,16 +760,27 @@ class PodcastPipeline:
                 async for chunk in self._speak_item(item, pace, stats):
                     yield chunk
                 if stats.truncated:
+                    stats.handover_reason = "episode filled by the cover"
                     return
+            else:
+                stats.handover_reason = ("research ready" if research.ready()
+                                         else "cover cap reached")
         finally:
             await instant.close()
 
         stats.handover_seconds = time.perf_counter() - handover
+        stats.cover_seconds = pace.elapsed
         if not research.ready():
-            log.info("answered from knowledge for %.0fs; now waiting on research",
-                     pace.elapsed)
-        log.info("research took over after %.1fs of answering from knowledge",
-                 stats.handover_seconds)
+            # The only remaining way to a mid-episode gap on this path, and it
+            # is now named in the log rather than inferred from a silence.
+            log.warning(
+                "GAP: the cover ran out after %.1fs (%s) and research is not "
+                "ready. The listener hears silence until it is.",
+                pace.elapsed, stats.handover_reason)
+        log.info("research took over after %.1fs of answering from knowledge "
+                 "(%s, ceiling %.0fs%s)",
+                 stats.handover_seconds, stats.handover_reason, cover_ceiling,
+                 ", overran" if stats.cover_overran else "")
         async for chunk in self._speak_pump(research, pace, stats):
             yield chunk
 
@@ -730,7 +838,7 @@ class PodcastPipeline:
                 # Replaying the same sentences through the same controller
                 # reproduces the episode exactly - and costs zero API tokens.
                 async for chunk in self._speak_pump(
-                        self._pump_for(_replay(cached)), pace, stats):
+                        self._pump_for(_replay(cached), stats, pace), pace, stats):
                     yield chunk
                 async for chunk in self._finish(pace, stats):
                     yield chunk
@@ -763,7 +871,8 @@ class PodcastPipeline:
                 yield chunk
         else:
             stats.marks.mark("claude_start")
-            body = self._pump_for(self.generator.stream_sentences(plan, notes))
+            body = self._pump_for(
+                self.generator.stream_sentences(plan, notes), stats, pace)
             async for chunk in self._speak_pump(body, pace, stats):
                 yield chunk
 
@@ -780,8 +889,11 @@ class PodcastPipeline:
             words_needed = int(pace.remaining_seconds / 60.0 * settings.target_wpm)
             log.info("topping up %d words for %.1fs of dead air", words_needed, pace.remaining_seconds)
             before = pace.spoken_words
+            # A top-up is more of the same episode, so it must not re-mark a
+            # completion that already happened.
             extra = self._pump_for(
-                self.generator.top_up(plan, " ".join(stats.script), words_needed))
+                self.generator.top_up(plan, " ".join(stats.script), words_needed),
+                stats, pace, completion_mark="topup_complete")
             async for chunk in self._speak_pump(extra, pace, stats):
                 yield chunk
             if pace.spoken_words == before:

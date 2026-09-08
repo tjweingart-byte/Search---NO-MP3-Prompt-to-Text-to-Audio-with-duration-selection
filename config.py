@@ -194,6 +194,21 @@ class Settings:
     # unresearched answer to a question that was researched *because* it needed
     # today's facts. Reserving the rest means the research always gets said.
     answer_first_share: float = _env_float("ANSWER_FIRST_SHARE", 0.5)
+    # How far past that ceiling the cover may go when research is *still not
+    # ready*, as a share of the episode.
+    #
+    # The ceiling above is about sharing. Enforced as a deadline it produced
+    # the failure this pair exists to balance: the cover stopped, research had
+    # nothing yet, and the pipeline blocked on it - silence in the middle of an
+    # episode that had already started. Dead air is worse than an over-long
+    # opening, and the opening is a real answer rather than filler.
+    #
+    # So past the ceiling the cover keeps speaking, and this is where that
+    # stops: at 0.8 the researched half still gets a fifth of the episode,
+    # which is enough for it to be worth having said. Beyond here, covering has
+    # stopped buying anything - research would have nothing left to speak into
+    # - so the gap is accepted and logged rather than hidden.
+    answer_first_max_share: float = _env_float("ANSWER_FIRST_MAX_SHARE", 0.8)
     # legacy | phase6 - see STREAMING_PIPELINES above.
     #
     # Defaults to `legacy` and will keep defaulting to it until the Phase 6

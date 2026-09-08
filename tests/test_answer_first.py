@@ -58,6 +58,14 @@ def _run(pipe, plan, stats):
     asyncio.run(go())
 
 
+def _episode(generator, minutes: int = 3) -> GenerationStats:
+    """One researched episode, run to the end, with its stats."""
+    stats = GenerationStats()
+    _run(PodcastPipeline(generator=generator, engine=DebugEngine(), cache=None),
+         plan_episode("latest news on the fed", minutes), stats)
+    return stats
+
+
 @pytest.fixture
 def on(monkeypatch):
     patched = dataclasses.replace(pipeline_mod.settings, answer_first=True)
@@ -187,3 +195,86 @@ def test_a_whole_episode_gets_neither_brief():
 def test_each_half_carries_its_own_brief(role):
     plan = dataclasses.replace(plan_episode("latest news on the fed", 3), role=role)
     assert ROLE_BRIEFS[role].strip()[:40] in build_prompt(plan)
+
+
+# --------------------------------------------------------------------------
+# the handover must not be a silence
+#
+# The 4090 run starved on the researched question. `_answer_first` treated
+# ANSWER_FIRST_SHARE as a deadline: the cover stopped at the ceiling and the
+# next line blocked on `research.next()`, so a listener already mid-episode
+# heard nothing until the search returned. The ceiling is about sharing, and
+# dead air is a worse outcome than an over-long opening - especially since the
+# opening is a real answer rather than filler.
+# --------------------------------------------------------------------------
+def test_the_cover_keeps_speaking_when_research_is_not_ready_yet(on):
+    """The fix. Past the ceiling, silence is the alternative, so it keeps
+    going - and records that it did, so the trade is visible."""
+    generator = TwoHalves(research_delay=0.6)
+    stats = _episode(generator, minutes=1)
+    assert stats.cover_overran is True, "the cover stopped at the ceiling"
+    assert stats.cover_seconds > 0
+
+
+def test_the_cover_still_gives_way_the_moment_research_lands(on):
+    """Overrunning is only ever to avoid silence. The instant research has a
+    sentence, the episode moves to it."""
+    generator = TwoHalves(research_delay=0.0)
+    stats = _episode(generator, minutes=3)
+    assert stats.handover_reason == "research ready"
+    assert stats.cover_overran is False, "it overran with research already up"
+
+
+def test_the_cover_cannot_eat_the_episode(on):
+    """The failure the ceiling was written to prevent, which ignoring the
+    ceiling would have reintroduced.
+
+    Synthesis runs several times faster than research, so a cover with no cap
+    finishes the whole episode while the search is still reading - and the
+    listener gets an unresearched answer to a question that was researched
+    *because* it needed today's facts.
+    """
+    from config import settings as cfg
+
+    generator = TwoHalves(research_delay=5.0)
+    stats = _episode(generator, minutes=1)
+    plan_seconds = stats.plan_seconds
+    assert stats.cover_seconds <= plan_seconds * cfg.answer_first_max_share + 5
+    assert stats.handover_reason == "cover cap reached"
+
+
+def test_a_run_that_still_gaps_says_so_rather_than_going_quiet(on, caplog):
+    """One case can still produce a gap: the cover runs out of text before
+    research lands. It cannot be covered - there is nothing left to say - so it
+    is named in the log instead of being inferred from a silence."""
+    import logging
+
+    generator = TwoHalves(research_delay=0.5)
+    generator_sentences = 2
+    original = TwoHalves.stream_sentences
+
+    async def short(self, plan, notes=None):
+        if plan.search:
+            async for s in original(self, plan, notes):
+                yield s
+        else:
+            for i in range(generator_sentences):
+                yield f"Known sentence {i} explaining how the thing works."
+
+    TwoHalves.stream_sentences = short
+    try:
+        with caplog.at_level(logging.WARNING, logger="pipeline"):
+            stats = _episode(generator, minutes=3)
+    finally:
+        TwoHalves.stream_sentences = original
+
+    assert stats.handover_reason == "instant half exhausted"
+    assert any("GAP" in r.getMessage() for r in caplog.records), caplog.text
+
+
+def test_the_share_is_a_ceiling_and_the_cap_is_above_it():
+    """Two numbers that must not cross, or the cover would be capped before it
+    was allowed to start."""
+    from config import settings as cfg
+
+    assert 0 < cfg.answer_first_share <= cfg.answer_first_max_share <= 1.0

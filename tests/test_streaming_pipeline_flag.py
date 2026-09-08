@@ -138,4 +138,9 @@ def test_the_legacy_queue_is_untouched():
     # directly at a call site, which is how the two halves stay in step.
     assert source.count("self._start_phase6(") == 1
     assert source.count("self._speak_phase6(") == 1
-    assert "self._start(sentences)" in source, "the legacy pump is still built"
+    # Both halves are built in the selector and nowhere else, so a call site
+    # can never reach one architecture directly. `_start` now also takes the
+    # marks it writes the model's completion into - that is a signature, not a
+    # second construction path, and the count is what keeps it honest.
+    assert source.count("self._start(sentences,") == 1, (
+        "the legacy pump must still be built exactly once, in the selector")
