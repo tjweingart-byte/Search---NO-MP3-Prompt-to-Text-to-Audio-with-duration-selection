@@ -27,7 +27,10 @@ import time
 from audio_utils import PaceController, pcm_duration, silence, streaming_wav_header
 from cache import ScriptCache, build_cache, cache_key, canonical_key, is_shareable, ttl_for
 from config import settings
+from script_buffer import ASSEMBLER_TICK, ScriptBuffer
 from script_generator import EpisodePlan, ScriptGenerator, ScriptNotes, count_words
+from speech_assembly import (AssembledChunk, AssemblyPolicy,
+                             SpeechAssembler, fit_to_budget)
 from tts import TTSEngine, build_engine
 
 log = logging.getLogger(__name__)
@@ -234,6 +237,211 @@ class PodcastPipeline:
                 await queue.put(None)
 
         return _Pump(queue, asyncio.create_task(produce()))
+
+    def _start_phase6(
+        self,
+        sentences: AsyncIterator[str],
+        policy: Optional[AssemblyPolicy] = None,
+    ) -> "_Pump":
+        """`_start`, with the reader decoupled and the sentences assembled.
+
+        **Unreachable in this build.** Nothing calls it; `STREAMING_PIPELINE`
+        does not select it. It exists so the path can be measured against
+        `_start` on fakes before anything is allowed to route to it.
+
+            Claude stream
+              -> reader          its own task, never touches this queue
+              -> ScriptBuffer    bounded by CHARACTERS, ~20 episodes
+              -> SpeechAssembler whole sentences -> speech-sized chunks
+              -> this queue      bounded at QUEUE_DEPTH, as `_start`'s is
+              -> _speak_phase6
+
+        `_start` puts sentences straight onto the bounded queue, so a slow
+        voice fills it and stops the reader - the Phase 6 4090 run reported a
+        12.5s Claude stream as 66.7s, 64.3s of it that backpressure. Here the
+        queue holds *chunks* and sits below the buffer, so filling it suspends
+        the assembler and never the reader.
+
+        Returns the same `_Pump` the rest of the pipeline expects. Its items
+        are `AssembledChunk` rather than `str`, which is why the companion
+        `_speak_phase6` exists: `_speak_one` synthesises one item per call and
+        appends it to `stats.script`, so handing it a chunk would both coarsen
+        the duration check and put a multi-sentence blob in the cache.
+        """
+        queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_DEPTH)
+
+        async def offer(item) -> None:
+            """Put on the bounded queue without a blocking `Queue.put`.
+
+            A task suspended inside `Queue.put` on a full queue was observed
+            not to resume when cancelled: it stays in `cancelling` forever and
+            `_Pump.close` never returns. `asyncio.sleep` is always cancellable,
+            and 10ms of polling is nothing beside a synthesis call; the queue
+            stays bounded either way. `_start` still has the blocking form -
+            see `test_closing_a_blocked_pump_hangs_on_legacy_and_not_on_phase6`.
+            """
+            while True:
+                try:
+                    queue.put_nowait(item)
+                    return
+                except asyncio.QueueFull:
+                    await asyncio.sleep(0.01)
+
+        async def produce() -> None:
+            """Reader, buffer and assembler, with the reader owned explicitly.
+
+            `script_buffer.assemble_chunks` composes the same three pieces and
+            is the tested primitive, but it owns its reader inside an async
+            generator - and cancelling a task that is iterating a generator
+            which owns another task does not unwind reliably. Here the reader
+            is a task this coroutine holds and cancels itself, and every await
+            is a `sleep` or a `wait_for`, both of which always cancel.
+            """
+            buffer = ScriptBuffer()
+            assembler = SpeechAssembler(policy=policy or AssemblyPolicy())
+
+            async def read() -> None:
+                try:
+                    async for sentence in sentences:
+                        if sentence and sentence.strip():
+                            await buffer.put(sentence)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    buffer.fail(exc)
+                finally:
+                    buffer.close()
+
+            reader = asyncio.create_task(read())
+            try:
+                while True:
+                    try:
+                        sentence = await asyncio.wait_for(buffer.get(),
+                                                          ASSEMBLER_TICK)
+                    except asyncio.TimeoutError:
+                        for chunk in assembler.due():
+                            await offer(chunk)
+                        continue
+                    if sentence is None:
+                        for chunk in assembler.flush():
+                            await offer(chunk)
+                        break
+                    for chunk in assembler.offer(sentence):
+                        await offer(chunk)
+                await offer(None)
+            except asyncio.CancelledError:
+                # Closed early. No sentinel: nobody is draining, and sending
+                # one would only be another chance to block.
+                raise
+            except Exception as exc:  # surfaced to the consumer, never swallowed
+                await offer(exc)
+            finally:
+                reader.cancel()
+
+        return _Pump(queue, asyncio.create_task(produce()))
+
+
+    async def _speak_phase6(
+        self,
+        pump: "_Pump",
+        pace: PaceController,
+        stats: GenerationStats,
+        fatal: bool = True,
+    ) -> AsyncIterator[bytes]:
+        """`_speak` for a pump of assembled chunks. Unreachable in this build.
+
+        Deliberately a copy of `_speak`'s loop rather than a refactor of it:
+        changing `_speak` would change the shipped path, which this step is
+        not allowed to do. The two converge when Phase 6 is selectable.
+        """
+        try:
+            while True:
+                item = await pump.next()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    if fatal:
+                        raise item
+                    log.warning("optional stream failed; continuing", exc_info=item)
+                    break
+                async for chunk in self._speak_chunk(item, pace, stats):
+                    yield chunk
+                if stats.truncated:
+                    break
+        finally:
+            # Cancelled, deliberately not awaited - which is where this
+            # diverges from `_speak`. `_Pump.close()` awaits the producer, and
+            # a producer cancelled mid-flight does not reliably unwind: it sits
+            # in `cancelling` with its wakeup already resolved and never runs
+            # again, so `close()` never returns. `_speak` reaches that state
+            # too (a truncated episode with the producer still mid-stream);
+            # this path simply does not wait for it. Nothing is lost: the
+            # producer writes only to a queue nobody will read again.
+            pump.task.cancel()
+
+    async def _speak_chunk(
+        self, chunk: AssembledChunk, pace: PaceController, stats: GenerationStats
+    ) -> AsyncIterator[bytes]:
+        """Synthesise one assembled chunk, cut to what still fits.
+
+        `_speak_one` asks "does this sentence fit" once. A chunk is several
+        sentences in one synthesis call, so the same question is asked for each
+        of them first, by `fit_to_budget`, and the chunk is cut at the last
+        boundary that fits. Only the final spoken sentence may cross the
+        budget, and by at most `OVERRUN_GRACE` - the same bound `_speak_one`
+        allows, rather than that plus a whole chunk.
+
+        Accounting is per sentence even though synthesis is per chunk:
+        `stats.script` stays a list of sentences, because the cache stores it
+        and `_replay` feeds it back through the speaking path.
+        """
+        gap = silence(SENTENCE_GAP, self.engine.sample_rate)
+        # Keep the controller's view of "words left" honest, as `_speak_one`
+        # does: the model rarely hits the budget exactly.
+        pace.total_words = max(pace.total_words, pace.spoken_words + chunk.words)
+
+        wpm = pace.next_wpm()
+        fit = fit_to_budget(chunk.parts, pace.remaining_seconds, wpm,
+                            SENTENCE_GAP, OVERRUN_GRACE)
+        if fit.truncated:
+            stats.truncated = True
+        if not fit.spoken:
+            return
+
+        started = time.perf_counter()
+        pcm = await self.engine.synth(fit.text, wpm, self.voice)
+        synth_seconds = time.perf_counter() - started
+        if not pcm:
+            return
+
+        audio_seconds = pcm_duration(len(pcm), self.engine.sample_rate)
+        stats.synth_seconds += synth_seconds
+        elapsed_wall = time.perf_counter() - stats.started_at
+        headroom = pace.elapsed + audio_seconds - elapsed_wall
+        if headroom < stats.min_headroom:
+            stats.min_headroom = headroom
+        log.debug(
+            "chunk %d: %d sentence(s), %.2fs audio in %.2fs (%.0fx realtime), "
+            "headroom %.1fs", chunk.index, len(fit.spoken), audio_seconds,
+            synth_seconds, audio_seconds / synth_seconds if synth_seconds else 0,
+            headroom,
+        )
+        if headroom < 0 and not stats.starved:
+            stats.starved = True
+            log.warning(
+                "STARVED after %.1fs: only %.1fs of audio made in %.1fs of wall clock. "
+                "The listener hears silence here. Synthesis so far: %.1fs.",
+                elapsed_wall, pace.elapsed + audio_seconds, elapsed_wall, stats.synth_seconds,
+            )
+        pace.observe(len(pcm) + len(gap), fit.words)
+        stats.sentences += len(fit.spoken)
+        stats.words += fit.words
+        stats.script.extend(fit.spoken)
+        if not stats.first_audio_at:
+            stats.first_audio_at = time.perf_counter() - stats.started_at
+            log.info("first audio ready after %.2fs", stats.first_audio_at)
+        yield pcm
+        yield gap
 
     async def _speak(
         self,

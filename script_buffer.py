@@ -170,8 +170,11 @@ async def assemble_chunks(
     finally:
         # A consumer that stops early - a cancelled request, a truncated
         # episode - must not leave the reader running against a dead stream.
+        #
+        # Cancelled, and deliberately not awaited. This `finally` can itself
+        # run inside a cancelled task (a truncated episode closes the pump,
+        # which cancels the producer iterating this generator), and awaiting
+        # there swallows that cancellation and hangs - the same shape as the
+        # `_Pump.close` defect. Nothing is lost by not awaiting: a reader
+        # failure already reaches the consumer through `buffer.fail`.
         reader.cancel()
-        try:
-            await reader
-        except (asyncio.CancelledError, Exception):
-            pass

@@ -106,6 +106,11 @@ class AssembledChunk:
 
     index: int
     text: str
+    #: The sentences this chunk was built from, in order. Kept because the
+    #: duration fit works at sentence boundaries and because `stats.script`
+    #: stores sentences - joining them here and splitting them again later
+    #: would be a second text-processing system, and a lossy one.
+    parts: list
     sentences: int
     words: int
     characters: int
@@ -119,7 +124,7 @@ class AssembledChunk:
         return self.ready_at - self.first_sentence_at
 
     def to_dict(self) -> dict:
-        return {"index": self.index, "text": self.text,
+        return {"index": self.index, "text": self.text, "parts": list(self.parts),
                 "sentences": self.sentences, "words": self.words,
                 "characters": self.characters, "ready_at": self.ready_at,
                 "reason": self.reason, "held_seconds": self.held_seconds,
@@ -288,7 +293,8 @@ class SpeechAssembler:
         text = " ".join(self.pending)
         now = self.clock()
         chunk = AssembledChunk(
-            index=self.released, text=text, sentences=len(self.pending),
+            index=self.released, text=text, parts=list(self.pending),
+            sentences=len(self.pending),
             words=count_words(text), characters=len(text), ready_at=now,
             reason=reason,
             first_sentence_at=self.first_pending_at

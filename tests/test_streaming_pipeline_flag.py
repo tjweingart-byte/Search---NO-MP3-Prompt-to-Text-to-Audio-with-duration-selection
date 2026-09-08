@@ -120,8 +120,20 @@ def test_no_production_module_reads_the_flag_yet():
 
 
 def test_the_legacy_queue_is_untouched():
-    """The shipped path must still be the bounded queue it has always been."""
+    """The shipped path must still be the bounded queue it has always been.
+
+    Step 4 added `_start_phase6` beside `_start`, so `pipeline.py` now imports
+    the Phase 6 modules - that is expected and is why this no longer forbids
+    the import. What it must still forbid is the flag being read, and the
+    Phase 6 pair being reachable. Byte-identity of `_start` itself is checked
+    against trunk in `tests/test_phase6_equivalence.py`.
+    """
+    import re
+
     source = (ROOT / "pipeline.py").read_text()
     assert "asyncio.Queue(maxsize=QUEUE_DEPTH)" in source
-    assert "streaming_pipeline" not in source
-    assert "script_buffer" not in source and "speech_assembly" not in source
+    assert "streaming_pipeline" not in source, "pipeline.py reads the flag"
+    for name in ("_start_phase6", "_speak_phase6"):
+        assert re.search(rf"def {name}\b", source), f"{name} is missing"
+        assert not re.search(rf"self\.{name}\s*\(", source), (
+            f"{name} is called from production code")
