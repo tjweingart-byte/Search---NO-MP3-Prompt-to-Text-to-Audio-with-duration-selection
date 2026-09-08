@@ -160,6 +160,7 @@ run_pipeline() {  # $1 = legacy|phase6
     local label="${pair%%:*}" query="${pair#*:}"
     echo
     python tools/pod_episode.py --base "$BASE" --minutes 3 --log "$LOG" \
+        --pipeline "$pipeline" \
         --out "$OUT/${pipeline}_${label}" "$query" || status=$?
   done
 
@@ -172,6 +173,14 @@ run_pipeline() {  # $1 = legacy|phase6
 STATUS=0
 # legacy first, so phase6's numbers are read against a baseline taken on the
 # same card in the same session rather than against a remembered one.
+#
+# Only the phase6 runs are scored on decoupling. Legacy structurally cannot
+# prove it - its queue is bounded, so a truncated episode cancels the producer
+# while the model is still writing and there is no completion instant to
+# compare against. Requiring it of the baseline made a wholly successful
+# validation end with "ONE OR MORE EPISODES DID NOT PROVE DECOUPLING", which
+# is a category error: the baseline is there to be compared against, not to
+# pass the test the comparison exists to make.
 run_pipeline legacy || STATUS=$?
 run_pipeline phase6 || STATUS=$?
 
@@ -186,8 +195,12 @@ echo "  Copy the directory to your Mac BEFORE terminating the pod:"
 echo "    scp -r root@<pod>:/workspace/FAM/$OUT ./pod-results/"
 echo
 if [ "$STATUS" -ne 0 ]; then
-  echo "  ONE OR MORE EPISODES DID NOT PROVE DECOUPLING. The artefacts are"
-  echo "  written anyway - that is the evidence. Read the verdict lines above."
+  echo "  ONE OR MORE PHASE 6 EPISODES DID NOT PROVE DECOUPLING. The artefacts"
+  echo "  are written anyway - that is the evidence. Read the verdict lines"
+  echo "  above. The legacy runs are a baseline and are never scored on this."
+else
+  echo "  Every phase6 episode proved decoupling. The legacy runs are the"
+  echo "  baseline they were measured against."
 fi
 echo "  THEN TERMINATE THE POD."
 exit "$STATUS"

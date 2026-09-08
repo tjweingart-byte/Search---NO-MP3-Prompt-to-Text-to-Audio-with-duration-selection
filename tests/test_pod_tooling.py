@@ -596,3 +596,64 @@ def test_an_unresearched_episode_has_no_handoff_block(capsys):
     episode.report(run, {"events": {}, "chunks": [],
                          "summary": {"claude_decoupled": True}})
     assert "handoff" not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# the baseline is compared against, not scored
+#
+# A wholly successful validation ended with "ONE OR MORE EPISODES DID NOT
+# PROVE DECOUPLING". Both phase6 runs proved it; both legacy runs returned
+# exit 1 because `claude_decoupled` was None. That is not a legacy failure -
+# legacy's queue is bounded, so a truncated episode cancels the producer while
+# the model is still writing and there is no completion instant to compare a
+# synthesis start against. Requiring it of the baseline is a category error:
+# the baseline exists to be compared against, not to pass the test the
+# comparison exists to make.
+# --------------------------------------------------------------------------
+def _run_fixture() -> dict:
+    return {"headers": {}, "rate": 24000, "first_byte_seconds": 0.4,
+            "total_seconds": 30.0, "audio_seconds": 180.0}
+
+
+def test_legacy_without_a_verdict_is_reported_not_failed(capsys):
+    assert episode.report(_run_fixture(), {"claude_decoupled": None},
+                          pipeline="legacy") is True
+    out = capsys.readouterr().out
+    assert "BASELINE" in out
+    assert "cannot report this, by construction" in out
+    assert "UNKNOWN" not in out, "a baseline is not an unknown"
+
+
+def test_phase6_without_a_verdict_still_fails(capsys):
+    """The instrumentation gap must stay a failure where it means something."""
+    assert episode.report(_run_fixture(), {"claude_decoupled": None},
+                          pipeline="phase6") is False
+    assert "UNKNOWN" in capsys.readouterr().out
+
+
+def test_phase6_reporting_coupled_still_fails(capsys):
+    assert episode.report(_run_fixture(), {"claude_decoupled": False},
+                          pipeline="phase6") is False
+    assert "COUPLED" in capsys.readouterr().out
+
+
+def test_a_baseline_that_does_prove_it_is_not_downgraded(capsys):
+    """Legacy can occasionally report one - a short episode that ends before
+    the ceiling receives the sentinel. That is a pass, not a baseline note."""
+    assert episode.report(_run_fixture(), {"claude_decoupled": True},
+                          pipeline="legacy") is True
+    assert "DECOUPLED" in capsys.readouterr().out
+
+
+def test_an_unnamed_pipeline_is_scored_strictly(capsys):
+    """No `--pipeline` means the caller did not say, so nothing is excused."""
+    assert episode.report(_run_fixture(), {"claude_decoupled": None}) is False
+    assert "UNKNOWN" in capsys.readouterr().out
+
+
+def test_the_harness_tells_the_reporter_which_architecture_ran():
+    source = (ROOT / "tools" / "pod_production_test.sh").read_text()
+    assert '--pipeline "$pipeline"' in source, (
+        "without this every legacy run fails the whole validation again")
+    assert "ONE OR MORE PHASE 6 EPISODES" in source, (
+        "the summary must not blame episodes it never scored")

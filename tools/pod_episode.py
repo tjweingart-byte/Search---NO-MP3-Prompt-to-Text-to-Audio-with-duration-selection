@@ -197,7 +197,17 @@ def _seconds(value) -> str:
     return "-" if value is None else f"{float(value):.2f}s"
 
 
-def report(run: dict, marks: dict | None, notes: list | None = None) -> bool:
+#: The architecture that can answer the decoupling question, and the one that
+#: cannot. Legacy's queue is bounded at QUEUE_DEPTH, so when a truncated
+#: episode cancels the producer the model is *still writing* - there is no
+#: completion instant to compare a synthesis start against. That is not a
+#: legacy failure; it is the difference the whole design is about, and it is
+#: why the baseline is reported rather than scored.
+CAN_PROVE_DECOUPLING = "phase6"
+
+
+def report(run: dict, marks: dict | None, notes: list | None = None,
+           pipeline: str = "") -> bool:
     headers = run["headers"]
     marks, chunks = normalise(marks)
     marks = marks or None
@@ -303,6 +313,7 @@ def report(run: dict, marks: dict | None, notes: list | None = None) -> bool:
             print(f"  {line[-160:]}")
 
     decoupled = marks.get("claude_decoupled")
+    baseline = bool(pipeline) and pipeline != CAN_PROVE_DECOUPLING
     print("\nverdict")
     if decoupled is True:
         print("  DECOUPLED    synthesis began before Claude finished writing.")
@@ -310,9 +321,19 @@ def report(run: dict, marks: dict | None, notes: list | None = None) -> bool:
         print("  COUPLED      synthesis did not begin until Claude had "
               "finished. Phase 6's whole\n               claim is that this "
               "does not happen; on this run it did.")
+    elif baseline:
+        # Not "unknown". Legacy cannot be asked this question, and saying so
+        # is more useful than a shrug - it is the comparison the run exists to
+        # draw.
+        print(f"  BASELINE     {pipeline} cannot report this, by construction: "
+              "its queue is bounded,\n               so the model was still "
+              "writing when the episode was truncated. There is\n"
+              "               no completion instant to compare against. Not a "
+              "failure - the\n               difference the architecture is "
+              "about.")
     else:
         print("  UNKNOWN      the timeline did not carry both marks.")
-    return decoupled is True
+    return decoupled is True or baseline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -331,6 +352,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="",
                         help="write episode.wav and episode.json here, so the "
                              "run can be listened to and not just believed")
+    parser.add_argument("--pipeline", default="",
+                        help="which architecture served this episode. Only "
+                             f"{CAN_PROVE_DECOUPLING!r} is scored on "
+                             "decoupling; anything else is a baseline and is "
+                             "reported without being failed.")
     args = parser.parse_args(argv)
 
     log = pathlib.Path(args.log).expanduser() if args.log else None
@@ -341,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
     marks = (marks_from_log(log, after,
                             time.perf_counter() + LOG_GRACE_SECONDS)
              if log else None)
-    decoupled = report(run, marks, server_notes(log, after))
+    decoupled = report(run, marks, server_notes(log, after), args.pipeline)
 
     if args.out:
         out = pathlib.Path(args.out).expanduser()
@@ -359,6 +385,7 @@ def main(argv: list[str] | None = None) -> int:
             },
             "headers": {k: v for k, v in run["headers"].items()
                         if k.lower().startswith("x-")},
+            "pipeline": args.pipeline,
             "marks": marks,
             "playback": stall_analysis(normalise(marks)[1]),
             "server_notes": server_notes(log, after),
