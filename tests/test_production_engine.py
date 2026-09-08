@@ -89,17 +89,24 @@ def test_there_is_no_engine_preference_ladder_left():
 
     source = inspect.getsource(tts.build_engine)
     assert "for cls in (PiperEngine, SayEngine, EspeakEngine)" not in source
+    assert "PiperEngine" not in source, "the removed engine is back in the ladder"
     assert "PRODUCTION_ENGINES" in source or "production_engine()" in source
 
 
-def test_piper_is_not_named_in_the_production_selection_path():
-    """It is the interim occupant, reachable as a development engine. Nothing
-    in the production path chooses it by name."""
+def test_piper_is_gone_from_the_runtime_entirely():
+    """Not switched off, not demoted to a development engine - removed.
+
+    It held the interim slot, and a second engine that can speak is a second
+    engine that can be selected. What is left where it stood is a tone, which
+    nobody can mistake for FAM.
+    """
     import inspect
 
+    assert not hasattr(tts, "PiperEngine"), "the engine class is back"
+    assert "piper" not in {name.lower() for name in tts.DEV_ENGINES}
     assert "Piper" not in inspect.getsource(tts.build_engine)
     assert "Piper" not in inspect.getsource(tts.list_voices)
-    assert tts.INTERIM_ENGINE is tts.PiperEngine
+    assert tts.PLACEHOLDER_ENGINE is tts.DebugEngine
 
 
 # --------------------------------------------------------------------------
@@ -108,7 +115,7 @@ def test_piper_is_not_named_in_the_production_selection_path():
 def test_tts_engine_is_a_development_override(monkeypatch):
     """Kept because deterministic local tests need an engine that is not a
     GPU. It is documented as development-only in config and .env.example."""
-    assert set(tts.DEV_ENGINES) == {"piper", "espeak", "say", "debug"}
+    assert set(tts.DEV_ENGINES) == {"espeak", "say", "debug"}
     assert tts.build_engine("debug").name == "debug"
 
 

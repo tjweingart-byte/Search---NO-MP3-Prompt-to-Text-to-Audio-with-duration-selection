@@ -54,7 +54,14 @@ def installed(directory: Path | None = None) -> list[Path]:
 
 
 def sidecar_for(model: Path) -> Path | None:
-    """A model's config JSON, which Piper needs alongside the .onnx."""
+    """A model's config JSON, alongside its .onnx.
+
+    No runtime caller since the engine that used it was removed. Kept because
+    this module is the shared per-machine voice store - the shape a future
+    engine reuses - and Chatterbox's reference recording lives in the same
+    folder. Deleting the shape along with one occupant is how the store gets
+    reinvented inside the next engine.
+    """
     for candidate in (Path(str(model) + ".json"), model.with_suffix(".json")):
         if candidate.exists():
             return candidate

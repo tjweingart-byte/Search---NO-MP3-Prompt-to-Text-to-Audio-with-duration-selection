@@ -241,13 +241,14 @@ class Settings:
     sample_width: int = 2  # 16-bit signed little-endian PCM
 
     # --- TTS --------------------------------------------------------------
-    # auto | piper | espeak | debug
+    # auto | espeak | say | debug
     # A **development** override, not a production setting. Production does
     # not choose an engine: there is one production slot
-    # (`tts.PRODUCTION_ENGINES`), which Chatterbox will fill. This names a
+    # (`tts.PRODUCTION_ENGINES`), filled by Chatterbox. This names a
     # development engine for deterministic local tests, and `auto` - the
     # default, and the only value a deployment should ever have - means "the
-    # production engine, or the interim one while that slot is empty".
+    # production engine, or a placeholder tone if this machine cannot run it".
+    # It cannot name a production engine into existence: nothing here is one.
     tts_engine: str = field(default_factory=lambda: os.environ.get("TTS_ENGINE", "auto"))
     # --- Chatterbox: the production voice --------------------------------
     # Where the model runs. `auto` picks cuda, then mps, and refuses cpu -
@@ -260,13 +261,12 @@ class Settings:
     # commercial use and synthetic voice, or the engine reports unavailable.
     chatterbox_reference: str = field(
         default_factory=lambda: os.environ.get("CHATTERBOX_REFERENCE", ""))
-    # Voice models live in one shared per-user folder (~/.fam/voices by
-    # default), NOT inside the project, so a new version of the app finds the
-    # voices already downloaded instead of fetching them again. Override with
+    # Per-machine voice state lives in one shared per-user folder
+    # (~/.fam/voices by default), NOT inside the project, so a new version of
+    # the app finds it already there instead of fetching it again. This is
+    # where Chatterbox's reference recording lives. Override with
     # FAM_VOICES_DIR. See voice_store.py.
     voices_dir: str = field(default_factory=lambda: str(voice_store.voices_dir()))
-    # Pin one of them as the default; otherwise the first installed is used.
-    piper_model: str = field(default_factory=lambda: os.environ.get("PIPER_MODEL", ""))
     espeak_binary: str = field(
         default_factory=lambda: os.environ.get("ESPEAK_BIN", "espeak-ng")
     )

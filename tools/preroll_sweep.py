@@ -11,14 +11,19 @@ first-chunk rule deliberately allows.
 It drives the real `/api/audio` endpoint, so the preroll gate, the
 empty-episode guard and the response headers are all the production ones.
 
-    python3 tools/preroll_sweep.py                      # whatever engine is present
-    python3 tools/preroll_sweep.py --engine piper       # the one that matters
+    python3 tools/preroll_sweep.py                          # whatever is present
+    python3 tools/preroll_sweep.py --engine chatterbox      # the one that matters
     python3 tools/preroll_sweep.py --runs 3 --minutes 3
 
-**Piper is the engine to run this on.** The debug engine synthesises
-arithmetic and is effectively infinitely fast, so it answers the quantity
-question (how many chunks) exactly and the timing question not at all. The
-tool prints which engine it used and refuses to pretend otherwise.
+**Chatterbox is the engine to run this on**, which means a GPU machine. The
+debug engine synthesises arithmetic and is effectively infinitely fast, so it
+answers the quantity question (how many chunks) exactly and the timing question
+not at all. The tool prints which engine it used and refuses to pretend
+otherwise.
+
+This measured Piper until Piper was removed. Numbers from those runs describe a
+CPU voice at ~1x realtime and do not carry over to a GPU one at ~4.6x - the
+quantity results do, since the gate counts bytes.
 """
 from __future__ import annotations
 
@@ -69,18 +74,19 @@ class Opening:
 
 
 def build_engine(name: str):
-    from tts import DebugEngine, PiperEngine, TTSUnavailable
+    from tts import ChatterboxEngine, DebugEngine
 
-    if name == "piper":
-        if not PiperEngine.available():
+    if name == "chatterbox":
+        if not ChatterboxEngine.available():
             raise SystemExit(
-                "no Piper voice is installed here, so this run would measure "
-                "the debug engine while claiming to measure Piper.\n"
-                "  python setup_voices.py     # installs into ~/.fam/voices")
-        return PiperEngine()
+                "Chatterbox is not available here, so this run would measure "
+                "the debug engine\n  while claiming to measure the production "
+                f"voice.\n  Reason: {ChatterboxEngine.diagnose()[1]}\n"
+                "  See RUNPOD_PRODUCTION.md.")
+        return ChatterboxEngine()
     if name == "debug":
         return DebugEngine()
-    for cls in (PiperEngine, DebugEngine):
+    for cls in (ChatterboxEngine, DebugEngine):
         if cls.available():
             return cls()
     raise SystemExit("no speech engine available")
@@ -150,7 +156,7 @@ def summarise(rows: list) -> dict:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--engine", default="auto",
-                        choices=("auto", "piper", "debug"))
+                        choices=("auto", "chatterbox", "debug"))
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--minutes", type=int, default=3)
     parser.add_argument("--values", default=",".join(str(v) for v in DEFAULT_VALUES))
@@ -167,7 +173,8 @@ def main(argv=None) -> int:
     print(f"\nengine: {engine.name}  ({engine.sample_rate} Hz)")
     if engine.name == "debug":
         print("  NOTE: the debug engine is arithmetic, not speech. Chunk counts "
-              "are exact;\n        every timing below is a floor, not Piper's.")
+              "are exact;\n        every timing below is a floor, not the "
+              "production voice's.")
     print(f"runs per cell: {args.runs}   episode: {args.minutes} min\n")
 
     results = {"engine": engine.name, "minutes": args.minutes,

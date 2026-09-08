@@ -19,7 +19,7 @@ Needs: Python 3.10+, an Anthropic API key, and about two minutes.
 
 ```sh
 python setup_key.py       # paste the key once; checked, then stored
-python setup_voices.py    # the neural voice, ~60 MB
+python verify_voice.py    # says whether this machine has a voice
 ```
 
 Both write to `~/.fam/` — **outside the project folder**. That is the point:

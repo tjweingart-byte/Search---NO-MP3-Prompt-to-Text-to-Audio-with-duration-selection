@@ -125,34 +125,19 @@ def test_ensure_ready_creates_the_store_and_survives_being_empty(shared):
     assert shared.is_dir(), "the store directory should be created"
 
 
-def test_the_engine_reads_from_the_shared_store(shared, monkeypatch):
-    """The production path must resolve to the same place as setup does.
-
-    Path resolution only. Whether a model in the store can actually be *spoken*
-    is a separate question - it also needs the engine's package - and asserting
-    the two together is what made this fail on a machine that had never
-    installed the interim voice. `voice_store` is engine-agnostic and stays
-    that way: it knows where voices live, not who can read them.
-    """
-    make_voice(shared, "en_US-lessac-medium")
-    import dataclasses
-
-    import tts
-
-    monkeypatch.setattr(
-        tts, "settings", dataclasses.replace(tts.settings, voices_dir=str(shared))
-    )
-    assert [p.stem for p in tts.PiperEngine.installed_models()] == ["en_US-lessac-medium"]
-    assert voice_store.installed(shared) == tts.PiperEngine.installed_models(), (
-        "setup writes somewhere the engine does not read")
-
-
 def test_the_store_is_where_chatterbox_looks_for_its_reference(shared, monkeypatch):
-    """The same abstraction, for the engine that is actually production.
+    """The abstraction this module exists for, now that Piper is gone.
 
-    Chatterbox clones a recording rather than loading an .onnx, but it is
-    per-machine state in the same shared folder for the same reason: a new copy
-    of the app must find it already there.
+    `voice_store` is engine-agnostic and stays that way: it knows where
+    per-machine voice state lives, not who can read it. Chatterbox clones a
+    recording rather than loading an .onnx, but it is per-machine state in the
+    same shared folder for the same reason - a new copy of the app must find it
+    already there instead of fetching it again.
+
+    The .onnx helpers (`installed`, `sidecar_for`, the adoption path) have no
+    runtime caller now that Piper is removed. They are left in place rather
+    than deleted in the same step as the engine: the store's shape is what a
+    future engine reuses, and this test is what says the shape still holds.
     """
     import dataclasses
 

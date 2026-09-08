@@ -14,10 +14,9 @@ instead of a worker thread, the reader could not advance during it and the
 decoupling would be a lie that every timing measurement would still report as
 true.
 
-Nothing here needs a GPU, a model file, an API key, or any optional package.
-An engine whose package is not installed is skipped, not failed: `piper` is an
-interim fallback and `chatterbox` needs a card, so neither is a test
-dependency.
+Nothing here needs a GPU, a model file, an API key, or any optional package:
+Chatterbox is stubbed at its import boundary, so the contract is asserted
+against the real engine class on a machine that cannot run it.
 """
 from __future__ import annotations
 
@@ -35,7 +34,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import tts  # noqa: E402
-from tts import ChatterboxEngine, DebugEngine, PiperEngine  # noqa: E402
+from tts import ChatterboxEngine, DebugEngine  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -106,50 +105,14 @@ def build_chatterbox(monkeypatch, tmp_path) -> tuple:
     return ChatterboxEngine(), ran
 
 
-def build_piper(monkeypatch, tmp_path) -> tuple:
-    """Skipped where the package is absent - it is an interim fallback, and
-    installing a deep-learning-free voice must not be a test dependency."""
-    pytest.importorskip("piper", reason="piper is the interim voice, not a "
-                                        "test dependency")
-    import dataclasses
-
-    ran = Ran()
-    model = tmp_path / "en_US-lessac-medium.onnx"
-    model.write_bytes(b"not-a-real-model")
-    (tmp_path / "en_US-lessac-medium.onnx.json").write_text(
-        json.dumps({"audio": {"sample_rate": 22050}}))
-    monkeypatch.setattr(tts, "settings", dataclasses.replace(
-        tts.settings, voices_dir=str(tmp_path), piper_model=""))
-
-    class FakeChunk:
-        def __init__(self, data, rate):
-            self.audio_int16_bytes = data
-            self.sample_rate = rate
-
-    class FakeVoice:
-        def synthesize(self, text, syn_config=None, **kwargs):
-            ran.threads.append(threading.current_thread().name)
-            yield FakeChunk(b"\x01\x00" * len(text), 22050)
-
-    def fake_load(path):
-        ran.loads += 1
-        return FakeVoice()
-
-    # `PiperVoice.load`, not `PiperEngine._load` - `_load` is the thing that
-    # does the caching, so stubbing it would stub out what is being asserted.
-    import piper
-
-    PiperEngine._loaded.clear()
-    monkeypatch.setattr(piper.PiperVoice, "load", staticmethod(fake_load))
-    return PiperEngine(model), ran
-
-
-BUILDERS = {"debug": build_debug, "chatterbox": build_chatterbox,
-            "piper": build_piper}
+BUILDERS = {"debug": build_debug, "chatterbox": build_chatterbox}
 
 #: Engines that run a model. The event-loop and model-caching contracts are
 #: about inference, so they do not apply to the tone generator.
-INFERENCE = ("chatterbox", "piper")
+#:
+#: There is exactly one. That is the point of the removal: a second engine that
+#: can speak is a second engine that can be selected.
+INFERENCE = ("chatterbox",)
 
 
 @pytest.fixture(params=sorted(BUILDERS))
@@ -219,16 +182,12 @@ def test_the_model_is_loaded_once_not_per_sentence(inference_engine):
 
 
 def test_every_production_engine_is_covered_by_this_contract():
-    """A new production engine must not be able to skip these by existing.
-
-    The interim engine is included deliberately: while it is what speaks, it
-    is held to the same guarantees.
-    """
+    """A new production engine must not be able to skip these by existing."""
     covered = set(BUILDERS)
-    for cls in tts.PRODUCTION_ENGINES + (tts.INTERIM_ENGINE,):
+    for cls in tts.PRODUCTION_ENGINES + (tts.PLACEHOLDER_ENGINE,):
         assert cls.name in covered, (
-            f"{cls.name} can speak in production but has no contract builder "
-            f"here. Add one; do not narrow the contract.")
+            f"{cls.name} can be served in production but has no contract "
+            f"builder here. Add one; do not narrow the contract.")
 
 
 def test_the_reference_is_a_path_the_engine_can_be_pointed_at(tmp_path,

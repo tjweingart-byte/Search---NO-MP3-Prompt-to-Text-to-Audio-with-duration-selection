@@ -261,12 +261,24 @@ def test_the_chatterbox_requirements_keep_every_pin_that_cost_a_session():
     assert "\ntorch\n" in text
 
 
+def requirement_lines(path) -> list[str]:
+    """The actual requirements, with comments and blanks dropped.
+
+    Comments matter here: requirements.txt now *explains* which engine is
+    installed separately and why, so a naive substring search over the whole
+    file finds the words it is explaining.
+    """
+    return [line.split("#", 1)[0].strip()
+            for line in path.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")]
+
+
 def test_chatterbox_is_not_in_the_base_requirements():
     """Installing FAM, running its tests and building the preview must not
     require a multi-gigabyte deep-learning stack."""
-    base = (ROOT / "requirements.txt").read_text().lower()
-    for package in ("chatterbox", "torch"):
-        assert package not in base
+    for requirement in requirement_lines(ROOT / "requirements.txt"):
+        for package in ("chatterbox", "torch"):
+            assert package not in requirement.lower(), requirement
 
 
 def test_the_two_kinds_of_dirty_are_told_apart(reference, tmp_path, monkeypatch,
