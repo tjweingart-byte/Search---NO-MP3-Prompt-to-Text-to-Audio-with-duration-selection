@@ -14,7 +14,7 @@ import os
 import logging
 import time
 from contextlib import asynccontextmanager
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Optional, Union
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -22,10 +22,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from anthropic_client import describe_http_version, http2_enabled
-from cache import MemoryScriptCache, SqliteScriptCache, build_cache
+from anthropic_client import build_async_client, describe_http_version, http2_enabled
+from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_words
 from demo_script import DemoGenerator
-from config import settings
+from config import describe_key, settings
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import attachments as attachments_mod
@@ -57,10 +57,48 @@ if VOICE_STORE["adopted"]:
     )
 log.info("voices: %s", voice_store.describe())
 
+#: Filled in at startup by _verify_credentials. "unchecked" until then.
+CREDENTIALS = {"state": "unchecked", "detail": "", "key": ""}
+
+
+async def _verify_credentials() -> None:
+    """Ask Claude whether the key works, before anyone presses play.
+
+    Every credential failure this project has had was discovered by a listener,
+    mid-episode, as a 502 - because the app validated its *configuration* (is a
+    key set?) and never the credential (does it work?). A key that is missing,
+    expired, revoked, truncated on paste, or simply the wrong string all look
+    identical until the first request, and by then someone is waiting for audio.
+
+    `models.retrieve` is the cheapest possible question: it bills nothing, and
+    it answers both "is this key accepted" and "can this account use this
+    model" - which are the two ways this has actually failed.
+    """
+    CREDENTIALS["key"] = describe_key()
+    if DEMO_MODE:
+        CREDENTIALS.update(state="absent", detail="No API key: the canned sample script is standing in.")
+        log.warning("NO API KEY - every episode will be the built-in sample script, "
+                    "which does not answer what was asked.")
+        return
+    try:
+        client = build_async_client()
+        await client.models.retrieve(settings.model)
+    except Exception as exc:  # noqa: BLE001 - the report matters, not the type
+        CREDENTIALS.update(state="rejected", detail=friendly_error(exc))
+        log.error("CREDENTIALS REJECTED - nothing will generate. %s", CREDENTIALS["detail"])
+        log.error("  key in force: %s", CREDENTIALS["key"])
+        log.error("  fix it and restart; the interface says the same thing on every tab.")
+        return
+    CREDENTIALS.update(state="ok", detail=f"{settings.model} is reachable with this key.")
+    log.info("credentials OK - %s reachable (%s)", settings.model, CREDENTIALS["key"])
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Pay the voice model's load cost now rather than on the first listener.
     await warm_up()
+    # Before a listener finds out the hard way.
+    await _verify_credentials()
     # Expired scripts are already filtered out on read, so nothing ever deleted
     # them and the file grew for the life of the deployment. One DELETE at
     # startup is enough: entries expire on a timescale of days, not minutes.
@@ -87,6 +125,9 @@ WAV_HEADER_BYTES = 44
 PREROLL_SECONDS = 1.5
 
 _last_request: dict[str, float] = defaultdict(float)
+#: Recent cheap-read timestamps per client, for the burst-tolerant limiter.
+_read_hits: dict[str, deque] = defaultdict(deque)
+READ_WINDOW_SECONDS = 10.0
 
 
 def friendly_error(exc: Exception) -> str:
@@ -131,8 +172,13 @@ def _make_pipeline(voice: Optional[str] = None) -> PodcastPipeline:
         # credentials - and Explore is the one surface that needs no
         # credentials at all, since it only ever replays. Keeping the real
         # cache also means demo mode exercises the real hit/miss path.
+        # Reads yes, writes never. The canned script does not answer the
+        # question it was asked, so caching it puts a briefing about the audio
+        # pipeline behind someone's search - for the whole TTL, and for every
+        # other listener, including after a key is finally added.
         return PodcastPipeline(
-            generator=DemoGenerator(), engine=engine, cache=SCRIPT_CACHE, voice=voice
+            generator=DemoGenerator(), engine=engine, cache=SCRIPT_CACHE,
+            voice=voice, cache_writes=False,
         )
     return PodcastPipeline(engine=engine, cache=SCRIPT_CACHE, voice=voice)
 
@@ -151,6 +197,12 @@ def _rate_limit(request: Request) -> None:
 
     Each request holds a Claude stream and a TTS subprocess open for the whole
     episode, so an unthrottled endpoint is trivially expensive to abuse.
+
+    This belongs on the endpoints that generate, and nowhere else. It was on
+    all eighteen, including the cheap cache and JSON reads - and opening a tab
+    fires several of those at once, so ordinary navigation answered itself with
+    "Slow down a moment, then try again." A limiter that fires on correct use
+    is not protecting anything; it is the failure.
     """
     if settings.rate_limit_seconds <= 0:
         return
@@ -159,6 +211,26 @@ def _rate_limit(request: Request) -> None:
     if now - _last_request[client] < settings.rate_limit_seconds:
         raise HTTPException(status_code=429, detail="Slow down a moment, then try again.")
     _last_request[client] = now
+
+
+def _read_limit(request: Request) -> None:
+    """A ceiling for the cheap endpoints: JSON reads and cache lookups.
+
+    These cost a SQLite query and no model call, and the interface fires a
+    handful of them every time a tab opens, so the limit has to allow bursts.
+    It exists to bound a script hammering the server, not to pace a listener.
+    """
+    if settings.read_limit_per_window <= 0:
+        return
+    client = request.client.host if request.client else "anonymous"
+    now = time.monotonic()
+    hits = _read_hits[client]
+    cutoff = now - READ_WINDOW_SECONDS
+    while hits and hits[0] < cutoff:
+        hits.popleft()
+    if len(hits) >= settings.read_limit_per_window:
+        raise HTTPException(status_code=429, detail="Slow down a moment, then try again.")
+    hits.append(now)
 
 
 def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None = None,
@@ -180,7 +252,8 @@ def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None
 class ScriptRequest(BaseModel):
     query: str = Field(..., max_length=500)
     minutes: int = Field(..., ge=1, le=10)
-    search: bool = False
+    #: Omitted means "let the question decide" - see /api/audio.
+    search: bool | None = None
 
 
 @app.get("/api/health")
@@ -192,14 +265,16 @@ async def health() -> dict:
         "web_search_default": settings.enable_web_search,
         "http": {"version": describe_http_version(), "http2_negotiated": http2_enabled()},
         "api_key_configured": bool(settings.anthropic_api_key),
+        # Configured is not the same as working, and only one of them matters.
+        "credentials": CREDENTIALS,
         "sample_rate": build_engine().sample_rate,
         "min_minutes": settings.min_minutes,
         "max_minutes": settings.max_minutes,
         "tts": engine_report(),
-        "cold_open": {
-            "enabled": settings.enable_cold_open,
-            "model": settings.cold_open_model,
-        },
+        # How the listener is told what is happening while they wait. There is
+        # no filler any more, so the interface has to be honest instead.
+        "search_mode": settings.search_mode,
+        "research_words": sorted(research_words()),
         "cache": _cache_report(),
         "voice_store": VOICE_STORE["dir"],
     }
@@ -218,7 +293,7 @@ async def voices() -> dict:
 @app.post("/api/script")
 async def script(req: ScriptRequest, request: Request) -> dict:
     _rate_limit(request)
-    plan = _validated_plan(req.query, req.minutes)
+    plan = _validated_plan(req.query, req.minutes, "", req.search)
     generator = DemoGenerator() if DEMO_MODE else ScriptGenerator()
     notes = ScriptNotes()
     text = " ".join([s async for s in generator.stream_sentences(plan, notes)])
@@ -296,21 +371,21 @@ async def attach(req: AttachRequest, request: Request) -> dict:
 @app.delete("/api/attach")
 async def detach(request: Request, user: str = Query("", max_length=64),
                  id: str = Query(..., max_length=64)) -> dict:
-    _rate_limit(request)
+    _read_limit(request)
     return {"ok": ATTACHMENTS.delete(user, id)}
 
 
 @app.get("/api/topics")
 async def bank(request: Request):
     """The whole shared bank, for the mix topic picker."""
-    _rate_limit(request)
+    _read_limit(request)
     return {"topics": [t.as_dict() for t in topics_mod.TOPIC_BANK]}
 
 
 @app.get("/api/mixes")
 async def list_mixes(request: Request, user: str = Query("", max_length=64)):
     """This listener's playFAM mixes, each with its topics resolved."""
-    _rate_limit(request)
+    _read_limit(request)
     return {
         "mixes": [m.as_dict() for m in MIXES.list_for_user(user)],
         "starters": [
@@ -322,7 +397,7 @@ async def list_mixes(request: Request, user: str = Query("", max_length=64)):
 
 @app.post("/api/mixes")
 async def create_mix(req: MixRequest, request: Request):
-    _rate_limit(request)
+    _read_limit(request)
     try:
         mix = MIXES.create(req.user, req.name or "", req.topic_ids or [])
     except mixes_mod.MixError as exc:
@@ -333,7 +408,7 @@ async def create_mix(req: MixRequest, request: Request):
 
 @app.patch("/api/mixes/{mix_id}")
 async def update_mix(mix_id: str, req: MixRequest, request: Request):
-    _rate_limit(request)
+    _read_limit(request)
     try:
         mix = MIXES.update(req.user, mix_id, req.name, req.topic_ids, req.public)
     except mixes_mod.MixError as exc:
@@ -343,7 +418,7 @@ async def update_mix(mix_id: str, req: MixRequest, request: Request):
 
 @app.delete("/api/mixes/{mix_id}")
 async def delete_mix(mix_id: str, request: Request, user: str = Query("", max_length=64)):
-    _rate_limit(request)
+    _read_limit(request)
     if not MIXES.delete(user, mix_id):
         raise HTTPException(status_code=404, detail="That mix no longer exists.")
     return {"ok": True}
@@ -367,7 +442,9 @@ async def myfam(request: Request, user: str = Query("", max_length=64)):
     A listener with no history still gets Trending and a starter set, with
     the personal sections honestly empty rather than filled with fakes.
     """
-    _rate_limit(request)
+    # A cheap read: ranking a fixed bank costs no model call, so it takes the
+    # reader's limit rather than the generation one.
+    _read_limit(request)
     feed = topics_mod.build_feed(EVENTS, user)
     # Logged here rather than inside build_feed, which stays a pure function of
     # the log - the whole ranking design is "computed on read, never stored",
@@ -386,7 +463,7 @@ async def myfam(request: Request, user: str = Query("", max_length=64)):
 @app.post("/api/event")
 async def record_event(req: EventRequest, request: Request):
     """Log one interaction. Playback never depends on this succeeding."""
-    _rate_limit(request)
+    _read_limit(request)
     tags = ()
     if req.topic_id and req.topic_id in topics_mod.BANK_BY_ID:
         tags = topics_mod.BANK_BY_ID[req.topic_id].tags
@@ -417,7 +494,7 @@ class EchoRequest(BaseModel):
 @app.post("/api/me")
 async def set_me(req: PersonRequest, request: Request):
     """Name and handle for this device. Not an account - see /api/profile."""
-    _rate_limit(request)
+    _read_limit(request)
     try:
         return SOCIAL.set_person(req.user, req.name, req.handle)
     except social_mod.SocialError as exc:
@@ -431,7 +508,7 @@ async def post_echo(req: EchoRequest, request: Request):
     Costs nothing to generate: an echo is a row pointing at a query whose
     script already exists, which is exactly why the social layer is cheap.
     """
-    _rate_limit(request)
+    _read_limit(request)
     try:
         echo = SOCIAL.echo(req.user, req.query, req.title, req.minutes, req.thread)
     except social_mod.SocialError as exc:
@@ -443,14 +520,14 @@ async def post_echo(req: EchoRequest, request: Request):
 async def delete_echo(request: Request, user: str = Query("", max_length=64),
                       q: str = Query("", max_length=300),
                       minutes: int = Query(3, ge=1, le=10)):
-    _rate_limit(request)
+    _read_limit(request)
     return {"ok": SOCIAL.unecho(user, q, minutes)}
 
 
 @app.get("/api/profile")
 async def profile(request: Request, user: str = Query("", max_length=64)):
     """Counts and subjects from this listener's own event log. No model call."""
-    _rate_limit(request)
+    _read_limit(request)
     body = topics_mod.summary(EVENTS, user)
     SOCIAL.seen(user)
     person = SOCIAL.person(user)
@@ -478,7 +555,7 @@ async def go_deeper(request: Request, user: str = Query("", max_length=64)):
     ends - and the suggestion is waiting here afterwards for anyone who wants
     to keep going.
     """
-    _rate_limit(request)
+    _read_limit(request)
     return {"threads": EVENTS.open_threads(user)}
 
 
@@ -492,7 +569,7 @@ async def explore(request: Request, limit: int = Query(30, ge=1, le=60),
     cache passed the personal-query filter before it was written, so it is
     already safe to show someone else.
     """
-    _rate_limit(request)
+    _read_limit(request)
     store = SCRIPT_CACHE if SCRIPT_CACHE is not None else build_cache()
     if store is None:
         return {"episodes": [], "reason": "The shared cache is switched off."}
@@ -524,7 +601,9 @@ async def next_thread(
     q: str = Query(..., description="What the listener asked"),
     minutes: int = Query(3, ge=1, le=10),
     context: str = Query("", description="Topic the listener just heard"),
-    search: bool = Query(False),
+    # Same reason as /api/audio: this looks up a cache entry, and the entry it
+    # looks for has to be keyed the same way the audio request keyed it.
+    search: bool | None = Query(None),
 ):
     """The follow-up this listener is most likely to want, after this episode.
 
@@ -536,7 +615,7 @@ async def next_thread(
     An empty thread is normal - the script may not be cached, or the model may
     not have named one - and the interface falls back to the blank field.
     """
-    _rate_limit(request)
+    _read_limit(request)
     plan = _validated_plan(q, minutes, context, search)
     try:
         pipeline = _make_pipeline()
@@ -553,7 +632,14 @@ async def audio(
     fmt: str = Query("wav", pattern="^(wav|pcm)$"),
     context: str = Query("", description="Topic the listener just heard, for a follow-up"),
     voice: str = Query("", description="Voice id from /api/voices"),
-    search: bool = Query(False, description="Look up live sources; adds 10-25s before audio"),
+    # `None`, not False. An omitted parameter has to stay omitted all the way
+    # to plan_episode: `bool = Query(False)` turns "the listener said nothing"
+    # into "the listener said no", which is a different thing and beats
+    # SEARCH_MODE=auto. The browser never sends this parameter, so with a
+    # False default the freshness heuristic was consulted exactly never.
+    # search=1 / search=0 still win, which is what opt-in means.
+    search: bool | None = Query(None, description="Force research on (1) or off (0); "
+                                                  "omit to let the question decide"),
     user: str = Query("", max_length=64, description="Anonymous listener id, for myFAM"),
     cached_only: bool = Query(False, description="Replay only; never generate. Used by Explore"),
     topic_id: str = Query("", max_length=64, description="Bank topic id, when played from myFAM"),
@@ -565,7 +651,11 @@ async def audio(
     `fmt=pcm` sends bare samples for the Web Audio player, which schedules
     chunks itself and therefore starts sooner and seeks better.
     """
-    _rate_limit(request)
+    # The pace exists to bound model spend. A replay-only request - Explore,
+    # and any card played from it - provably cannot spend one, so pacing it
+    # only stops someone swiping a feed at a normal speed, which is exactly
+    # what the feed is for.
+    (_read_limit if cached_only else _rate_limit)(request)
     plan = _validated_plan(q, minutes, context, search, cached_only,
                            _attachments_for(user, attach))
 

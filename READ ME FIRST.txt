@@ -1,0 +1,61 @@
+FAM
+===
+
+WHAT YOU NEED
+  A Mac (or Linux) with Python 3.10 or newer.
+  Your Anthropic API key — this writes the episodes.
+
+
+HOW TO RUN IT  (one command)
+
+  1. Open Terminal.
+  2. Type  cd    then a space, then DRAG THIS FOLDER onto the Terminal window
+     and press Return.  (That saves you typing the path.)
+  3. Type this and press Return:
+
+         ./start.sh
+
+  That's it. The first run takes a minute: it installs what it needs,
+  then asks you to paste your key, then downloads a voice, then opens
+  the app in your browser.
+
+  Later runs skip all of that and just start the app.
+
+  Mac shortcut: you can double-click START.command in Finder instead.
+  If macOS says it cannot be opened, right-click it and choose Open.
+
+
+WHERE YOU PASTE THE ANTHROPIC KEY
+
+  start.sh asks you. Paste it and press Return.
+  Your typing stays hidden — that is deliberate, not a bug.
+
+  It is checked before it is saved, and stored in  ~/.fam/env  — outside
+  this folder, readable only by you, and never inside the code. Replacing
+  this folder with a newer copy will not lose it.
+
+
+CHANGING THE VOICE
+
+  1. Search for anything and let it start playing.
+  2. Tap the pill under the play button — it reads like  1.2x · 3 min · Lessac
+  3. Tap  Voice  and choose one.
+
+  The episode restarts in the new voice in about a second, with the SAME
+  words — the script is cached, so switching voice costs no extra Claude
+  call.
+
+  The voices are Piper's, and they run on your machine: no per-word cost,
+  no monthly quota, and nothing leaves the computer to make them.
+
+
+IF SOMETHING GOES WRONG
+
+  "command not found: ./start.sh"
+      You are not in the folder. Redo step 2 above.
+
+  "permission denied"
+      Run:  chmod +x start.sh START.command
+
+  You hear a beep instead of speech
+      No voice model was downloaded. Run  ./start.sh  again.

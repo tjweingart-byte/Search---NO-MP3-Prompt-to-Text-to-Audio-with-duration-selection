@@ -2007,7 +2007,775 @@ predicted follow-up and the prefetch plan are what that leans on instead.
 Not verified against real output: there is no API key here, so `python write.py
 "<query>" --minutes 3` is the check that closes this one.
 
-## 49. Two pieces of state, and the schema that was nearly adopted instead
+## 49. `./dev.sh check` could pass without ever opening a browser
+
+Picking the project up in a fresh container, the first `./dev.sh check` died
+with `No module named pytest`, which reads like a broken repo rather than a
+missing `pip install -r requirements.txt`. That is a small annoyance. The one
+underneath it is not.
+
+`playwright` is not in `requirements.txt`, so on any machine that has the deps
+but not playwright, the check ran the tests, the two interface checks and the
+preview build, **skipped the browser smoke test in silence**, and stopped. The
+guard was written as a convenience - don't fail on a machine without a browser -
+but the last line a reader sees in that case is the preview file listing, and
+the run looks complete. It is not: twelve behaviours (three rails, Go Deeper,
+attachments, mixes, Explore, messages, profile, mix visibility, echo on every
+player) went unchecked.
+
+This is the constraint CLAUDE.md already states - **failures must be visible,
+every fallback announces itself** - broken by a skip rather than a fallback,
+which is why it survived. A skipped check is a fallback: it substitutes "we did
+not look" for "we looked and it was fine", and says nothing.
+
+Two changes to `dev.sh`, both of them announcements rather than new checks:
+
+* Missing dependencies now stop the run with the exact command to fix it,
+  instead of a traceback from pytest.
+* A skipped smoke test prints **SKIPPED: the browser smoke test did not run**,
+  says nothing below it was checked in a browser, and gives the install command.
+
+Verified both paths deliberately: forcing a Python without the deps produces
+the dependency message, and shadowing `playwright` with a module that raises on
+import produces the skip banner. With playwright installed the full run ends in
+`all checks passed` with all twelve smoke behaviours listed, which is the state
+this branch is in.
+
+Worth stating for the next fresh container, because neither is in the code:
+`pip install -r requirements.txt` then `pip install playwright` is the setup,
+and there is still **no API key here**, so writing quality - including the
+untested ending rules from §48 - remains unverified.
+
+## 50. A demo of the product needs a product that has been used
+
+Asked for a demo where every page can be prompted and generate episodes, so the
+writing could be judged in the app rather than through `write.py`. Starting the
+server and opening it is not that, for a reason that is structural rather than a
+bug: **three of the five tabs read state a fresh install does not have.**
+
+* **explore** reads finished scripts out of the shared cache and refuses to
+  generate - `cached_only` is enforced in the pipeline, not in the interface, so
+  the guarantee holds however the card is tapped. On a fresh database the tab is
+  empty and *cannot fill itself*. Tapping it forever changes nothing.
+* **myFAM**'s Trending rail ranks a global event log. An empty log ranks
+  nothing, so the rail falls back to the bank in bank order - which looks like a
+  feed and is not one.
+* **profile** reports only what the log holds, deliberately, so it reads as a
+  scaffold until something has been played.
+
+So the demo needed seeding, and seeding needed a rule about what may be faked.
+**Listeners may be invented; episodes may not.** `tools/seed_demo.py` writes
+real scripts from real model calls into the shared cache, then records three
+invented listeners having played them at plausible times spread across the
+trending window - all-at-once timestamps produce a feed that is technically
+populated and behaves nothing like a used app, because trending counts a window
+and every event decays. Two echoes go in as well, so an Explore card can say
+"Rachel sent you this" rather than "someone asked this"; an echo points at a
+script that already exists, so it costs nothing.
+
+It seeds **scripts and not audio**, which is the same argument CLAUDE.md makes
+for prefetch: the script is the expensive half (~$0.03, seconds, cacheable
+text), the audio is ~330x realtime. Seeding audio would be storing the cheap
+half.
+
+**The refusal is the load-bearing part.** With no API key the app serves a
+canned sample, and a cache seeded with *that* is indistinguishable from a cache
+of real episodes until someone presses play - at which point every tab plays the
+same script and the demo has been lying since it started. The seeder exits 2
+rather than write it.
+
+`demo.sh` reports before it serves: live model or canned script, a real voice or
+the debug placeholder tone, how many episodes the cache holds. The voice check
+had to be written twice - the first version counted `list_voices()`, which
+includes `debug:tone`, and cheerfully reported "1 voice" on a machine that can
+only beep. That is the silent success this project keeps paying for, reproduced
+inside the tool built to detect it. It now counts only non-debug voices and
+names the engine.
+
+Verified without an API key, which is all that is possible here: all five
+surfaces answer, `/api/audio` streams (2.6 MB for one minute, matching the
+2.65 MB/min figure), Explore returns 409 for an episode that was never generated
+and replays a seeded one, and after seeding, Trending ranks six tiles while "your
+circle" stays empty until the listener plays something - then it fills from
+co-listener overlap. The write path was exercised with a stub writer; the model
+calls themselves are still unverified here, same as everything else that needs a
+key.
+
+## 51. Three faults from one real session: a canned script, and a 429 storm
+
+First run on a real machine, and the two things that broke were both invisible
+from this container. A DailyFAM tile played a script *about how episode
+generation works* instead of an episode about habits, and ordinary navigation
+came back "Slow down a moment, then try again."
+
+**1. `python app.py` never read .env.** `run.sh` and `demo.sh` source it before
+starting uvicorn, so for a long time nothing in Python needed to - and then
+`app.py`'s own `__main__` block, which offers exactly that entry point, started
+the server without it. The key sat in .env, `settings.anthropic_api_key` was
+empty, `DEMO_MODE` came on, and the app served the built-in sample script. That
+script opens "This is a demonstration briefing" and goes on to describe the
+streaming pipeline - which is precisely what the listener heard, under a tile
+about habit research. `config.py` now loads .env itself (no new dependency;
+handles `export`, quotes and comments), so the key is found however the server
+is started, and a real environment variable still wins over the file.
+
+**2. Demo mode wrote the canned script into the shared cache.** `_make_pipeline`
+deliberately kept the real cache in demo mode - the comment even explains why,
+and the reasoning was right for *reads*: Explore only ever replays, so it is the
+one surface that needs no credentials. But writes went through the same store,
+so the sample script was cached under the listener's actual query, for the full
+24h TTL, where Explore and every other listener would later be served it as a
+real episode - including after a key was finally added. The log line
+`cached 34 sentences for 'what habit research actually shows about lasting
+change'` is that happening.
+
+This is §50's rule - **listeners may be invented, episodes may not** - which
+`seed_demo.py` was written to obey while the app itself broke it on every play.
+`PodcastPipeline` now takes `cache_writes`; demo mode reads and never writes.
+
+**3. One 3-second pace was on all eighteen endpoints.** `_rate_limit` exists to
+bound model spend: each generation holds a Claude stream and a TTS subprocess
+open. It was applied to every endpoint including `/api/topics`, `/api/mixes`,
+`/api/myfam`, `/api/explore`, `/api/profile` and `/api/voices` - and the
+interface fires several of those the moment a tab opens, so the second one 429'd.
+A limiter that fires on correct use is not protecting anything; it is the
+failure. Generation keeps the pace; cheap reads get a burst-tolerant ceiling
+(60 per 10s per client, `READ_LIMIT_PER_WINDOW`). Replay-only requests move to
+the read limiter too: `cached_only` provably cannot spend a model call, so
+pacing it only stopped someone swiping Explore at a normal speed.
+
+**A fourth thing fell out of fixing the first.** Once `config.py` read .env, the
+test suite started reading it too, and a developer with a key in .env would run
+a different suite from CI - demo mode off, a different model, a different cache
+key. `tests/conftest.py` sets `FAM_IGNORE_DOTENV=1`, so the suite stays
+hermetic. It was caught immediately because a stray test .env flipped
+`test_the_default_model_is_a_fast_one` red.
+
+**And the badge was too quiet.** Demo mode was announced - a `sample script`
+chip on the player at 8.5px - and the listener still spent a session wondering
+why the audio did not match the tile. It is now 11px and says **not your
+episode**, which is the fact that matters. The label described what the audio
+was; the warning has to say what it is not.
+
+Ten tests pin all of it (`tests/test_demo_and_limits.py`), and the fixes were
+verified against a running server: the six calls a tab opens all return 200,
+ten rapid Explore swipes return 409 rather than 429, and an episode played in
+demo mode leaves `scripts.db` with zero rows and Explore empty.
+
+**Anyone who ran the broken build must delete `scripts.db` once.** Canned
+scripts cached under real queries do not expire for 24h and will keep playing
+until they do.
+
+## 52. Why it kept happening: everything checked the configuration, nothing checked the thing
+
+Fourth failure in a row on the same machine, and the first one worth a section
+about the pattern rather than the bug. §51 fixed the key not being *found*.
+This time it was found, the app said **Live — briefings written by
+claude-sonnet-5**, and then every episode 502'd on
+`authentication_error: invalid x-api-key`.
+
+Four failures, four different mechanisms, one shape:
+
+| what was checked | what mattered |
+|---|---|
+| is a key set? | does the key work? |
+| is a cache configured? | should *this* generator be allowed to write to it? |
+| is a limiter configured? | does it fire on correct use? |
+| does `.env` exist? | which of its two `ANTHROPIC_API_KEY` lines wins? |
+
+Every one of these validated a proxy and reported success. That is the same
+failure CLAUDE.md already names - **failures must be visible** - arriving from
+a direction the rule did not cover: not a fallback that stayed quiet, but a
+*check* that answered a cheaper question than the one being asked and then said
+OK.
+
+**The self-inflicted one first.** §51's `_load_dotenv` took the **first**
+occurrence of a duplicated name. `source .env`, which `run.sh` and `demo.sh`
+use, takes the **last**. So the same file authenticated differently depending
+on who read it - and `demo.sh` *appended* the pasted key rather than replacing
+it, so a second paste (a corrected key, say) left the stale one winning under
+Python and the new one winning under the shell. The loader now takes the last,
+matching the shell, and `demo.sh` rewrites the line instead of accumulating.
+
+**The class fix: verify, do not inspect.** `app.py` now asks Claude at startup
+whether the key is accepted - `models.retrieve(settings.model)`, which bills
+nothing and answers both "is this key accepted" and "can this account use this
+model", the two ways this has actually failed. The result is logged loudly,
+carried on `/api/health` as `credentials`, and shown by the interface on every
+tab as **KEY REJECTED** with a safe fingerprint of the key in force
+(`sk-ant-t...0000 (32 chars, looks like an API key)`), because a 401 looks
+identical whichever wrong key produced it and the first question is always
+whether the one being sent is the one you think.
+
+`mode` stays `live` in that state on purpose: it reports the configuration.
+`credentials.state` reports reality. Conflating them is what let the interface
+say "Live" over a server that could not generate anything.
+
+**The reason these cluster where they do.** There is no API key in the build
+container and no real speech engine, so the credential path and the audio path
+are precisely the two that cannot be exercised before shipping. Every check
+written here runs green without them - which is why four consecutive failures
+all landed in the untested half. The startup verification does not remove that
+gap; it moves the discovery from a listener mid-episode to the server's first
+ten seconds, which is the most that can be done from here.
+
+Seven tests (`tests/test_credentials.py`) pin it, including that a check which
+cannot run reports rather than raises - Explore needs no credentials at all and
+must keep working when the key is dead.
+
+## 53. The key kept being re-pasted because every new copy was a fresh folder
+
+"Would it be embedded into the code so I don't have to paste it every time?"
+
+The question is the finding. Nobody re-enters a credential four times because
+they enjoy it - they do it because the app keeps losing it, and the obvious
+place to put it next is wherever is easiest, which in this case was nearly a
+chat window. **The re-pasting was a symptom of a storage decision, and the
+storage decision was already solved elsewhere in this repo.**
+
+`~/.fam/voices` exists precisely because voice models inside the project folder
+get re-downloaded on every new copy. The key had exactly the same problem and
+none of the same treatment: it lived in a project `.env`, and every bundle
+shipped for testing was a new directory with no `.env` in it.
+
+So the key now lives in `~/.fam/env`, written by `python setup_key.py`:
+
+* **Outside the project**, next to the voice store, for the same reason.
+* **Verified before it is stored** - `models.retrieve`, which bills nothing.
+  A key that does not work is worse stored than not stored: the app starts,
+  reports live, and fails on the first episode. Nothing is written on a reject.
+* **chmod 600**, entered through `getpass` so it never reaches the terminal
+  scrollback, and therefore never a screenshot.
+* **Replaced, never appended** - §52's duplicate-key trap, closed at the writer.
+* `--show` reports which file the key came from and whether Claude still takes
+  it; `--remove` forgets it.
+
+**Not embedded in source, and that is not a limitation.** Source is committed;
+a key in a commit stays in the history after the line is deleted, so "embedded"
+means "rotate this key later". A test asserts no key-shaped literal appears in
+any module.
+
+Project `.env` still wins over the machine-wide file, so a project can pin its
+own key or model.
+
+**A latent inconsistency fell out of the voice half.** `build_engine` preferred
+`espeak` over `say` while `list_voices` (and therefore the picker and the
+default voice) preferred `say` over `espeak`. On a Mac with espeak installed the
+picker would offer Samantha and the audio would come out robotic. The orders now
+match.
+
+Still not verifiable here: `huggingface.co` is denied by this environment's
+network policy (403 on CONNECT), so `setup_voices.py` cannot be exercised end to
+end from the build container and no real Piper audio has been produced here.
+That is the same gap CLAUDE.md records against voice quality; the download path
+is unchanged and only the store location was ever in question.
+
+## 54. The example config turned on the two things the product exists to avoid
+
+Reported from a real run, as a consistent pattern: three to five seconds of
+audio, then 30-45 seconds of nothing with the page unresponsive, then the rest
+of the episode plays **continuing from where the burst stopped** - and the
+episode itself is good.
+
+The audio half of that is fully explained, and the cause is not in the pipeline.
+`.env.example` disagreed with every settled default in `config.py`:
+
+| `.env.example` shipped | `config.py` default |
+|---|---|
+| `ENABLE_COLD_OPEN=1` | `False` |
+| `ENABLE_WEB_SEARCH=1`, `MAX_WEB_SEARCHES=5` | `False`, `3` |
+| `MODEL=claude-opus-5` | `claude-sonnet-5` |
+
+Those three settings compose into exactly the reported shape. The cold open is
+a small fast model writing one framing sentence - about eighteen words, **three
+to five seconds spoken** - and then the listener waits for the real script,
+which with five web searches on the slower model is **30-45 seconds**. When it
+arrives it continues from where the opener stopped, because that is what the
+opener is for. This is the cold-open seam of PROBLEMS 21 and 46, which CLAUDE.md
+already describes as structural rather than a bug: *"a 30s researched call means
+30s of preamble... the cure is a faster script, not a longer opener."*
+
+**The finding is not the settings, it is the file.** CLAUDE.md records all three
+as settled decisions with the reasoning attached; `config.py` sets them
+correctly and comments why. And the file people are told to copy set them the
+other way. A comment saying "off by default" is not a defence when the thing
+anyone actually copies says `1`. The product's one-sentence spec - *type a
+question and within about a second audio starts giving the answer* - was
+configured against itself, by following the documented setup.
+
+Fixed at the file, and then at the class: `tests/test_env_example.py` walks every
+name in `.env.example`, resolves it against the live `Settings` default, and
+fails on any disagreement. The per-setting assertions catch the three that are
+known to hurt; the general one catches whichever drifts next. The preflight also
+now shouts when either latency switch is on, naming what the listener will hear.
+
+**What is not explained: the page being unresponsive.** `tools/stall_probe.py`
+was written to reproduce it - it plants a 50 ms heartbeat in a real Chromium,
+plays an episode, and reports the largest gap between beats, needing no API key
+because the stall would be a function of bytes and timing rather than words. It
+does not reproduce here: first audio 0.70s, the whole three-minute episode
+buffered, **longest main-thread stall 0.18s**. Three candidate mechanisms were
+checked and ruled out against the code: the recursive promise chain in the
+fetch pump (real, but one chunk per sentence means tens of chunks, not the
+thousands needed to go quadratic), synthesis blocking the server's event loop
+(`say` is awaited through `_run`, not run synchronously), and per-slice
+scheduling (bounded at ~4 buffer sources per second).
+
+So the honest position: the gap is explained and fixed, the unresponsiveness is
+not reproduced. The most likely remaining explanation is host CPU contention -
+`say` spawning a subprocess per sentence on the same laptop as the browser -
+which would starve the renderer without any code path being at fault. The probe
+is committed so the next occurrence can be measured rather than described.
+
+## 55. The filler is deleted, and the question decides whether to research
+
+Two decisions taken after hearing the product run, both reversing things this
+file previously recorded as settled.
+
+### The cold open is gone, not off
+
+Its own premise was arithmetically impossible. It is eighteen words - three to
+five seconds spoken - and it existed to cover a research wait of 30-45 seconds.
+Five does not become forty-five by tuning. And the opener's prompt said, in
+capitals, **"State NO facts, figures, dates, names, results or opinions about
+the topic... Frame the question; never answer it"**, so the five seconds it did
+cover carried nothing. A listener heard a few seconds of throat-clearing, then
+silence, then the episode.
+
+§21 and §46 both treated this as a bug in the implementation and fixed it
+twice - a rebound variable orphaning sentences, then the fill queue. Both fixes
+were correct and neither mattered, because the feature could not work at that
+ratio. Roughly 45 lines of `pipeline.py`, a second model call, five settings,
+twelve tests and an entire measuring tool (`tools/gap_probe.py`) served
+something that was never going to do its job.
+
+**Deleted rather than disabled, deliberately.** It was already off by default;
+`.env.example` turned it back on and cost a session (§54). A setting left
+behind is an invitation. There is now no `cold_open` method on any generator,
+no `_run_cold_open`, no `ENABLE_COLD_OPEN`, and a test asserts that a generator
+which still offers a `cold_open` method is ignored rather than duck-typed back
+into service.
+
+The trade is stated plainly, because it is a real cost: **on-demand latency is
+now exposed.** A researched episode makes the listener wait with nothing
+playing. That was judged better than covering it with words that say nothing.
+
+### The honest wait
+
+What replaces it is not audio. The interface names what it is waiting for -
+"Checking recent sources — this one needs today's facts" against "Writing your
+episode" - and counts seconds past three, so a wait is legible rather than a
+dead screen. Which message it shows comes from `/api/health`, which serves the
+same keyword set the server decides with; a second copy in JavaScript would
+drift and the listener would be told one thing while the server did another.
+
+### Search is opt-in, and the question opts in
+
+`SEARCH_MODE=auto|never|always`, default `auto`. Auto reads the query with
+`needs_fresh_information()` - the same `_VOLATILE` set `cache.py` already used
+to decide that "latest news on X" goes stale in minutes. It is exactly the
+question "does answering this honestly need something recent", so search reads
+it too. `search=1`/`search=0` on a request still wins; `ENABLE_WEB_SEARCH=1`
+maps to `always` so an existing `.env` does not silently change meaning.
+
+Deliberately a keyword test rather than a model call: classifying the query
+with a model puts a round trip in front of the first word, and being wrong
+costs one episode answered from memory that could have been fresher - not a
+broken episode.
+
+### On `MAX_WEB_SEARCHES=5`
+
+Asked why five, and whether more is better. **A cap is not a target.** It sets
+`max_uses` on the web-search tool: the model takes as many as it judges it
+needs up to that ceiling, so raising it does not buy more research, it raises
+how much the model *may* do - and each search it takes costs seconds before the
+first word plus a per-search charge on top of the tokens. Five was a guess; the
+comment in `config.py` said "three is enough for a briefing" while
+`.env.example` shipped five, which is the same disagreement as §54 in miniature.
+Now 3 in both.
+
+Whether even three earns its latency is unmeasured, so `tools/compare_search.py`
+runs one query at several depths and reports time to first word, total time,
+word count and the scripts themselves - because "did the extra searches change
+the writing" is a reading judgement, not a number.
+
+### What this cost
+
+12 tests deleted, 20 added, and the suite dropped from 30s to 8s - most of that
+time was the opener tests sleeping through simulated research latency. Still
+unverified here, as ever: no API key, so the search comparison has never been
+run and the latency of a `never`-mode episode has not been measured on a real
+machine.
+
+## 56. Answer first, research underneath
+
+§55 removed the filler and accepted the wait it had been failing to cover. This
+removes the wait as well, without putting the filler back.
+
+**The shape is the cold open's; the content is the opposite.** On an episode
+that is going to be researched, two calls start at once: one with no tools,
+which begins writing immediately, and one with web search, which is still
+reading. The first is spoken while the second works, and the researched half
+takes over the moment it has a sentence ready.
+
+The old opener could never work because it was eighteen words and was forbidden
+from stating a fact. Here the cover *is* the answer, written by the same model
+at full length - so a listener who quits before the handover has still been told
+something true.
+
+**The two halves are divided by content, not by text.** The obvious design -
+show the researched call what the opening actually said - is impossible: both
+start at the same moment, and the researched call's prompt is fixed before the
+opening has written a word. So neither is told the other's text; each is told
+which job is whose. The opening takes what does not change week to week (what
+this is, how it works, the history). The continuation is told the episode is
+already playing, not to re-introduce anything, to spend its length on what is
+current, and - the part that makes the seam survivable - to correct the opening
+in passing if its sources disagree: *"that figure has since moved to X"*, then
+carry on. A correction stated calmly is better content than the seam it hides.
+
+**The ceiling is not a tuning knob, it is the thing that makes it work.** The
+first test written against this failed, and it was right to. Synthesis runs far
+faster than research: given a 3-minute episode and a 20-second search, the
+from-knowledge half can finish the *entire episode* before the research lands,
+and the listener gets an unresearched answer to a question that was researched
+precisely because it needed today's facts. The design defeats itself silently.
+`ANSWER_FIRST_SHARE` (0.5) caps how much of the episode the instant half may
+speak; past it the remainder is owed to the research. A test pins that faster
+research means proportionally less of the known half - that the cover tracks the
+wait rather than being a fixed preamble, which is what would make it filler
+again.
+
+Also caught by writing the tests: the ceiling was first checked against
+`stats.audio_seconds`, which is only filled in at the end, so it never fired.
+`pace.elapsed` is the live measure. A ceiling that reads a value written after
+the loop it guards is not a ceiling.
+
+**Costs.** One extra model call on researched episodes only - unresearched ones
+still make exactly one, and a test pins that. `ANSWER_FIRST=0` returns to §55's
+behaviour: one call, and an honest wait.
+
+**The interface stopped saying it was waiting**, because it is not any more.
+"Checking recent sources — this one needs today's facts" became "Answering now —
+checking sources underneath". Leaving the old copy would have been a fresh lie
+in the exact place the last one was removed from.
+
+Unverified, as ever, without a key: how audible the handover actually is. The
+tests prove no known-half sentence is spoken after the researched half starts
+and that the halves never interleave; whether the join *sounds* like a join is
+a listening judgement.
+
+## 57. The heuristic widened, because the model's own knowledge has a date on it
+
+§55 gated research on the cache's freshness keywords. That set was written to
+answer a different question - "will this episode go stale in the cache" - and it
+only catches questions that *say* they are about now. "Who runs OpenAI" contains
+no time word at all and is exactly the kind of thing that has moved.
+
+**The number that forced this.** From the model docs rather than memory:
+
+| Model | Reliable knowledge cutoff |
+|---|---|
+| Claude Fable 5.1 | Jun 2026 |
+| Claude Opus 5 | May 2026 |
+| Claude Sonnet 5 | Jan 2026 |
+| Claude Haiku 4.5 | Feb 2025 |
+
+The app runs Sonnet 5, so "answer from what the model already knows" means
+answering from January 2026 - eight months back as this is written. There is no
+refresh cadence: a cutoff is fixed at training and only advances when a new
+model ships.
+
+**The asymmetry decides the tuning.** Since §56 a wrong "research this" costs a
+background call the listener never waits for, while a wrong "don't" costs a
+confidently dated answer with no signal that it is dated. So the set is now
+deliberately broad: roles that change hands (ceo, coach, minister, owner,
+resigned, appointed), numbers that move (price, valuation, score, standings,
+inflation), things in progress (election, trial, merger, launch, playoffs),
+superlatives - which are always claims about the present - and version words.
+Plus three phrase rules: a year at or after last year, "who is/runs/leads X",
+and "how many/much".
+
+It returns a **reason** rather than a bool, logged on every researched episode,
+because a heuristic nobody can see the workings of is a heuristic nobody can
+tune.
+
+**What it must still not do.** "Why is the sky blue", "how does a heat pump
+work", "why the Roman republic fell", "what happened in 1789" - pinned as
+answered from memory, because over-triggering is cheap rather than free.
+
+**Two test bugs caught while doing this, both the project's own recurring kind.**
+The cache-sharing test compared `gen.calls` to a variable read *after* the same
+run, which would have passed whatever happened - a check answering a cheaper
+question than the one asked, again. It now captures the count between the two
+listeners. And the year rule was first asserted against "the biggest story of
+2026", which trips on "biggest" long before the year is looked at; the test was
+wrong, not the code.
+
+## 58. Searching from home showed nothing at all, because the overlay it asked for did not exist
+
+The report was about doubt rather than about a bug: "when i click search on a
+searchFAM, it just shows the searchFAM page and the user questions whether or
+not their search was actually received."
+
+They were right, and it was not a perception problem. `generate()` picked its
+overlay by building an id - `"gen-" + overlayScreen` - and **there was no
+element with `id="gen-home"`**. Four screens had one (`gen-detail`,
+`gen-player`, `gen-playall`, `gen-explore`); home, the screen the product's
+one-sentence spec is about, did not. `document.getElementById` returned null,
+the code went on without complaint, and a search from the home screen showed
+the home screen for as long as generation took. The honest wait added in §55
+was writing its status into overlays nobody could see.
+
+**Why it survived.** Every id was correct in isolation, and the lookup could
+not fail loudly: an overlay that does not exist and an overlay that is simply
+not shown look identical from inside `generate()`. Nothing tied the set of
+screens that can start an episode to the set of screens that own an overlay.
+
+**The fix removes the coupling rather than adding the fifth overlay.** One
+full-screen `#famLoading` now sits inside `.frame`, above the tab bar
+(`z-index:60`), and covers every surface. There is no id to derive and no
+per-screen element to forget, so a sixth surface that generates gets the
+loading screen for free. `overlayScreen` and its `overlayMap` are gone from
+`generate()` and from every call site.
+
+It is the brand doing the waiting: the wordmark, three chevrons rising through
+`famRise`, "FAMiliarizing…", five dots. The §55 status line is kept underneath
+as `#famLoadingStatus` and still says what is being waited for and for how long
+- the animation is not allowed to replace the honest wait, only to frame it.
+Demo-mode and key-rejected notices write into that same line.
+
+**And a second, smaller thing the smoke test caught.** On a cache hit the
+screen appeared at 90 ms and was gone at 93 ms: a 3 ms flash, which reads as a
+glitch rather than as speed. `GEN_MIN_VISIBLE_MS = 450` and `finishGenOverlay()`
+hold it for 450 ms once shown, and `clearGenOverlay()` stays immediate for the
+failure path. Worth noting that the fastest possible case is the one that
+looked broken.
+
+Two smoke behaviours now pin it: "Searching shows the loading screen" and
+"One loading screen serves every surface". Fourteen behaviours pass.
+
+**Explore is deliberately excluded.** Its reel calls `FamAudio.play` directly
+and never routes through `generate()`, because it replays cached episodes and
+refuses to generate. It has its own turn animation; a loading screen there
+would promise work that is not happening.
+
+## 59. WellSaid added as an alternate voice, and the two ways that could go wrong quietly
+
+Two specific WellSaid voices - Chase J (speaker 35) and Kai M (speaker 32) -
+wanted A/B testing against Piper inside the real product rather than in
+isolation. The engine interface made this small: `TTSEngine.synth(text, wpm,
+voice) -> PCM` plus a `voice:` id prefix that `engine_for_voice()` routes on,
+so a new engine is a new class and nothing in the script pipeline changes.
+`pipeline.py`, `script_generator.py`, search, myFAM and the player are all
+untouched.
+
+**Verified rather than assumed**, since the brief asked for the current API:
+`POST https://api.wellsaidlabs.com/v1/tts/stream`, `X-Api-Key` header,
+`{"text", "speaker_id"}` body, ~1000 characters per request. Their docs site
+is unreachable from the build container, so this came from their published
+reference and their own example repo - which is also where `WELLSAID_API_KEY`
+comes from as the variable name. **Unconfirmed anywhere reachable: whether they
+serve WAV as well as MP3.** So the request asks for WAV and accepts MP3, reads
+whichever actually arrived, and logs it. WAV needs no decoder; MP3 goes through
+ffmpeg in memory, and if ffmpeg is missing the error says so rather than
+producing silence.
+
+**Two failures this could have shipped with, both caught by writing the test
+first:**
+
+1. **A paid engine became the default.** `default_voice()` returned
+   `list_voices()[0]`. On a machine with no Piper installed - which is most
+   fresh containers - WellSaid was first, so every listener would have been
+   billed per character without anyone choosing it. `default_voice()` now skips
+   paid engines entirely and falls back to the placeholder tone, which
+   announces itself as broken. A surprise bill does not.
+
+2. **It would have silently become Piper.** `engine_for_voice()` falls back to
+   the best available engine when a voice is unavailable, which is right for a
+   Piper voice that was uninstalled - the listener still hears their episode.
+   It is exactly wrong here: the only reason to select WellSaid is to hear
+   WellSaid, so a fallback means judging one engine by another's output. It now
+   raises with the reason and the command that fixes it.
+
+**Sample rate had to be decided, not discovered.** `app.py` writes the stream
+header from `engine.sample_rate` before the first synthesis, so the engine
+cannot wait to be told what WellSaid sends. Everything is resampled on arrival
+to the app's own rate, which is fixed and knowable.
+
+**Chunking is mostly theoretical and still built.** The pipeline already
+synthesises one sentence at a time, so the 1000-character ceiling is reached
+only by an unusually long one. When it is, the split runs sentences, then
+clauses, then word boundaries - never mid-word - and the near-silence at each
+end of a chunk is trimmed before joining, because independently rendered chunks
+each carry their own lead-in and tail and concatenating them untrimmed stacks
+into a pause in the middle of a sentence. Single-chunk audio is not trimmed:
+that would eat the gap the pipeline puts *between* sentences.
+
+**What WellSaid cannot do:** there is no speaking-rate parameter, so the pacing
+controller's wpm is advisory. Logged once per process rather than per sentence.
+Duration is still a ceiling and over-runs are still trimmed.
+
+**Two test bugs of my own, the project's recurring kind.** `test_empty_text`
+had no key fixture and revealed a real ordering bug - the key was checked
+before the empty-text check, so synthesising a blank line raised instead of
+costing nothing. And patching `ws.asyncio.sleep` with a lambda that calls
+`asyncio.sleep` patches the very function it then calls: the retry recursed
+until the stack ended.
+
+## 60. The WellSaid key could not be entered, and a good key was being thrown away
+
+Reported as: "FAM starts without prompting me for the WellSaid API key, the
+terminal says there are no WellSaid voices because the key is not set." Two
+separate faults, and each on its own is enough to produce exactly that.
+
+**1. The prompt answered itself.** `start.sh` asked "Paste your WellSaid key
+now? [y/N]" and read the reply with `read -r answer`. `read` returns
+immediately at end of input, so the moment stdin is not an interactive
+terminal the question is printed and declined in the same breath. From the
+outside that is indistinguishable from never being asked - which is how it was
+reported, and correctly so.
+
+The fix removes the question rather than fixing it. `setup_wellsaid.py`
+already asks for the key itself and already treats an empty line as "nothing
+changed", so the gate added a way to fail and nothing else. When stdin is not
+a terminal the script now says so and prints the command to run, instead of
+staging a conversation it cannot have.
+
+**Worth naming: this passed its own test.** The previous session tested the
+declined path by piping `n` into the script and confirmed it carried on. That
+proves the branch works and says nothing about whether a person can reach the
+other one. Testing a prompt without a terminal tests everything except the
+prompt. It is now driven through a real pty, and `tests/test_start_script.py`
+pins the shape - no `[y/N]`, no `read -r answer`, an explicit `[ -t 0 ]`.
+
+**2. A working key was refused because ffmpeg was missing.** `works()`
+validated a key by synthesising one line and treated *any* exception as
+"REJECTED - nothing was stored". So on an account that returns MP3, with
+ffmpeg not yet installed, WellSaid answered HTTP 200 - the key was fine - the
+local decode failed, and the key was discarded with a message implying the key
+was bad. Install ffmpeg afterwards and there is still no key, and the app
+truthfully reports "no WellSaid voices - its key is not set".
+
+This is `verify, do not inspect` (§52) overshooting in the opposite direction.
+That rule says a check must perform the real action rather than confirm
+configuration. It does not say a check may answer a *broader* question than
+the one it was asked. "Does WellSaid accept this key" and "can this machine
+decode what WellSaid sends" are two questions with opposite consequences for
+whether the key is stored.
+
+Three verdicts now, from three exception types rather than from words in a
+message - `WellSaidError`, `WellSaidLocalError`, `WellSaidUnreachable`:
+
+| What happened | The key |
+|---|---|
+| WellSaid returned audio | stored |
+| WellSaid returned audio, this machine cannot decode it | **stored**, with the fix named |
+| WellSaid refused the key | not stored |
+| The request never arrived | not stored, and *not* called a rejection |
+
+The last row matters as much as the ffmpeg one: a blocked network was
+reporting "REJECTED", which sends someone off to regenerate a key that was
+never the problem. `--no-verify` exists for a network that blocks the API.
+
+Typed rather than string-matched on purpose. The first version of this fix
+tested `if "ffmpeg" in message`, which is the same trap one level down: the
+wording changes and the meaning silently flips.
+
+Piper is untouched throughout, and a test says so.
+
+## 61. WellSaid removed: two episodes exhausted a month's quota
+
+Not a quality verdict. **Two episodes spent a month's allowance.** A 3-minute
+FAM episode is about 2,610 characters, so the whole trial cost roughly 5,200
+characters - which says the product was sold per seat with a monthly ceiling,
+and was being used as if it were an API billed per character.
+
+That is a category error rather than a vendor one, and it generalises: the
+first question about any hosted voice is now "is it billed per character with
+no monthly ceiling", asked before anyone listens to it. `VOICE_OPTIONS.md`
+carries the shortlist and the arithmetic.
+
+**Deleted, not switched off**, the same as the cold open in §55 and for the
+same reason: a knob left behind is an invitation to turn it back on, and this
+project has had exactly that happen before via an example file. Gone:
+`wellsaid.py`, `setup_wellsaid.py`, its two test files, `WELLSAID_TESTING.md`,
+the settings block, the `ffmpeg_binary` setting that only it used, the second
+key prompt in `start.sh`, and the `var` parameter added to `write_key()` for a
+second provider that no longer exists. 329 tests pass, down from 358 - the
+difference is the WellSaid tests and nothing else.
+
+**Two guards went with it, deliberately, and are worth re-adding by hand
+rather than inheriting.** Both were real bugs found during the experiment, and
+both are properties of *any* hosted engine:
+
+* `default_voice()` returns the first offered voice, so merely registering a
+  paid engine made it the default on any machine without Piper installed -
+  every listener billed per character, nobody having chosen it.
+* `engine_for_voice()` falls back to the best available engine, which is right
+  for an uninstalled local voice and wrong for a hosted one: substituting
+  Piper means judging one engine by another's output.
+
+Leaving them as dead code with an empty set of paid engines would be worse
+than writing them down, so they are written down in `VOICE_OPTIONS.md`.
+
+**What the experiment did establish, and is worth keeping:** the `TTSEngine`
+interface is the right shape. A new voice was a new class plus a `voice:` id
+prefix, and touched nothing in `pipeline.py`, `script_generator.py`, the
+cache, search or the player. Whatever replaces Piper plugs in the same way.
+
+**And the process lesson.** Integration came first and listening came second,
+so a week of plumbing was spent before the thing that killed it - the billing
+model - was visible at all. It would have been visible in five minutes on the
+pricing page. Next time: synthesise the same script through each candidate
+offline, listen, decide, and only then write code.
+
+## 62. Search never ran, because an omitted parameter arrived as an explicit "no"
+
+Reported as "the model doesn't seem to be searching the web no matter what the
+prompt is". It wasn't. Not for any prompt, ever, in the app.
+
+`plan_episode` consults the freshness heuristic **only when `search is None`**,
+because an explicit `True`/`False` is the listener's own choice and has to win
+- that is what "opt in" means (§55). But `/api/audio` declared:
+
+    search: bool = Query(False)
+
+so FastAPI turned an *omitted* parameter into an explicit `False` before the
+planner ever saw it. And the browser never sends `search=` at all. Every
+episode the app has ever produced therefore said "the listener asked for no
+research", and `SEARCH_MODE=auto` - along with the whole widened heuristic of
+§57 - was dead code in production.
+
+`/api/next` had the same default, which is worse than it looks: it reads the
+cache entry `/api/audio` wrote, so if the two ever disagreed about whether an
+episode was researched they would disagree about the key and Go Deeper would
+silently never find a thread. And `/api/script` accepted a `search` field and
+then dropped it on the floor - it never passed it to `_validated_plan` at all.
+
+**Why every test passed.** They called `plan_episode(...)` directly with the
+argument left off, which produces `None` and exercises the heuristic
+beautifully. That is not what the app does. **A default that is correct inside
+a function and wrong at its boundary is invisible to any test that starts
+inside the boundary.** `tests/test_search_reaches_the_app.py` starts outside
+it, driving real requests through `TestClient`; on the old code six of its
+thirteen fail, while all 37 of the older search tests still pass. That gap is
+the whole lesson.
+
+Same shape as §52 ("verify, do not inspect") one level out: the tests answered
+"does the heuristic work" when the question was "does the heuristic run".
+
+**And the decision was silent when it went the wrong way.** `plan_episode`
+logged only when it *did* research, so the state the product was actually
+stuck in produced no output at all. It now prints `SEARCH yes` / `SEARCH no`
+with the reason on every episode, so watching the terminal answers the
+question that took a user report to surface.
+
+Unrelated but worth recording: `tools/compare_search.py` passes `search=`
+explicitly, so it was never affected. The measurements it produces were always
+going to be right; it is the app that was not searching.
+
+## 63. Two pieces of state, and the schema that was nearly adopted instead
 
 A schema was proposed for the app - `USERS`, `EPISODES`, `EPISODE_HISTORY`,
 `LIKES`, `TAGS`/`EPISODE_TAGS`, `SAVED_SEARCHES`, `DAILY_FEED`, `MESSAGES`, on

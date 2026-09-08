@@ -108,7 +108,6 @@ per-sentence pacing controller, and trim/top-up correction. Measured drift:
 
 ## Two optimisations worth knowing about
 
-**Cold open (on by default).** `claude-haiku-4-5` writes one framing sentence
 with no tools *while* the main model is still researching. The listener hears
 speech in well under a second instead of waiting out web search. The opener is
 forbidden from stating any fact, since it has done no research; it frames the

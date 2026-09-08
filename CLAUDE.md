@@ -24,9 +24,9 @@ as they interact with the app.
 
 ## The architectural consequence that matters most
 
-Today every episode is generated **on demand**, which is why the app needs a
-fast-model "cold open" to cover the wait, and why a gap can appear when that
-opener runs out before the researched script arrives.
+Today every episode is generated **on demand**. There used to be a fast-model
+"cold open" covering that wait; it is gone (PROBLEMS.md §55). Nothing is spoken
+until the real episode is.
 
 **On the browse surfaces, that whole problem is avoidable.** myFAM and dailyFAM
 know what the listener might tap *before* they tap it. So:
@@ -36,13 +36,24 @@ know what the listener might tap *before* they tap it. So:
 > The audio is nearly free (~330x realtime, milliseconds).
 > Pre-generate *scripts* for likely-next episodes; synthesise audio on tap.
 
-That yields instant playback with no cold open and no gap, and wastes only cheap
+That yields instant playback with no wait at all, and wastes only cheap
 text when a prediction is wrong — not audio compute or bandwidth. The existing
 script cache (`cache.py`) is already the right place to put pre-generated
 scripts; it stores scripts, not audio, for exactly this reason.
 
-Corollary: **the cold open is a workaround for on-demand latency.** Do not
-extend it to the browse surfaces. Prefetch there instead.
+Corollary: **latency is answered by starting earlier, never by filling the
+gap.** The cold open tried to fill it and was removed. Prefetch on the browse
+surfaces; on search, keep the work small enough that there is no gap to fill.
+
+**On search, that is now literal** (PROBLEMS.md §56). A question that needs
+today's facts starts two calls at once: one with no tools that begins writing
+immediately, one with search that is still reading. The first is spoken while
+the second works and hands over the moment research has a sentence. The wait is
+covered by the answer rather than by filler - which is exactly what the cold
+open could not be, since it was told to state no facts. `ANSWER_FIRST_SHARE`
+caps the instant half at half the episode, because synthesis outruns research
+and without a ceiling the from-knowledge half finishes the whole episode and the
+research is never heard.
 
 ## The one-sentence spec
 
@@ -172,7 +183,17 @@ another rule.
 
 ## Open problems, in the order they hurt
 
-1. ~~**Voice quality**~~ — *addressed, needs verifying on a real machine.* Piper
+1. **Voice quality — reopened.** Piper works and sounds flat, which is the
+   complaint. The first attempt to replace it (WellSaid Labs) was removed after
+   **two episodes exhausted a month's quota** — a seat product used as an API,
+   not a voice that was too expensive (PROBLEMS.md §61). `VOICE_OPTIONS.md` has
+   the arithmetic and the shortlist; the short version is that a 3-minute
+   episode is ~2,610 characters, so the best-sounding hosted voices cost more
+   per episode than Claude does, which breaks the "audio is nearly free"
+   premise the prefetch plan rests on. **Kokoro-82M is the candidate to try
+   first** — open weights, ships with the app like Piper, no quota — and nobody
+   has heard it on a FAM script yet. That listening test is the next move.
+   What is settled about the current setup: Piper
    is now a pip dependency (`piper-tts`) with voice models in a **shared
    per-user folder** (`~/.fam/voices`, see `voice_store.py`) installed by
    `python setup_voices.py`. They deliberately live outside the project so a new
@@ -189,20 +210,14 @@ another rule.
    Note: voice is deliberately **not** part of the script cache key, because a
    voice changes the audio and not the words. Switching voice therefore reuses
    the cached script — measured at ~90 ms and zero API cost.
-3. ~~**The cold-open → script gap**~~ — *fixed twice; measured this time*
-   (PROBLEMS.md §21, then §46). §21 claimed silence was "structurally
-   impossible up to a 60s ceiling". **That was wrong** - a rebound variable was
-   orphaning opener sentences mid-flight, so on a 30s script 52 were written
-   and 11 spoken with 11.5s of dead air. Fills are now kept in a list and
-   drained oldest-first. `python tools/gap_probe.py` measures it with no API
-   key and reports 0.00s at every latency from 2s to 30s; run it before
-   believing any future claim about this.
-   **What remains is not a bug but a consequence:** a 30s researched call means
-   30s of preamble, because the listener must hear *something*, and the opener
-   may state no facts - so the seam between it and the script is structural.
-   The cure is a faster script - fewer web searches, a faster model, or
-   prefetch on the browse surfaces - not a longer opener.
-   Note the cold open is still **off** by default (`ENABLE_COLD_OPEN=0`).
+3. ~~**The cold-open → script gap**~~ — *dissolved, not fixed* (PROBLEMS.md
+   §55). Two sessions went into making the opener cover the research wait, and
+   heard on a real machine it was 3-5 seconds of contentless speech in front of
+   a 30-45 second silence. Five does not cover forty-five, and the opener was
+   prompted to state no facts, so what it did cover was worthless. **The whole
+   feature is deleted** - not switched off - along with `tools/gap_probe.py`,
+   which existed only to measure it. The interface now shows an honest wait
+   that names what it is waiting for and counts the seconds.
 4. **myFAM is built; the taste model is deliberately crude.** `topics.py` ranks
    a *shared* bank of ~28 topics three ways (trending / co-listener / history)
    from an append-only event log. Tags come from keyword matching, not a
@@ -250,13 +265,37 @@ another rule.
   substance now ends early instead of being padded. Enforcing the number in both
   directions is what produced filler: it made the model pad. `ALLOW_TOPUPS=1`
   restores the old behaviour.
-- **No filler, ever.** The cold open is off (`ENABLE_COLD_OPEN=0`). It was
-  prompted to state no facts, which made it worthless by construction, and
-  covering a long research wait meant 15-30 seconds of it. Nothing plays until
-  the real briefing does; the interface shows an honest loading state.
+- **No filler, ever, and no setting for it.** The cold open was deleted, not
+  disabled - a knob left behind is an invitation to turn it back on, and this
+  one was turned back on by an example file. Nothing plays until the real
+  briefing does. The interface says what it is waiting for and how long it has
+  been waiting; a wait you were warned about is a different experience from the
+  same wait unexplained.
+- **Search is opt-in, and the question opts in.** `SEARCH_MODE=auto` reads the
+  query with the same keyword signal the cache uses for freshness: "latest",
+  "today", "score", "breaking" get researched; everything else is answered from
+  what the model already knows, immediately. `search=1`/`search=0` on a request
+  still wins. Paying 10-25 seconds on every episode bought nothing for "what is
+  the NASDAQ", which is most of what people ask.
 - **Failures must be visible.** Silent success (empty audio, a placeholder tone,
   demo mode mistaken for live) has caused more lost time on this project than
-  any real bug. Every fallback must announce itself.
+  any real bug. Every fallback must announce itself. *(PROBLEMS.md §51: demo
+  mode did announce itself, in an 8.5px chip, and still cost a whole session -
+  and it was writing its canned script into the shared cache, so the failure
+  outlived the run. Announcing is not enough if the thing keeps a record.)*
+- **Verify, do not inspect.** *(PROBLEMS.md §52.)* Four consecutive failures on
+  a real machine all had the same shape: a check answered a cheaper question
+  than the one being asked and then reported OK. "A key is set" is not "the key
+  works"; "a cache is configured" is not "this generator may write to it". The
+  server now asks Claude at startup whether the credential is actually accepted
+  and says so on every tab. Anything that reports readiness must perform the
+  real action, not confirm that it was configured.
+- **Per-machine state lives in `~/.fam/`, never in the project.** Voice models
+  (`~/.fam/voices`) and the API key (`~/.fam/env`, written by
+  `python setup_key.py`) are set once and found by every later copy of the app.
+  A key in a project `.env` is lost on every new copy, and the workaround for
+  that is pasting it again somewhere it should not go. The key is never written
+  into source: a commit keeps it in history after the line is deleted.
 
 ## Decisions that will shape the next phase
 
@@ -292,6 +331,15 @@ being asked:
 on fixtures - good for layout, flow and interaction on a real phone, useless
 for writing quality or time-to-first-audio, which need the server.
 
+**To show or judge the product rather than change it, `./demo.sh`** (PROBLEMS.md
+§50). It reports what the machine will actually do before it starts - canned
+script with no API key, placeholder tone with no voice model, dead Explore tab
+with an empty cache - refuses to start quietly broken, offers to seed, and then
+says where to press on each tab. `python tools/seed_demo.py` writes the history
+the browse surfaces need: Explore replays other listeners' episodes and by
+design cannot generate one, so on a fresh database it stays empty however much
+you tap it.
+
 ## Picking this up in a new session
 
 Everything is in the repo; nothing of consequence lives in a chat log. Branch:
@@ -299,11 +347,19 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-48 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §46-56 are the
 most recent), `DEVELOPMENT.md` for the loop.
 
+A fresh container has none of the dependencies installed. Setup is two lines,
+and the second one is not optional:
+
+    pip install -r requirements.txt
+    pip install playwright        # or the browser smoke test skips itself
+
 Then run `./dev.sh check` before changing anything, so you know the baseline is
-green rather than assuming it.
+green rather than assuming it. A complete run ends with `all checks passed` and
+twelve named smoke behaviours; anything less means something was skipped, and
+`dev.sh` now says so out loud (PROBLEMS.md §49).
 
 What is true but not obvious from the code:
 
@@ -313,10 +369,16 @@ What is true but not obvious from the code:
   sounds* is unverified until someone runs it with a key.
 - The checks answer "does it work", not "does it look right". `tools/shots.py`
   photographs all nine surfaces so a refactor can be proved neutral;
-  `tools/gap_probe.py` measures dead air without a key. Both exist because a
-  claim was once made without them and was wrong.
+  `tools/stall_probe.py` measures browser stalls without a key, and
+  `tools/compare_search.py` measures what research actually buys. Each exists
+  because a claim was once made without it and was wrong.
 - Deleting CSS from `static/index.html` has broken this app twice. Use
   `tools/check_css.py` and `tools/shots.py`, not judgement.
+- **A setting is settled only where it is copied.** `.env.example` shipped the
+  cold open and web search *on* while `config.py` had them off with the
+  reasoning attached (PROBLEMS.md §54), so following the documented setup
+  configured the product against its own spec. `tests/test_env_example.py` now
+  fails on any disagreement between the two.
 
 ## Working notes
 
