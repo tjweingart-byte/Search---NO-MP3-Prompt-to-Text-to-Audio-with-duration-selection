@@ -307,15 +307,30 @@ class PodcastPipeline:
                     buffer.close()
 
             reader = asyncio.create_task(read())
+            #: The pending `buffer.get()`, held across ticks and owned here.
+            #:
+            #: This used to be `await asyncio.wait_for(buffer.get(), tick)`,
+            #: and that was the teardown defect: `wait_for` cancels its inner
+            #: task on timeout, and when the inner task completes in the same
+            #: turn it returns the result and *drops* the outer cancellation
+            #: it was supposed to propagate. The producer then carried on
+            #: round its loop having eaten the cancel `close()` sent, so it
+            #: could never be shut down. `asyncio.wait` never cancels what it
+            #: waits on, so an outer cancel passes straight through.
+            waiting: Optional[asyncio.Task] = None
             try:
                 while True:
-                    try:
-                        sentence = await asyncio.wait_for(buffer.get(),
-                                                          ASSEMBLER_TICK)
-                    except asyncio.TimeoutError:
+                    if waiting is None:
+                        waiting = asyncio.ensure_future(buffer.get())
+                    done, _ = await asyncio.wait({waiting},
+                                                 timeout=ASSEMBLER_TICK)
+                    if not done:
+                        # Nothing new: run the assembler's timer and headroom
+                        # rules so text is never held indefinitely.
                         for chunk in assembler.due():
                             await queue.put(chunk)
                         continue
+                    sentence, waiting = waiting.result(), None
                     if sentence is None:
                         for chunk in assembler.flush():
                             await queue.put(chunk)
@@ -330,6 +345,11 @@ class PodcastPipeline:
             except Exception as exc:  # surfaced to the consumer, never swallowed
                 await queue.put(exc)
             finally:
+                # Everything this coroutine started, it ends. The reader owns
+                # nothing else, and the pending get is cancelled here rather
+                # than left for the loop to finalise.
+                if waiting is not None:
+                    waiting.cancel()
                 reader.cancel()
 
         return _Pump(queue, asyncio.create_task(produce()))
@@ -363,18 +383,9 @@ class PodcastPipeline:
                 if stats.truncated:
                     break
         finally:
-            # Cancelled, not awaited - unlike `_speak`, which now safely calls
-            # `_Pump.close()`.
-            #
-            # The `_start` defect Step 5 fixed is not this: switching this line
-            # to `await pump.close()` still hangs on a truncated episode at
-            # some lengths, so `_start_phase6`'s producer has an unwind problem
-            # of its own that is not the sentinel. It is unresolved, it is
-            # tracked as the first item of Step 6, and it cannot reach a
-            # listener while this path is unreachable. Cancelling without
-            # awaiting is what Step 4 measured, and it is kept until the cause
-            # is found rather than papered over with a timeout.
-            pump.task.cancel()
+            # `_Pump.close()`, the same as `_speak`: it cancels the producer
+            # *and* awaits it, so nothing this method started outlives it.
+            await pump.close()
 
     async def _speak_chunk(
         self, chunk: AssembledChunk, pace: PaceController, stats: GenerationStats
