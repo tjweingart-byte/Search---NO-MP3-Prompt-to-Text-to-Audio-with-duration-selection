@@ -538,6 +538,42 @@ class PodcastPipeline:
         yield pcm
         yield gap
 
+    # ---- which streaming architecture this request uses -------------------
+    #
+    # One decision, read from `settings.streaming_pipeline` at request time
+    # and applied at every point a pump is made or spoken. Default is
+    # `legacy`, so an installation that has never heard of this setting
+    # behaves exactly as it always has, and rolling back is one environment
+    # variable and a restart.
+    #
+    # The two architectures are not blended: a pump made by `_start_phase6`
+    # carries `AssembledChunk` and must be spoken by `_speak_phase6`, so the
+    # three helpers below always agree with each other.
+
+    def _phase6(self) -> bool:
+        return settings.streaming_pipeline == "phase6"
+
+    def _pump_for(self, sentences: AsyncIterator[str]) -> "_Pump":
+        """Start a sentence stream under whichever architecture is selected.
+
+        Each call builds its own pump, and under Phase 6 its own script buffer
+        and assembler with it - which is what keeps `_answer_first`'s two
+        concurrent streams from ever sharing assembler state or interleaving
+        their text into one chunk.
+        """
+        return self._start_phase6(sentences) if self._phase6() else self._start(sentences)
+
+    def _speak_pump(self, pump: "_Pump", pace: PaceController,
+                    stats: GenerationStats, fatal: bool = True) -> AsyncIterator[bytes]:
+        return (self._speak_phase6(pump, pace, stats, fatal) if self._phase6()
+                else self._speak(pump, pace, stats, fatal))
+
+    def _speak_item(self, item, pace: PaceController,
+                    stats: GenerationStats) -> AsyncIterator[bytes]:
+        """One pulled item: a sentence under legacy, a chunk under Phase 6."""
+        return (self._speak_chunk(item, pace, stats) if self._phase6()
+                else self._speak_one(item, pace, stats))
+
     async def _answer_first(
         self,
         plan: EpisodePlan,
@@ -570,8 +606,10 @@ class PodcastPipeline:
         instant_plan = dataclasses.replace(plan, search=False, role="opening")
         research_plan = dataclasses.replace(plan, search=True, role="continuation")
 
-        instant = self._start(self.generator.stream_sentences(instant_plan, ScriptNotes()))
-        research = self._start(self.generator.stream_sentences(research_plan, notes))
+        instant = self._pump_for(
+            self.generator.stream_sentences(instant_plan, ScriptNotes()))
+        research = self._pump_for(
+            self.generator.stream_sentences(research_plan, notes))
         stats.answered_first = True
         handover = time.perf_counter()
 
@@ -593,7 +631,7 @@ class PodcastPipeline:
                         log.warning("instant half failed; waiting for research",
                                     exc_info=item)
                     break
-                async for chunk in self._speak_one(item, pace, stats):
+                async for chunk in self._speak_item(item, pace, stats):
                     yield chunk
                 if stats.truncated:
                     return
@@ -606,7 +644,7 @@ class PodcastPipeline:
                      pace.elapsed)
         log.info("research took over after %.1fs of answering from knowledge",
                  stats.handover_seconds)
-        async for chunk in self._speak(research, pace, stats):
+        async for chunk in self._speak_pump(research, pace, stats):
             yield chunk
 
     async def _cache_key(self, plan: EpisodePlan) -> str:
@@ -662,7 +700,8 @@ class PodcastPipeline:
                 log.info("cache hit for %r (%d min)", plan.query, plan.minutes)
                 # Replaying the same sentences through the same controller
                 # reproduces the episode exactly - and costs zero API tokens.
-                async for chunk in self._speak(self._start(_replay(cached)), pace, stats):
+                async for chunk in self._speak_pump(
+                        self._pump_for(_replay(cached)), pace, stats):
                     yield chunk
                 async for chunk in self._finish(pace, stats):
                     yield chunk
@@ -686,8 +725,8 @@ class PodcastPipeline:
             async for chunk in self._answer_first(plan, pace, stats, notes):
                 yield chunk
         else:
-            body = self._start(self.generator.stream_sentences(plan, notes))
-            async for chunk in self._speak(body, pace, stats):
+            body = self._pump_for(self.generator.stream_sentences(plan, notes))
+            async for chunk in self._speak_pump(body, pace, stats):
                 yield chunk
 
         # The model under-wrote. Rather than pad minutes of silence, buy more
@@ -703,8 +742,9 @@ class PodcastPipeline:
             words_needed = int(pace.remaining_seconds / 60.0 * settings.target_wpm)
             log.info("topping up %d words for %.1fs of dead air", words_needed, pace.remaining_seconds)
             before = pace.spoken_words
-            extra = self._start(self.generator.top_up(plan, " ".join(stats.script), words_needed))
-            async for chunk in self._speak(extra, pace, stats):
+            extra = self._pump_for(
+                self.generator.top_up(plan, " ".join(stats.script), words_needed))
+            async for chunk in self._speak_pump(extra, pace, stats):
                 yield chunk
             if pace.spoken_words == before:
                 break  # the top-up produced nothing; stop asking

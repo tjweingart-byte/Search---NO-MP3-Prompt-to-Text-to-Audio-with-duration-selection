@@ -110,30 +110,32 @@ def test_validation_also_catches_a_replaced_settings_object():
 # --------------------------------------------------------------------------
 # it selects nothing yet, and that is the point of this step
 # --------------------------------------------------------------------------
-def test_no_production_module_reads_the_flag_yet():
-    """Step 2 lands the switch, not the path it switches to. If this starts
-    failing, something was wired ahead of its own tests."""
-    readers = [path.name for path in ROOT.glob("*.py")
-               if path.name not in ("config.py",)
-               and "streaming_pipeline" in path.read_text()]
-    assert readers == [], f"{readers} read the flag before the path exists"
+def test_only_the_pipeline_reads_the_flag():
+    """Step 6B wired it, and only where a pump is made or spoken. Nothing
+    else in the app gets to branch on which architecture is running."""
+    readers = sorted(path.name for path in ROOT.glob("*.py")
+                     if path.name != "config.py"
+                     and "streaming_pipeline" in path.read_text())
+    assert readers == ["pipeline.py"], f"unexpected readers: {readers}"
 
 
 def test_the_legacy_queue_is_untouched():
     """The shipped path must still be the bounded queue it has always been.
 
-    Step 4 added `_start_phase6` beside `_start`, so `pipeline.py` now imports
-    the Phase 6 modules - that is expected and is why this no longer forbids
-    the import. What it must still forbid is the flag being read, and the
-    Phase 6 pair being reachable. Byte-identity of `_start` itself is checked
-    against trunk in `tests/test_phase6_equivalence.py`.
+    Step 6B made Phase 6 selectable, so this no longer forbids the flag or
+    the call. What it holds is that the legacy pump is still built the way it
+    always was, and that each Phase 6 half is named exactly once - inside the
+    selector - so the two can never be mixed. The Step 5 change to `_start`
+    itself is pinned against trunk in `tests/test_phase6_equivalence.py`.
     """
     import re
 
     source = (ROOT / "pipeline.py").read_text()
     assert "asyncio.Queue(maxsize=QUEUE_DEPTH)" in source
-    assert "streaming_pipeline" not in source, "pipeline.py reads the flag"
     for name in ("_start_phase6", "_speak_phase6"):
         assert re.search(rf"def {name}\b", source), f"{name} is missing"
-        assert not re.search(rf"self\.{name}\s*\(", source), (
-            f"{name} is called from production code")
+    # Phase 6 is now reachable, but only through the selector - never named
+    # directly at a call site, which is how the two halves stay in step.
+    assert source.count("self._start_phase6(") == 1
+    assert source.count("self._speak_phase6(") == 1
+    assert "self._start(sentences)" in source, "the legacy pump is still built"

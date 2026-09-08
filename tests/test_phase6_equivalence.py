@@ -461,45 +461,28 @@ def test_closing_a_blocked_legacy_pump_no_longer_hangs():
 # ==========================================================================
 # Unreachability - the safety rule of this step
 # ==========================================================================
-def test_start_phase6_exists_and_nothing_calls_it():
-    assert hasattr(PodcastPipeline, "_start_phase6")
-    assert hasattr(PodcastPipeline, "_speak_phase6")
+def test_both_architectures_are_reached_only_through_the_selector():
+    """Neither half is named at a call site. `_pump_for` and `_speak_pump`
+    always agree, so a Phase 6 pump can never be handed to `_speak`."""
     source = inspect.getsource(pipeline_module)
     for name in ("_start_phase6", "_speak_phase6"):
-        calls = re.findall(rf"self\.{name}\s*\(", source)
-        assert calls == [], f"{name} is called from production code"
+        assert len(re.findall(rf"self\.{name}\s*\(", source)) == 1, name
+    # `_speak_chunk` and `_speak_one` each appear twice: inside their own
+    # speaker's loop, and in `_speak_item` for the one item `_answer_first`
+    # pulls by hand during the handover.
+    for name in ("_speak_chunk", "_speak_one"):
+        assert len(re.findall(rf"self\.{name}\s*\(", source)) == 2, name
+    for site in ("stream_pcm", "_answer_first"):
+        body = inspect.getsource(getattr(PodcastPipeline, site))
+        assert "phase6" not in body, f"{site} names an architecture directly"
+        assert "_pump_for(" in body
 
 
-def test_stream_pcm_still_selects_only_the_legacy_pair():
+def test_stream_pcm_routes_every_pump_through_the_selector():
     source = inspect.getsource(PodcastPipeline.stream_pcm)
-    assert "self._start(" in source
-    assert "_start_phase6" not in source and "_speak_phase6" not in source
-
-
-def test_answer_first_still_selects_only_the_legacy_pair():
-    source = inspect.getsource(PodcastPipeline._answer_first)
-    assert "self._start(" in source
-    assert "phase6" not in source
-
-
-def test_the_flag_still_selects_nothing():
-    """`STREAMING_PIPELINE=phase6` must remain inert in this step."""
-    import importlib
-
-    import config
-
-    os.environ["STREAMING_PIPELINE"] = "phase6"
-    os.environ["FAM_IGNORE_DOTENV"] = "1"
-    try:
-        importlib.reload(config)
-        assert config.settings.streaming_pipeline == "phase6"
-        source = inspect.getsource(pipeline_module)
-        assert "streaming_pipeline" not in source
-        legacy, _ = both(1, 1.0)
-        assert legacy.seconds == run("legacy", 1, 1.0).seconds
-    finally:
-        os.environ.pop("STREAMING_PIPELINE", None)
-        importlib.reload(config)
+    assert "self._start(" not in source
+    assert source.count("self._pump_for(") == 3      # replay, body, top-up
+    assert source.count("self._speak_pump(") == 3
 
 
 def test_legacy_start_differs_from_trunk_only_by_the_step_5_fix():
