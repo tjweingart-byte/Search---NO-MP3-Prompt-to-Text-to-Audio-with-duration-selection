@@ -242,6 +242,12 @@ class Settings:
 
     # --- TTS --------------------------------------------------------------
     # auto | piper | espeak | debug
+    # A **development** override, not a production setting. Production does
+    # not choose an engine: there is one production slot
+    # (`tts.PRODUCTION_ENGINES`), which Chatterbox will fill. This names a
+    # development engine for deterministic local tests, and `auto` - the
+    # default, and the only value a deployment should ever have - means "the
+    # production engine, or the interim one while that slot is empty".
     tts_engine: str = field(default_factory=lambda: os.environ.get("TTS_ENGINE", "auto"))
     # Voice models live in one shared per-user folder (~/.fam/voices by
     # default), NOT inside the project, so a new version of the app finds the

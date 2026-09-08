@@ -453,48 +453,84 @@ class DebugEngine(TTSEngine):
         return True
 
 
-def build_engine(preference: str | None = None) -> TTSEngine:
-    """Pick an engine, honouring TTS_ENGINE and falling back sensibly."""
-    choice = (preference or settings.tts_engine or "auto").lower()
+#: The engines production is allowed to serve.
+#:
+#: Chatterbox is the decided production voice. It is not integrated yet - that
+#: is its own deliberate step - so this is empty today and `build_engine` falls
+#: through to the interim engine below, saying so in the health report.
+#:
+#: espeak and macOS `say` are deliberately absent and are no longer production
+#: options at all. They exist only if the host OS happens to provide them, so
+#: relying on either means the deployed app sounds different, and worse, than
+#: the laptop it was built on.
+PRODUCTION_ENGINES: tuple = ()
 
-    explicit = {
-        "piper": PiperEngine,
-        "espeak": EspeakEngine,
-        "say": SayEngine,
-        "debug": DebugEngine,
-    }
-    if choice in explicit:
-        cls = explicit[choice]
-        if not cls.available():
-            raise TTSUnavailable(f"TTS engine '{choice}' is not installed or not configured")
-        return cls()
+#: What speaks until Chatterbox lands. **Not a production choice**: there is no
+#: engine toggle, nothing selects between it and anything else, and
+#: `engine_report()` marks the server as running on an interim voice so the
+#: state cannot be mistaken for the finished one.
+INTERIM_ENGINE = PiperEngine
 
-    # Preference order: best voice first, then anything already on the machine.
-    # Must match list_voices()' order - they disagreed, so on a Mac with espeak
-    # installed the picker offered "Samantha" and the audio came out robotic.
-    for cls in (PiperEngine, SayEngine, EspeakEngine):
-        if cls.available():
-            return cls()
-    return DebugEngine()
-
-
-ENGINES = {
+#: Reachable only through `TTS_ENGINE`, which is a **development** override -
+#: for deterministic tests and local work, never for a deployment. Production
+#: ignores it entirely unless it names a production engine.
+DEV_ENGINES = {
     "piper": PiperEngine,
-    "say": SayEngine,
     "espeak": EspeakEngine,
+    "say": SayEngine,
     "debug": DebugEngine,
 }
 
 
-def list_voices() -> list[Voice]:
-    """Every voice available on this machine, best-sounding first.
+def production_engine() -> TTSEngine | None:
+    """The first production engine this machine can actually run, or None."""
+    for cls in PRODUCTION_ENGINES:
+        if cls.available():
+            return cls()
+    return None
 
-    Ordered by engine quality rather than alphabetically, because the first
-    entry is what a listener gets by default.
+
+def build_engine(preference: str | None = None) -> TTSEngine:
+    """The engine this process speaks with.
+
+    Production does not choose. There is one production slot, filled by
+    `PRODUCTION_ENGINES`; when it is empty the interim engine speaks and the
+    health report says the voice is interim. `TTS_ENGINE` names a development
+    engine and is honoured only because deterministic local tests need it.
+    """
+    choice = (preference or settings.tts_engine or "auto").lower()
+    if choice != "auto":
+        cls = DEV_ENGINES.get(choice)
+        if cls is None:
+            raise TTSUnavailable(f"TTS engine '{choice}' is not a known engine")
+        if not cls.available():
+            raise TTSUnavailable(f"TTS engine '{choice}' is not installed or not configured")
+        return cls()
+
+    engine = production_engine()
+    if engine is not None:
+        return engine
+    if INTERIM_ENGINE.available():
+        return INTERIM_ENGINE()
+    # Nothing can speak. DebugEngine announces itself as a placeholder tone
+    # rather than pretending; silent success is the failure this refuses.
+    return DebugEngine()
+
+
+ENGINES = dict(DEV_ENGINES)
+
+
+def list_voices() -> list[Voice]:
+    """Every voice production may serve on this machine.
+
+    espeak and `say` are gone from this list: they were never a production
+    voice, and offering them in the picker made them one in practice.
     """
     voices: list[Voice] = []
-    for name in ("piper", "say", "espeak"):
-        voices.extend(ENGINES[name].voices())
+    for cls in PRODUCTION_ENGINES:
+        voices.extend(cls.voices())
+    if not voices:
+        voices.extend(INTERIM_ENGINE.voices())
     if not voices:
         voices.extend(DebugEngine.voices())
     return voices
@@ -537,12 +573,17 @@ async def warm_up() -> None:
 
 
 def engine_report() -> dict:
-    """What the server can actually do right now — surfaced in /api/health."""
+    """What the server can actually do right now — surfaced in /api/health.
+
+    `interim` is the honest bit: it says the voice speaking is a stand-in for
+    the production engine rather than the production engine itself.
+    """
+    selected = build_engine()
     return {
-        "selected": build_engine().name,
-        "piper": PiperEngine.available(),
-        "espeak": EspeakEngine.available(),
-        "say": SayEngine.available(),
+        "selected": selected.name,
+        "production_engines": [cls.name for cls in PRODUCTION_ENGINES],
+        "interim": not PRODUCTION_ENGINES or production_engine() is None,
+        "interim_engine": INTERIM_ENGINE.name,
         "debug": True,
         "voices": [v.as_dict() for v in list_voices()],
         "default_voice": default_voice(),
