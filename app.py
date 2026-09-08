@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import logging
+import sqlite3
 import time
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
@@ -191,6 +192,61 @@ def _cache_report() -> dict:
     return report
 
 
+def _database_report() -> list[dict]:
+    """Where each database actually is, and whether it really opens.
+
+    §52's rule applied to storage: `"status": "ok"` used to be reported while
+    four of the five could be pointed anywhere or be unwritable, and no runtime
+    surface named a single path. Configuration was being confirmed instead of
+    readiness being verified.
+
+    So each entry performs a real read - `SELECT count(*) FROM sqlite_master`,
+    which forces the file header and schema to be parsed - and reports the path
+    the store is genuinely holding rather than one re-derived here.
+
+    It is deliberately *not* `SELECT 1`: that is a constant expression, answered
+    without touching the file, so it returns happily for a path containing
+    nothing but rubbish. This check was written that way first and a test caught
+    it reporting a corrupt database as readable - the same mistake §52 is about,
+    made inside the code meant to prevent it. `writable` is a permission check and is labelled as one; writing on
+    every health poll would cost more than it tells anyone.
+    """
+    stores = [
+        ("scripts", "CACHE_PATH", getattr(SCRIPT_CACHE, "path", "")),
+        ("events", "MYFAM_DB", EVENTS.path),
+        ("social", "SOCIAL_DB", SOCIAL.path),
+        ("mixes", "MIXES_DB", MIXES.path),
+        ("attachments", "ATTACHMENTS_PATH", ATTACHMENTS.path),
+    ]
+    report = []
+    for name, env_var, path in stores:
+        entry = {
+            "name": name,
+            "env_var": env_var,
+            "path": path or "(in memory)",
+            # Whether this machine was told where to put it, or worked it out.
+            "configured": bool(os.environ.get(env_var, "").strip()),
+        }
+        if not path:
+            entry["readable"] = True  # the memory backend has no file to open
+            entry["writable"] = True
+            report.append(entry)
+            continue
+        try:
+            sqlite3.connect(path, timeout=2.0).execute(
+                "SELECT count(*) FROM sqlite_master"
+            ).fetchone()
+            entry["readable"] = True
+        except Exception as exc:
+            entry["readable"] = False
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+        target = path if os.path.exists(path) else os.path.dirname(path) or "."
+        entry["writable"] = os.access(target, os.W_OK)
+        entry["bytes"] = os.path.getsize(path) if os.path.exists(path) else 0
+        report.append(entry)
+    return report
+
+
 def _rate_limit(request: Request) -> None:
     """One generation per client per RATE_LIMIT_SECONDS.
 
@@ -275,6 +331,8 @@ async def health() -> dict:
         "search_mode": settings.search_mode,
         "research_words": sorted(research_words()),
         "cache": _cache_report(),
+        # Every database, its resolved path, and a real read against each.
+        "databases": _database_report(),
         "voice_store": VOICE_STORE["dir"],
     }
 

@@ -188,3 +188,69 @@ def test_the_app_module_names_no_bare_relative_directory():
         if 'directory="' in line and "PROJECT_ROOT" not in line
     ]
     assert not bare, f"cwd-relative directory in app.py: {bare}"
+
+
+# --- a missing directory must name the setting, not sqlite's complaint ------
+
+
+def test_a_missing_directory_is_created(monkeypatch, tmp_path):
+    """`.env.example` invites people to point these somewhere; the directory
+    not existing yet is the ordinary first case, not an error."""
+    wanted = tmp_path / "new" / "deeper" / "myfam.db"
+    monkeypatch.setenv("MYFAM_DB", str(wanted))
+    assert paths.data_path("MYFAM_DB", "myfam.db") == str(wanted)
+    assert wanted.parent.is_dir()
+    assert T.EventStore().path == str(wanted)
+
+
+def test_a_directory_that_cannot_be_made_names_the_variable(monkeypatch, tmp_path):
+    """The old failure was `unable to open database file` from inside sqlite3
+    at import - true, and naming neither the setting nor the directory."""
+    blocker = tmp_path / "a-file-not-a-directory"
+    blocker.write_text("")
+    monkeypatch.setenv("SOCIAL_DB", str(blocker / "social.db"))
+    with pytest.raises(paths.DataPathError) as excinfo:
+        paths.data_path("SOCIAL_DB", "social.db")
+    message = str(excinfo.value)
+    assert "SOCIAL_DB" in message, "the error must name the setting to change"
+    assert str(blocker) in message, "and the directory that could not be made"
+
+
+# --- health has to report storage, not just the cache ----------------------
+
+
+def test_health_reports_every_database_with_a_real_read(monkeypatch, tmp_path):
+    """§52: readiness is performed, not confirmed. `status: ok` used to be
+    returned while four of the five could be pointed anywhere."""
+    from fastapi.testclient import TestClient
+
+    import app as appmod
+
+    monkeypatch.setattr(appmod, "_rate_limit", lambda request: None)
+    body = TestClient(appmod.app).get("/api/health").json()
+
+    reported = {entry["name"] for entry in body["databases"]}
+    assert reported == {"scripts", "events", "social", "mixes", "attachments"}
+    for entry in body["databases"]:
+        assert entry["readable"] is True, f"{entry['name']} did not open: {entry}"
+        assert entry["writable"] is True
+        assert pathlib.Path(entry["path"]).is_absolute()
+        assert entry["env_var"] in ALL_VARS
+
+
+def test_health_says_a_broken_database_is_broken(monkeypatch, tmp_path):
+    """The failure that matters: a path that does not open must not be
+    reported as ok."""
+    from fastapi.testclient import TestClient
+
+    import app as appmod
+
+    monkeypatch.setattr(appmod, "_rate_limit", lambda request: None)
+    not_a_database = tmp_path / "rubbish.db"
+    not_a_database.write_bytes(b"this is not a sqlite file, not even close")
+    monkeypatch.setattr(appmod.EVENTS, "path", str(not_a_database))
+
+    body = TestClient(appmod.app).get("/api/health").json()
+    events = next(e for e in body["databases"] if e["name"] == "events")
+    assert events["readable"] is False
+    assert "error" in events, "a broken database must say what went wrong"

@@ -42,18 +42,56 @@ log = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 
+class DataPathError(RuntimeError):
+    """A database path that cannot be used, phrased so it can be acted on."""
+
+
+def _ensure_parent(path: Path, env_var: str) -> None:
+    """Make the directory the file will live in, or say exactly what to fix.
+
+    Without this the failure was `unable to open database file` raised from
+    inside sqlite3 at import time - true, and useless: it names neither the
+    setting that was wrong nor the directory that was missing, and the app is
+    dead before it logs anything of its own. Since `.env.example` now invites
+    people to point these somewhere, that is a foreseeable first experience.
+
+    Creating is the helpful default and matches what the Dockerfile already
+    does by hand (`RUN mkdir -p /data`). It is announced, because a typo in a
+    path would otherwise quietly acquire a directory.
+    """
+    parent = path.parent
+    if parent.is_dir():
+        return
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise DataPathError(
+            f"{env_var} points at {path}, but its directory {parent} could not "
+            f"be created ({exc.strerror}). Set {env_var} to a path the server "
+            f"can write to, or create that directory yourself."
+        ) from exc
+    log.info("created %s for %s", parent, env_var)
+
+
 def data_path(env_var: str, filename: str) -> str:
     """Absolute path for one database, from `env_var` or the project root.
 
     Read at call time rather than at import, so a test that sets the variable
     and rebuilds a store gets what it set.
+
+    Creates the containing directory as a side effect: every caller is about to
+    open the file, and a missing directory is the one failure sqlite reports in
+    a way nobody can act on. Raises `DataPathError` if it cannot.
     """
     raw = os.environ.get(env_var, "").strip()
     if not raw:
-        return str(PROJECT_ROOT / filename)
+        resolved = PROJECT_ROOT / filename
+        _ensure_parent(resolved, env_var)
+        return str(resolved)
 
     given = Path(raw).expanduser()
     if given.is_absolute():
+        _ensure_parent(given, env_var)
         return str(given)
 
     resolved = PROJECT_ROOT / given
@@ -65,4 +103,5 @@ def data_path(env_var: str, filename: str) -> str:
         "(set an absolute path to choose the location yourself)",
         env_var, raw, resolved,
     )
+    _ensure_parent(resolved, env_var)
     return str(resolved)

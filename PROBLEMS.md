@@ -2915,3 +2915,38 @@ unrelated directory with no path variables set. It served the interface (200),
 answered `/api/myfam` (200), wrote the listener and six impressions into the
 **project-root** databases, and created **zero** files in the directory it was
 started from. 23 new tests; 388 pass.
+
+## 65. A missing directory said nothing useful, and health reported one store of five
+
+Two gaps left over from §64, both about a database saying what it is doing.
+
+**A missing directory failed in sqlite's words, not the app's.** Pointing a
+variable at a directory that did not exist yet raised `unable to open database
+file` from inside `sqlite3`, at import time - naming neither the setting that
+was wrong nor the directory that was missing, and killing the app before it
+logged anything of its own. Since §64 put five path variables in
+`.env.example`, that was a foreseeable first experience. `paths._ensure_parent`
+now creates the directory (announced, and matching the `RUN mkdir -p /data` the
+Dockerfile already did by hand) and, when it cannot, raises `DataPathError`
+naming the variable, the path and the directory.
+
+**`/api/health` reported the script cache and nothing else.** It returned
+`"status": "ok"` while the other four could be pointed anywhere or be
+unwritable, and no runtime surface named a single path. That is exactly the
+§52 failure - confirming configuration instead of verifying readiness - inside
+the endpoint whose job is to report readiness. It now lists all five with the
+path each store is *actually* holding, whether the variable was set, size, and
+a real read.
+
+**The first version of that check was the same mistake again, and a test caught
+it.** It used `SELECT 1`, which is a constant expression: sqlite answers it
+without touching the file, so a path containing nothing but rubbish came back
+`readable: true`. The check is now `SELECT count(*) FROM sqlite_master`, which
+forces the header and schema to be parsed, and there is a test that writes
+garbage to a file and asserts health calls it broken. Worth recording plainly:
+§52 was written after four consecutive failures of this shape, and the fifth
+happened while writing the fix for it.
+
+`writable` is `os.access`, and is labelled a permission check rather than
+dressed up as a performed action - writing on every health poll would cost more
+than it tells anyone. 392 pass.
