@@ -52,8 +52,18 @@ say "Gate 2: the credential is in this shell (free, instant)"
 echo "  set (${#ANTHROPIC_API_KEY} characters) - whether it is accepted is Gate 6"
 
 say "Gate 3: this pod is running the bundle you packed (free, instant)"
+# POD.txt, not git. The bundle carries no .git on purpose - a rented card is
+# somewhere to run FAM for an hour, not somewhere to leave a token - so
+# `git rev-parse` here exits 128. The revision this pod is running comes from
+# the text the packer wrote, and is stamped into the results so a run is
+# traceable without a repository.
 [ -f POD.txt ] || fail "no POD.txt. Extract the tarball from tools/pack_for_pod.py and run this from inside FAM/."
 sed 's/^/  /' POD.txt
+cp POD.txt "$OUT/POD.txt"
+REVISION=$(python -c 'import sys;sys.path.insert(0,"tools");from pack_for_pod import pod_txt_field;print(pod_txt_field(open("POD.txt").read(),"revision"))' 2>/dev/null || true)
+[ -n "$REVISION" ] || fail "POD.txt names no revision. Re-pack with tools/pack_for_pod.py."
+echo "  revision $REVISION  (from POD.txt; this bundle has no .git, by design)"
+
 REFERENCE="${CHATTERBOX_REFERENCE:-}"
 if [ -z "$REFERENCE" ]; then
   REFERENCE=$(ls ../pod-voice/*.wav 2>/dev/null | head -1 || true)
@@ -61,17 +71,29 @@ if [ -z "$REFERENCE" ]; then
 fi
 [ -n "$REFERENCE" ] && [ -f "$REFERENCE" ] || fail "no reference recording found. Re-pack with tools/pack_for_pod.py, which ships one, or export CHATTERBOX_REFERENCE."
 REFERENCE=$(cd "$(dirname "$REFERENCE")" && pwd)/$(basename "$REFERENCE")
-export CHATTERBOX_REFERENCE="$REFERENCE"
-echo -n "  voice sha256 "; sha256sum "$REFERENCE" | cut -c1-16
-echo "  must match the line in POD.txt above, or this is a different voice"
 [ -f "${REFERENCE%.wav}.rights.json" ] || fail "no rights record beside $REFERENCE. A cloned voice is somebody's voice; the engine will refuse, and so does this."
+
+# Verified, not displayed. This printed both digests and told a human to
+# compare them, which is the shape of check this project has lost the most time
+# to: it answers a cheaper question than the one being asked and reports OK.
+EXPECTED=$(python -c 'import sys;sys.path.insert(0,"tools");from pack_for_pod import voice_digest;print(voice_digest(open("POD.txt").read()))' 2>/dev/null || true)
+ACTUAL=$(sha256sum "$REFERENCE" | cut -c1-16)
+echo "  voice    $(basename "$REFERENCE")  sha256 $ACTUAL"
+[ -n "$EXPECTED" ] || fail "POD.txt names no voice digest, so the recording cannot be verified. Re-pack."
+[ "$EXPECTED" = "$ACTUAL" ] || fail "the reference recording is not the one that was packed. POD.txt says $EXPECTED, this file is $ACTUAL. Re-pack and re-upload; do not measure a voice you cannot identify."
+echo "  matches POD.txt - this is the recording that was packed"
+export CHATTERBOX_REFERENCE="$REFERENCE"
 
 say "Gate 4: the build passes its own tests here (free, ~30s)"
 pip install -q -r requirements.txt >/dev/null 2>&1 || fail "pip install -r requirements.txt failed"
+# The suite is hermetic: tests/conftest.py clears every setting config.py reads,
+# including the CHATTERBOX_REFERENCE exported just above. That export is correct
+# for the server and wrong for a test asserting where the reference resolves by
+# default, and it used to fail one. The suite must read the code, not this pod.
 python -m pytest tests/ -q >"$OUT/pytest.log" 2>&1 || {
   tail -20 "$OUT/pytest.log"
   fail "the test suite fails on this pod (full output in $OUT/pytest.log). Fix that before spending GPU time - the numbers would be about a broken build."; }
-tail -1 "$OUT/pytest.log" | sed 's/^/  /' 
+tail -1 "$OUT/pytest.log" | sed 's/^/  /'
 
 say "Gate 5: dependencies (~10 min on a fresh pod, a no-op on a warm one)"
 export HF_HOME="${HF_HOME:-/workspace/hf}"

@@ -62,6 +62,32 @@ IDENTITY_FIELDS = ("name", "speaker", "person", "email", "contact", "source",
                    "recorded_by", "agreement", "notes")
 
 
+def pod_txt_field(text: str, name: str) -> str:
+    """Read one field out of POD.txt.
+
+    POD.txt is the pod's only record of what it is running, because the bundle
+    carries no `.git` and `git rev-parse` there exits 128. So the revision and
+    the voice digest have to be readable from this text, by a machine rather
+    than by eye - `tools/pod_production_test.sh` uses it to verify the packed
+    recording is the one that was packed, which was a human comparison before
+    and therefore not a check at all.
+
+    Fields are `name`, whitespace, value, at the start of a line. Continuation
+    lines are indented and are deliberately not matched.
+    """
+    for line in text.splitlines():
+        if line.startswith(name) and line[len(name):len(name) + 1].isspace():
+            return line[len(name):].strip()
+    return ""
+
+
+def voice_digest(text: str) -> str:
+    """The packed recording's sha256 prefix, from POD.txt's `voice` line."""
+    field = pod_txt_field(text, "voice")
+    marker = "sha256 "
+    return field.split(marker, 1)[1].strip() if marker in field else ""
+
+
 def reference_default() -> pathlib.Path:
     from tts import ChatterboxEngine
 
@@ -120,12 +146,40 @@ def check_reference(reference: pathlib.Path) -> dict:
         raise SystemExit(f"minimal record would carry identity fields: {leaked}")
 
     digest = hashlib.sha256(reference.read_bytes()).hexdigest()
-    print(f"voice      {reference.name}  {reference.stat().st_size / 1024:.0f} KB")
+    size = reference.stat().st_size
+    # Bytes below a kilobyte, not "0 KB". A test fixture once printed
+    # `reference_3.wav 0 KB` beside a sha nobody recognised, and that line was
+    # read as the production voice having been overwritten. A size that rounds
+    # away must not look like a recording.
+    shown = f"{size} bytes" if size < 1024 else f"{size / 1024:.0f} KB"
+    print(f"voice      {reference.name}  {shown}")
     print(f"  sha256   {digest[:16]}  <- must match on the pod")
     print(f"  rights   {rights.name}: consent, commercial use and synthetic "
           "voice all cleared")
     print("           the full record stays here; the pod gets three booleans")
     return {"path": reference, "sha256": digest, "minimal": minimal}
+
+
+def require_git_checkout() -> None:
+    """This tool only works where the history is, which is not the pod.
+
+    The bundle deliberately contains no `.git` - a rented card is somewhere to
+    run FAM for an hour, not somewhere to leave a token - so running the packer
+    from inside an extracted bundle cannot work, and used to fail as a bare
+    `CalledProcessError` from `git rev-parse` with exit 128 and nothing saying
+    why. Packing is a Mac-side step; the pod reads the revision out of POD.txt.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True, text=True)
+    if result.returncode != 0 or result.stdout.strip() != "true":
+        raise SystemExit(
+            f"{ROOT} is not a git checkout, so there is no HEAD to pack.\n"
+            "  If this is an extracted pod bundle: that is by design - it "
+            "carries no .git, and the\n"
+            "  revision it was built from is the first line of POD.txt. Pack "
+            "on the machine that has\n"
+            "  the repository, not on the pod.")
 
 
 def working_tree_is_clean() -> tuple[bool, str]:
@@ -165,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
              "NOT be in the bundle - git archive ships commits, not files.")
     args = parser.parse_args(argv)
 
+    require_git_checkout()
     clean, dirty = working_tree_is_clean()
     if not clean:
         changed, untracked = classify(dirty)

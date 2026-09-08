@@ -12,6 +12,7 @@ wrong answer is worse. Two things are worth proving here rather than there:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -39,13 +40,48 @@ CLEARED = {
 }
 
 
+#: Deliberately NOT "reference_3.wav". These 104 bytes were once printed by a
+#: test as `reference_3.wav  0 KB  sha256 7e79ea3ae003b903`, in the middle of a
+#: RunPod gate's output, and were read as the real reference having been
+#: overwritten. A fixture that shares the production voice's filename is
+#: indistinguishable from it in any log that quotes the name.
+FIXTURE_NAME = "fixture_voice"
+
+
 @pytest.fixture
 def reference(tmp_path):
     """A recording and a full rights record, as the packing machine has them."""
-    wav = tmp_path / "reference_3.wav"
+    wav = tmp_path / f"{FIXTURE_NAME}.wav"
     wav.write_bytes(b"RIFF" + b"\0" * 100)
-    (tmp_path / "reference_3.rights.json").write_text(json.dumps(CLEARED))
+    (tmp_path / f"{FIXTURE_NAME}.rights.json").write_text(json.dumps(CLEARED))
     return wav
+
+
+@pytest.fixture
+def checkout(tmp_path, monkeypatch):
+    """A throwaway git repository standing in for the FAM checkout.
+
+    The packer runs `git archive` and `git rev-parse` against `pack.ROOT`. This
+    used to be the real repository, which made the test pass on a laptop and
+    fail with exit 128 inside an extracted pod bundle - which carries no `.git`
+    by design. Building a repository here tests the packer instead of the
+    machine, and still exercises the real `git archive`.
+    """
+    root = tmp_path / "checkout"
+    (root / "tools").mkdir(parents=True)
+    (root / "app.py").write_text("# the app\n")
+    (root / "tts.py").write_text("# the engines\n")
+    (root / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-must-not-ship\n")
+    (root / "scripts.db").write_bytes(b"not source")
+    (root / ".gitignore").write_text(".env\n*.db\n")
+    for args in (["init", "-q", "-b", "main"],
+                 ["config", "user.email", "t@example.invalid"],
+                 ["config", "user.name", "Test"],
+                 ["add", "-A"], ["commit", "-q", "-m", "tree"]):
+        subprocess.run(["git", "-C", str(root)] + args, check=True,
+                       capture_output=True)
+    monkeypatch.setattr(pack, "ROOT", root)
+    return root
 
 
 # --------------------------------------------------------------------------
@@ -61,14 +97,14 @@ def test_a_cleared_recording_passes(reference):
 def test_one_uncleared_field_stops_the_pack(reference, field):
     """Not two of three. Any one of them is a refusal."""
     record = dict(CLEARED, **{field: "no"})
-    (reference.parent / "reference_3.rights.json").write_text(json.dumps(record))
+    (reference.parent / f"{FIXTURE_NAME}.rights.json").write_text(json.dumps(record))
     with pytest.raises(SystemExit) as exc:
         pack.check_reference(reference)
     assert field in str(exc.value), "the refusal must name what is not cleared"
 
 
 def test_a_missing_record_stops_the_pack(reference):
-    (reference.parent / "reference_3.rights.json").unlink()
+    (reference.parent / f"{FIXTURE_NAME}.rights.json").unlink()
     with pytest.raises(SystemExit) as exc:
         pack.check_reference(reference)
     assert "rights record" in str(exc.value)
@@ -82,7 +118,7 @@ def test_a_missing_recording_stops_the_pack(tmp_path):
 
 def test_an_unreadable_record_is_refused_not_ignored(reference):
     """A record that will not parse must not read as a record that cleared."""
-    (reference.parent / "reference_3.rights.json").write_text("{not json")
+    (reference.parent / f"{FIXTURE_NAME}.rights.json").write_text("{not json")
     with pytest.raises(SystemExit) as exc:
         pack.check_reference(reference)
     assert "not valid JSON" in str(exc.value)
@@ -133,10 +169,9 @@ def test_the_engine_would_accept_the_minimal_record(tmp_path, reference):
 # the bundle
 # --------------------------------------------------------------------------
 def test_the_bundle_ships_head_the_voice_and_nothing_secret(tmp_path, reference,
-                                                            monkeypatch):
+                                                            checkout, monkeypatch):
     out = tmp_path / "fam-pod.tar.gz"
     monkeypatch.setattr(pack, "OUT", out)
-    monkeypatch.setattr(pack, "working_tree_is_clean", lambda: (True, ""))
     assert pack.main(["--reference", str(reference)]) == 0
 
     with tarfile.open(out) as bundle:
@@ -144,15 +179,71 @@ def test_the_bundle_ships_head_the_voice_and_nothing_secret(tmp_path, reference,
         pod_txt = bundle.extractfile("FAM/POD.txt").read().decode()
 
     assert "FAM/app.py" in names and "FAM/tts.py" in names
-    assert f"{pack.POD_VOICE_DIR}/reference_3.wav" in names
-    assert f"{pack.POD_VOICE_DIR}/reference_3.rights.json" in names
+    assert f"{pack.POD_VOICE_DIR}/{FIXTURE_NAME}.wav" in names
+    assert f"{pack.POD_VOICE_DIR}/{FIXTURE_NAME}.rights.json" in names
     # git archive ships tracked files only, so none of this can be in there.
+    # The throwaway checkout contains a real-looking .env and a .db precisely
+    # so that "nothing secret" is a result rather than an absence of evidence.
     assert not [n for n in names if n.endswith((".env", ".git", "scripts.db"))]
     assert not [n for n in names if "/.git/" in n]
+    assert "sk-ant-must-not-ship" not in pod_txt
     assert "ANTHROPIC_API_KEY" in pod_txt, "POD.txt must say where the key comes from"
 
 
-def test_uncommitted_work_stops_the_pack(tmp_path, reference, monkeypatch):
+def test_no_bundled_file_carries_the_checkouts_secret(tmp_path, reference,
+                                                      checkout, monkeypatch):
+    """Read every byte of the bundle, not just the file list."""
+    out = tmp_path / "fam-pod.tar.gz"
+    monkeypatch.setattr(pack, "OUT", out)
+    assert pack.main(["--reference", str(reference)]) == 0
+    with tarfile.open(out) as bundle:
+        for member in bundle.getmembers():
+            if not member.isfile():
+                continue
+            body = bundle.extractfile(member).read()
+            assert b"sk-ant-must-not-ship" not in body, member.name
+
+
+def test_the_revision_and_voice_digest_reach_pod_txt(tmp_path, reference,
+                                                     checkout, monkeypatch):
+    """POD.txt is the pod's only record of what it is running: the bundle
+    carries no .git, so this text is where the revision has to come from."""
+    out = tmp_path / "fam-pod.tar.gz"
+    monkeypatch.setattr(pack, "OUT", out)
+    assert pack.main(["--reference", str(reference)]) == 0
+
+    revision = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
+                              capture_output=True, text=True,
+                              check=True).stdout.strip()
+    digest = hashlib.sha256(reference.read_bytes()).hexdigest()[:16]
+    with tarfile.open(out) as bundle:
+        pod_txt = bundle.extractfile("FAM/POD.txt").read().decode()
+    assert f"revision  {revision}" in pod_txt
+    assert digest in pod_txt, "the pod cannot verify a voice it was not told about"
+    assert pack.pod_txt_field(pod_txt, "revision") == revision
+
+
+def test_packing_from_an_extracted_bundle_is_refused_with_the_reason(
+        tmp_path, reference, monkeypatch):
+    """Running the packer on the pod cannot work and must not look like a bug.
+
+    The bundle carries no `.git` on purpose - a rented card is somewhere to run
+    FAM for an hour, not somewhere to leave a token - so `git rev-parse` exited
+    128 with nothing saying why. This is the sentence that replaces that.
+    """
+    extracted = tmp_path / "FAM"
+    extracted.mkdir()
+    (extracted / "POD.txt").write_text("revision  abc123\n")
+    monkeypatch.setattr(pack, "ROOT", extracted)
+    with pytest.raises(SystemExit) as exc:
+        pack.main(["--reference", str(reference)])
+    message = str(exc.value)
+    assert "not a git checkout" in message
+    assert "POD.txt" in message, "it must say where the revision actually is"
+
+
+def test_uncommitted_work_stops_the_pack(tmp_path, reference, checkout,
+                                         monkeypatch):
     """`git archive` ships HEAD, so a dirty tree would measure other code."""
     monkeypatch.setattr(pack, "OUT", tmp_path / "fam-pod.tar.gz")
     monkeypatch.setattr(pack, "working_tree_is_clean", lambda: (False, " M app.py"))
@@ -281,8 +372,8 @@ def test_chatterbox_is_not_in_the_base_requirements():
             assert package not in requirement.lower(), requirement
 
 
-def test_the_two_kinds_of_dirty_are_told_apart(reference, tmp_path, monkeypatch,
-                                                capsys):
+def test_the_two_kinds_of_dirty_are_told_apart(reference, tmp_path, checkout,
+                                               monkeypatch, capsys):
     """A modified tracked file and an untracked one are different hazards.
 
     The modified one is the dangerous case: it exists at HEAD in an older form,
@@ -302,7 +393,7 @@ def test_the_two_kinds_of_dirty_are_told_apart(reference, tmp_path, monkeypatch,
 
 
 def test_the_refusal_does_not_recommend_deleting_anything(reference, tmp_path,
-                                                          monkeypatch):
+                                                         checkout, monkeypatch):
     monkeypatch.setattr(pack, "OUT", tmp_path / "fam-pod.tar.gz")
     monkeypatch.setattr(pack, "working_tree_is_clean",
                         lambda: (False, "?? experiments/\n"))
