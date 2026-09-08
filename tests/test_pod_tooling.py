@@ -344,3 +344,88 @@ def test_experiments_is_not_a_production_dependency():
         source = (ROOT / name).read_text()
         assert "import experiments" not in source
         assert "from experiments" not in source
+
+
+# --------------------------------------------------------------------------
+# the two shapes the server publishes the same timeline in
+# --------------------------------------------------------------------------
+def test_the_log_shape_is_read_as_the_timeline_it_is():
+    """`to_dict()` nests the derived figures under "summary"; the header sends
+    them flat. Reading one as the other found nothing and reported UNKNOWN -
+    the one number the pod run exists to produce."""
+    summary, chunks = episode.normalise({
+        "events": {"claude_start": 0.0},
+        "chunks": [{"index": 0, "generate_seconds": 0.3, "audio_seconds": 2.0}],
+        "summary": {"claude_decoupled": True, "chunks": 1},
+    })
+    assert summary["claude_decoupled"] is True
+    assert len(chunks) == 1
+
+
+def test_the_header_shape_is_read_unchanged():
+    summary, chunks = episode.normalise({"claude_decoupled": False, "chunks": 4})
+    assert summary["claude_decoupled"] is False
+    assert chunks == []
+
+
+def test_no_marks_at_all_is_empty_rather_than_a_crash():
+    assert episode.normalise(None) == ({}, [])
+
+
+def test_a_run_read_from_the_log_still_reaches_a_verdict(capsys):
+    """The regression itself: the log-shaped timeline must not come out
+    UNKNOWN."""
+    run = {"headers": {}, "rate": 24000, "first_byte_seconds": 0.4,
+           "total_seconds": 30.0, "audio_seconds": 180.0}
+    assert episode.report(run, {"events": {}, "chunks": [],
+                                "summary": {"claude_decoupled": True}}) is True
+    assert "DECOUPLED" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# continuous playback
+# --------------------------------------------------------------------------
+def test_synthesis_staying_ahead_reads_as_continuous():
+    """Each chunk makes 2s of audio in 0.3s, so the player never catches up."""
+    chunks = [{"index": i, "generate_seconds": 0.3, "audio_seconds": 2.0}
+              for i in range(5)]
+    stall = episode.stall_analysis(chunks)
+    assert stall["continuous"] is True
+    assert stall["headroom_seconds"] == pytest.approx(1.7)
+    assert stall["at_chunk"] == 1
+    assert stall["final_lead_seconds"] == pytest.approx(8.8)
+
+
+def test_a_chunk_slower_than_its_own_audio_starves_the_player():
+    """The failure this exists to catch: generation falls behind playback and
+    the listener hears silence mid-episode."""
+    chunks = [{"index": 0, "generate_seconds": 0.3, "audio_seconds": 2.0},
+              {"index": 1, "generate_seconds": 9.0, "audio_seconds": 2.0}]
+    stall = episode.stall_analysis(chunks)
+    assert stall["continuous"] is False
+    assert stall["at_chunk"] == 1
+
+
+def test_the_wait_before_the_first_word_is_not_counted_as_a_stall():
+    """A stall is silence in the middle of an episode. The wait before the
+    first word is time-to-first-listen, reported separately - counting it here
+    would mark every episode starved and hide the failure this looks for."""
+    stall = episode.stall_analysis(
+        [{"index": 0, "generate_seconds": 5.0, "audio_seconds": 1.0}])
+    assert stall["continuous"] is True
+    assert stall["headroom_seconds"] is None, "one chunk cannot fall behind"
+
+
+def test_a_slow_first_chunk_does_not_hide_a_later_stall():
+    """The two must stay separable: a long first chunk is latency, and a slow
+    second chunk is still a gap."""
+    stall = episode.stall_analysis([
+        {"index": 0, "generate_seconds": 5.0, "audio_seconds": 1.0},
+        {"index": 1, "generate_seconds": 4.0, "audio_seconds": 2.0},
+    ])
+    assert stall["continuous"] is False
+    assert stall["headroom_seconds"] == pytest.approx(-3.0)
+
+
+def test_no_chunks_is_unknown_not_continuous():
+    assert episode.stall_analysis([]) is None

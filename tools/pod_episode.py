@@ -120,17 +120,80 @@ def marks_from_log(log: pathlib.Path, after: int, deadline: float) -> dict | Non
     return None
 
 
+def normalise(marks: dict | None) -> tuple[dict, list]:
+    """Accept either shape the server publishes, and say which parts are there.
+
+    The two exits carry the same timeline in different shapes, because they are
+    written at different moments:
+
+      the header  `EpisodeMarks.summary()` - the derived figures, flat
+      the log     `EpisodeMarks.to_dict()` - {events, chunks, summary}
+
+    Reading the log as if it were the header silently found nothing: every
+    lookup returned None and the decoupling verdict came out UNKNOWN, which is
+    the one number this whole run exists to produce. So the shape is resolved
+    here rather than assumed at each call site.
+    """
+    if not marks:
+        return {}, []
+    if "summary" in marks and isinstance(marks["summary"], dict):
+        return marks["summary"], marks.get("chunks") or []
+    return marks, marks.get("chunk_detail") or []
+
+
+def stall_analysis(chunks: list) -> dict | None:
+    """Would the listener have heard a gap *after* playback started?
+
+    A stall is silence in the middle of an episode. The wait before the first
+    word is not a stall - it is time-to-first-listen, measured separately and
+    reported above - so the ledger opens the moment the first chunk exists and
+    playback begins, holding that chunk's duration.
+
+    From there each later chunk costs the time it took to generate, during
+    which the player is draining what it already has, and then adds its own
+    audio. The lowest that balance ever reaches is the tightest margin; below
+    zero the player has run out and the listener hears silence.
+
+    This is a reconstruction from the server's own timings, not a recording of
+    a browser. It answers whether the stream was ever starved at the source,
+    which is the half a pod can answer honestly.
+    """
+    if not chunks:
+        return None
+    ahead = float(chunks[0].get("audio_seconds") or 0.0)
+    if len(chunks) == 1:
+        # Nothing follows it, so there is nothing it can fall behind.
+        return {"headroom_seconds": None, "at_chunk": None,
+                "continuous": True, "final_lead_seconds": ahead}
+    worst = None
+    worst_at = None
+    for chunk in chunks[1:]:
+        ahead -= float(chunk.get("generate_seconds") or 0.0)
+        if worst is None or ahead < worst:
+            worst, worst_at = ahead, chunk.get("index")
+        ahead += float(chunk.get("audio_seconds") or 0.0)
+    return {"headroom_seconds": worst, "at_chunk": worst_at,
+            "continuous": worst >= 0.0, "final_lead_seconds": ahead}
+
+
 def _seconds(value) -> str:
     return "-" if value is None else f"{float(value):.2f}s"
 
 
 def report(run: dict, marks: dict | None) -> bool:
     headers = run["headers"]
+    marks, chunks = normalise(marks)
+    marks = marks or None
     print("\nlistener   what someone with the app actually got")
     print(f"  first byte           {_seconds(run['first_byte_seconds'])}")
     print(f"  whole episode        {_seconds(run['total_seconds'])}")
     print(f"  audio delivered      {run['audio_seconds']:.1f}s at "
           f"{run['rate']} Hz")
+    if run["audio_seconds"]:
+        margin = run["audio_seconds"] - run["total_seconds"]
+        print(f"  delivered in         {run['total_seconds']:.1f}s, "
+              f"{'ahead of' if margin > 0 else 'BEHIND'} playback by "
+              f"{abs(margin):.1f}s")
     requested = headers.get("X-Requested-Seconds")
     if requested:
         over = run["audio_seconds"] - float(requested)
@@ -169,6 +232,23 @@ def report(run: dict, marks: dict | None) -> bool:
     backlog = marks.get("backlog_at_claude_complete")
     print(f"  backlog when Claude   {backlog if backlog is not None else '-'}"
           "  (chunks still queued)")
+
+    stall = stall_analysis(chunks)
+    if stall is not None:
+        print("\nplayback   would the listener have heard a gap mid-episode?")
+        if stall["headroom_seconds"] is None:
+            print("  tightest margin       n/a - one chunk, nothing to fall "
+                  "behind")
+        else:
+            print(f"  tightest margin       {stall['headroom_seconds']:+.2f}s "
+                  f"at chunk {stall['at_chunk']}")
+        print(f"  lead at the end       {stall['final_lead_seconds']:+.2f}s of "
+              "audio generated but not yet played")
+        print("  " + ("CONTINUOUS   synthesis stayed ahead of playback "
+                      "throughout"
+                      if stall["continuous"] else
+                      "STARVED      the player ran out; the listener heard "
+                      "silence"))
 
     decoupled = marks.get("claude_decoupled")
     print("\nverdict")
@@ -228,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             "headers": {k: v for k, v in run["headers"].items()
                         if k.lower().startswith("x-")},
             "marks": marks,
+            "playback": stall_analysis(normalise(marks)[1]),
         }, indent=2) + "\n", encoding="utf-8")
         print(f"\nwrote      {wav}  ({run['audio_seconds']:.0f}s of speech)")
         print(f"           {out / 'episode.json'}")
