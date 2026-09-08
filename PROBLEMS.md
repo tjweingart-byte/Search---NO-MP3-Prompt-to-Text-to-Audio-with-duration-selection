@@ -2006,3 +2006,85 @@ predicted follow-up and the prefetch plan are what that leans on instead.
 
 Not verified against real output: there is no API key here, so `python write.py
 "<query>" --minutes 3` is the check that closes this one.
+
+## 49. Two pieces of state, and the schema that was nearly adopted instead
+
+A schema was proposed for the app - `USERS`, `EPISODES`, `EPISODE_HISTORY`,
+`LIKES`, `TAGS`/`EPISODE_TAGS`, `SAVED_SEARCHES`, `DAILY_FEED`, `MESSAGES`, on
+Postgres. It is a competent schema for a podcast catalogue and the wrong one
+for this app, and the reasons are worth recording because they will be
+proposed again.
+
+**There is no episode to have a table.** An episode here is generated from a
+query at the moment of the tap and never stored; what persists is the *script*,
+keyed on `(normalized query, minutes)` in `cache.py`, expiring. `podcast_name`
+has nothing to point at. Worse, some episodes must never become rows at all:
+`_VOLATILE` queries refuse caching, `_PERSONAL` ones refuse sharing, and an
+episode carrying attachments is never cached. A foreign key to `episodes.id`
+would have to reference things the design forbids storing.
+
+**`EPISODE_HISTORY` as one mutable row per (user, episode) is the log inverted.**
+`topics.py` is append-only with time decay - a 14-day half-life and a 3-day
+trending window - and none of that is computable from a row that only remembers
+the latest state. The proposal offered session-level rows as an optional child
+table; here that is the primary and the collapsed view is a query.
+
+**`pause_reason` would have been invented data.** `skip` already carries the
+negative signal at -1.5. Inferring "distracted" from an app going to background
+is a guess stored as a fact, which is exactly what `summary()` exists to avoid.
+
+**`LIKES` duplicates signal, and the explicit-endorsement primitive already
+exists** - an echo, which points at a *query* rather than an episode id, which
+is the shape this app actually has.
+
+Two things in the proposal were real, and both are now built.
+
+**Identity (`social.py`).** `people` had a row only once someone chose a display
+name, so the app could not answer "who is out there" or "when were they last
+here" for nearly all of its listeners - they had a taste profile and no record.
+`seen()` makes every listener id a row with `joined` (first sighting, already
+there) and `last_seen`; `active_since()` is the recency signal a daily feed
+needs, because a decayed event log tells you what someone liked, not whether
+they came back. No email, no fingerprint, no counters - `known` distinguishes
+"never been here" from "here, unnamed", which the profile page could not do.
+When accounts arrive the work is attaching credentials to rows that exist,
+rather than inventing a user table underneath live data. `seen()` is called
+from `/api/myfam`, `/api/event` and `/api/profile`, and on `/api/audio` only
+after the pipeline is built and beside the existing play - never in front of
+the first word.
+
+**Impressions with an algo version (`topics.py`).** The one genuinely good idea
+in the proposal was `DAILY_FEED.algo_version`: one row per recommendation, so
+"why did we show this" is answerable and two rankings are comparable. It is
+built as an event kind rather than its own table, so decay and windowing stay
+uniform, with `section` and `algo` columns and `ALGO_VERSION` stamped on each.
+
+**The trap in it, which is the load-bearing part.** A feed load shows ~18 tiles.
+`for_user` is capped at 400 rows and is what `taste()` reads. Logged naively,
+roughly twenty visits to myFAM would push every play, completion and search out
+of the window, and the taste model would be trained on what the feed showed
+instead of on what the listener did - a recommender learning its own output.
+So impressions are excluded from `for_user`, carry no `EVENT_WEIGHT`, and are
+read only by `impressions_for`, which nothing in the ranking path calls. Four
+tests pin that from both ends. They are also the only writer that grows the
+table quickly, so `IMPRESSION_TTL` prunes them at 30 days - at most hourly, and
+never touching a behavioural event.
+
+`build_feed` stays a pure function of the log; the write happens at the request
+boundary in `app.py`. A ranker that writes cannot be called from a test.
+
+**Both migrations widen tables that already hold data.** The script cache can be
+dropped and regenerated; the event log cannot, so the `ALTER TABLE` path is
+tested against the exact legacy schemas rather than assumed - including opening
+the same store twice, which every worker on the machine does at startup.
+
+**On Postgres.** Right eventually, wrong now, and for a different reason than
+the proposal gave. The trigger is not row counts - this will not see tens of
+millions of rows - it is process count. The five SQLite files are shared by
+every worker *on one machine*; the moment there are two machines they are not
+shared, cache hit rate collapses and every miss costs ~$0.03 again. That is the
+migration signal, and it moves the same five schemas into one database rather
+than re-modelling them.
+
+Nothing here needs an API key, and none of it touches generation, the player,
+or the script.

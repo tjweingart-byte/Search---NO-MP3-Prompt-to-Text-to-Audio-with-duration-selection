@@ -368,7 +368,19 @@ async def myfam(request: Request, user: str = Query("", max_length=64)):
     the personal sections honestly empty rather than filled with fakes.
     """
     _rate_limit(request)
-    return topics_mod.build_feed(EVENTS, user)
+    feed = topics_mod.build_feed(EVENTS, user)
+    # Logged here rather than inside build_feed, which stays a pure function of
+    # the log - the whole ranking design is "computed on read, never stored",
+    # and a ranker that writes cannot be tested by calling it. The impression
+    # is a fact about this *request*, so it belongs at the request boundary.
+    SOCIAL.seen(user)
+    EVENTS.record_impressions(
+        user,
+        [(section["key"], topic["id"])
+         for section in feed["sections"] for topic in section["topics"]],
+    )
+    feed["algo"] = topics_mod.ALGO_VERSION
+    return feed
 
 
 @app.post("/api/event")
@@ -384,6 +396,7 @@ async def record_event(req: EventRequest, request: Request):
         topics_mod.Event(req.user, req.kind, req.topic_id, req.text, tags,
                          thread=req.thread)
     )
+    SOCIAL.seen(req.user)
     return {"ok": True}
 
 
@@ -439,10 +452,16 @@ async def profile(request: Request, user: str = Query("", max_length=64)):
     """Counts and subjects from this listener's own event log. No model call."""
     _rate_limit(request)
     body = topics_mod.summary(EVENTS, user)
+    SOCIAL.seen(user)
     person = SOCIAL.person(user)
     body["name"] = person["name"]
     body["handle"] = person["handle"]
     body["joined"] = person["joined"]
+    # Observed, not invented: when the server first saw this listener and when
+    # it last did. `known` separates "never been here" from "here, unnamed",
+    # which the page could not tell apart while a row meant "chose a name".
+    body["last_seen"] = person["last_seen"]
+    body["known"] = person["known"]
     body["mixes"] = [m.as_dict() for m in MIXES.public_for_user(user)]
     body["echoes"] = [e.as_dict(person["name"], person["handle"])
                       for e in SOCIAL.echoes_by(user, limit=12)]
@@ -612,7 +631,10 @@ async def audio(
 
     # Recorded here rather than client-side: audio is being served, so the
     # play is a fact. A dropped event costs one weak signal, never the episode.
+    # Both writes sit after the plan and the pipeline are ready and before the
+    # response object is built, so neither is in front of the first word.
     if user:
+        SOCIAL.seen(user)
         EVENTS.record(
             topics_mod.Event(
                 user, "play", topic_id, plan.query,
