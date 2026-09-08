@@ -39,6 +39,13 @@ experiments/baselines/*.json
 # tools/extract_chunks.py. Not source, and machine-specific in provenance.
 experiments/chunks/*.json
 
+# Reference recordings for voice cloning: somebody's voice, not source code,
+# and covered by whatever rights agreement they came with. The README and the
+# rights-record template are tracked; no audio is.
+experiments/references/*
+!experiments/references/README.md
+!experiments/references/example.rights.json
+
 # The pod bundle built by tools/pack_for_pod.py: a copy of the tree, not a
 # thing to version.
 fam-pod.tar.gz

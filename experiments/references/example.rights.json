@@ -1,0 +1,9 @@
+{
+  "_comment": "Template. Copy to <name>.rights.json and answer every field. The checker rejects TODO, empty and unknown.",
+  "source": "TODO",
+  "speaker": "TODO",
+  "consent": null,
+  "commercial_use": null,
+  "synthetic_voice_cleared": null,
+  "notes": "TODO"
+}

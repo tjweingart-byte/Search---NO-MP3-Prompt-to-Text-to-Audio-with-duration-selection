@@ -273,3 +273,33 @@ sequence that a harness fault - not the thing being measured - has cost a run.
 The others were the openings parser reading one line of a multi-line chunk, and
 the seam detector reading one sample past the join. All three were caught by a
 test that reproduced the real shape rather than by inspection.
+
+---
+
+## Raised by Phase 3 design (voice identity)
+
+### P25. Speaker identity and delivery are entangled in Chatterbox by construction
+`cond_prompt_speech_tokens` are speech tokens from the first six seconds of the
+reference (`tts.py:192-195`), so the reference carries *how the person was
+speaking* and not only *who they are*. Swapping references while holding
+settings fixed is the best available test of identity and is not a clean one.
+
+Reduced by having all four speakers read the same neutral passage in the same
+unremarkable way, so what varies is the speaker rather than the performance.
+**Cannot be removed.** A winner means "this reference produces the FAM voice",
+not "this person's voice is the FAM voice". *Open, and inherent to the model.*
+
+### P26. Reference length is not a free variable
+The speaker embedding reads the whole reference file while the s3gen reference
+and the T3 prompt are truncated to 10 s and 6 s. Unequal lengths therefore feed
+the voices unequally. `tools/check_reference_audio.py` fails a set whose
+durations differ by more than 2 seconds. *Closed for the experiment layer;
+would need the same rule anywhere a reference voice is configured.*
+
+### P27. Reference-voice rights are now a hard gate, not a note
+P19b recorded that reference-voice rights are separate from the model licence.
+Phase 3 makes it enforceable: the runner refuses to synthesise a voice with no
+`.rights.json`, and a `false` in `consent`, `commercial_use` or
+`synthetic_voice_cleared` blocks that voice. `experiments/references/` is
+git-ignored. **This is the one failure in this project that cannot be fixed by
+re-running something.** *Open until four cleared references exist.*
