@@ -32,3 +32,27 @@ fam-pod.tar.gz
 # What a pod run writes back. Copied to the Mac, then read - not committed
 # from the pod, which has no credentials and should not get any.
 pod-results/
+
+# macOS writes one of these into every folder it displays. It is never source,
+# on any branch, and it is what a Finder window leaves behind rather than
+# anything anyone did.
+.DS_Store
+
+# `experiments/` is tracked content of `claude/fam-repo-inventory-5lznba`, not
+# of this branch. It is deliberately absent from production: the experiment
+# layer is not a production dependency, and nothing in app.py imports it.
+#
+# What is left on disk after switching to this branch is the part of it git
+# never tracked even there - `experiments/runs/`, `experiments/packets/`,
+# `experiments/baselines/`, `experiments/chunks/` and, most importantly,
+# `experiments/references/`, which holds the reference recordings and the
+# sources.json that maps neutral ids back to the people who recorded them.
+#
+# So: do not delete it (reference_3.wav lives there and is irreplaceable), and
+# do not commit it here (it is somebody's voice, and this is the production
+# branch). Ignoring it says the true thing - on this branch it is not part of
+# the tree - and leaves the files exactly where they are.
+#
+# If genuinely new experiment source is ever written on this branch, this line
+# would hide it. Add it with `git add -f`, or reconsider the line.
+experiments/

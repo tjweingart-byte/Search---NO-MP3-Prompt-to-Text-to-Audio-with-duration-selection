@@ -267,3 +267,68 @@ def test_chatterbox_is_not_in_the_base_requirements():
     base = (ROOT / "requirements.txt").read_text().lower()
     for package in ("chatterbox", "torch"):
         assert package not in base
+
+
+def test_the_two_kinds_of_dirty_are_told_apart(reference, tmp_path, monkeypatch,
+                                                capsys):
+    """A modified tracked file and an untracked one are different hazards.
+
+    The modified one is the dangerous case: it exists at HEAD in an older form,
+    so the bundle carries a version of a file you are looking at a different
+    version of, and nothing about the run looks wrong. An untracked file is
+    usually another branch's working files - which can be irreplaceable, so the
+    refusal says to write an ignore rule rather than to delete anything.
+    """
+    monkeypatch.setattr(pack, "OUT", tmp_path / "fam-pod.tar.gz")
+    monkeypatch.setattr(pack, "working_tree_is_clean",
+                        lambda: (False, " M app.py\n?? experiments/\n"))
+    with pytest.raises(SystemExit):
+        pack.main(["--reference", str(reference)])
+    out = capsys.readouterr().out
+    assert "modified, and tracked at HEAD:" in out and "app.py" in out
+    assert "untracked:" in out and "experiments/" in out
+
+
+def test_the_refusal_does_not_recommend_deleting_anything(reference, tmp_path,
+                                                          monkeypatch):
+    monkeypatch.setattr(pack, "OUT", tmp_path / "fam-pod.tar.gz")
+    monkeypatch.setattr(pack, "working_tree_is_clean",
+                        lambda: (False, "?? experiments/\n"))
+    with pytest.raises(SystemExit) as exc:
+        pack.main(["--reference", str(reference)])
+    message = str(exc.value)
+    assert "ignore rule" in message
+    assert "irreplaceable" in message
+    assert "not a way past this message" in message, (
+        "--allow-dirty must not read as the fix")
+
+
+def test_classify_splits_on_the_untracked_marker():
+    changed, untracked = pack.classify(" M app.py\n?? .DS_Store\nA  new.py\n?? experiments/")
+    assert changed == [" M app.py", "A  new.py"]
+    assert untracked == ["?? .DS_Store", "?? experiments/"]
+
+
+def test_the_branch_ignores_what_is_not_its_own(tmp_path):
+    """`.DS_Store` and `experiments/` are what the Mac's tree was reporting.
+
+    `experiments/` is tracked content of the experimental branch and is
+    deliberately absent from production; what survives a branch switch is the
+    part git never tracked even there, including the reference recordings. The
+    ignore rule keeps those files exactly where they are - it is not a delete.
+    """
+    rules = (ROOT / ".gitignore").read_text()
+    assert "\n.DS_Store\n" in rules
+    assert "\nexperiments/\n" in rules
+    assert "irreplaceable" in rules, (
+        "the rule must say why the directory is not to be deleted")
+
+
+def test_experiments_is_not_a_production_dependency():
+    """The reason it can be absent at all: nothing production imports it."""
+    for name in ("app.py", "pipeline.py", "tts.py", "script_generator.py",
+                 "config.py", "speech_assembly.py", "script_buffer.py",
+                 "episode_marks.py"):
+        source = (ROOT / name).read_text()
+        assert "import experiments" not in source
+        assert "from experiments" not in source

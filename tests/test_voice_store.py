@@ -126,7 +126,14 @@ def test_ensure_ready_creates_the_store_and_survives_being_empty(shared):
 
 
 def test_the_engine_reads_from_the_shared_store(shared, monkeypatch):
-    """The production path must resolve to the same place as setup does."""
+    """The production path must resolve to the same place as setup does.
+
+    Path resolution only. Whether a model in the store can actually be *spoken*
+    is a separate question - it also needs the engine's package - and asserting
+    the two together is what made this fail on a machine that had never
+    installed the interim voice. `voice_store` is engine-agnostic and stays
+    that way: it knows where voices live, not who can read them.
+    """
     make_voice(shared, "en_US-lessac-medium")
     import dataclasses
 
@@ -136,7 +143,24 @@ def test_the_engine_reads_from_the_shared_store(shared, monkeypatch):
         tts, "settings", dataclasses.replace(tts.settings, voices_dir=str(shared))
     )
     assert [p.stem for p in tts.PiperEngine.installed_models()] == ["en_US-lessac-medium"]
-    assert [v.id for v in tts.PiperEngine.voices()] == ["piper:en_US-lessac-medium"]
+    assert voice_store.installed(shared) == tts.PiperEngine.installed_models(), (
+        "setup writes somewhere the engine does not read")
+
+
+def test_the_store_is_where_chatterbox_looks_for_its_reference(shared, monkeypatch):
+    """The same abstraction, for the engine that is actually production.
+
+    Chatterbox clones a recording rather than loading an .onnx, but it is
+    per-machine state in the same shared folder for the same reason: a new copy
+    of the app must find it already there.
+    """
+    import dataclasses
+
+    import tts
+
+    monkeypatch.setattr(tts, "settings", dataclasses.replace(
+        tts.settings, chatterbox_reference=""))
+    assert tts.ChatterboxEngine.reference_path().parent == voice_store.voices_dir()
 
 
 def test_describe_is_useful_when_empty_and_when_not(shared):

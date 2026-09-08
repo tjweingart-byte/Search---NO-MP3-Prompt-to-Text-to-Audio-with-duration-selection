@@ -136,6 +136,23 @@ def working_tree_is_clean() -> tuple[bool, str]:
     return not result.stdout.strip(), result.stdout.strip()
 
 
+def classify(porcelain: str) -> tuple[list[str], list[str]]:
+    """Split `git status --porcelain` into changed-and-tracked, and untracked.
+
+    They are different hazards and deserve different sentences. A modified
+    tracked file is the dangerous one: it exists at HEAD in an older form, so
+    the bundle would carry a version of a file you are looking at a different
+    version of, and nothing about the run would look wrong. An untracked file
+    is usually residue - another branch's working files, an editor's leavings -
+    but it can also be new source nobody has added yet, which is why it is
+    listed rather than passed over.
+    """
+    changed, untracked = [], []
+    for line in porcelain.splitlines():
+        (untracked if line.startswith("??") else changed).append(line)
+    return changed, untracked
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -150,15 +167,28 @@ def main(argv: list[str] | None = None) -> int:
 
     clean, dirty = working_tree_is_clean()
     if not clean:
-        print("uncommitted changes:\n" + "\n".join("  " + line
-                                                   for line in dirty.splitlines()))
+        changed, untracked = classify(dirty)
+        if changed:
+            print("modified, and tracked at HEAD:")
+            print("\n".join("  " + line for line in changed))
+        if untracked:
+            print("untracked:")
+            print("\n".join("  " + line for line in untracked))
         if not args.allow_dirty:
             raise SystemExit(
-                "\nRefusing to pack. `git archive` ships HEAD, so these "
-                "changes would be missing from the pod\n"
-                "  and the run would measure code you are not looking at. "
-                "Commit them, or pass --allow-dirty\n"
-                "  if you genuinely mean to ship HEAD without them.")
+                "\nRefusing to pack. `git archive` ships HEAD, so nothing "
+                "above reaches the pod and the run\n"
+                "  would measure code you are not looking at.\n\n"
+                "  Commit what belongs on this branch. For anything that does "
+                "not belong on it, add an\n"
+                "  ignore rule saying why rather than deleting it - another "
+                "branch's working files can be\n"
+                "  irreplaceable, and this check cannot tell those from "
+                "residue.\n\n"
+                "  --allow-dirty ships HEAD without the above. It is not a way "
+                "past this message; it is\n"
+                "  for when you mean to ship an older tree than the one you "
+                "have.")
         print("  --allow-dirty: shipping HEAD anyway, without the above\n")
 
     reference = (pathlib.Path(args.reference).expanduser() if args.reference
