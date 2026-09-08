@@ -114,6 +114,20 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+#: Which generation pipeline a request runs through.
+#:
+#: `legacy` is the shipped path: `pipeline._start` pumps every sentence
+#: `script_generator.stream_sentences` produces into a bounded queue that the
+#: synthesiser drains, one sentence per synthesis call.
+#:
+#: `phase6` is the validated streaming architecture - a character-bounded
+#: script buffer between the reader and the voice, and speech-sized chunks
+#: after the first. It is **not wired to anything yet**: selecting it today
+#: changes no behaviour. The flag exists first so that when the path does
+#: land, turning it off is one environment variable and a restart.
+STREAMING_PIPELINES = ("legacy", "phase6")
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- Claude -----------------------------------------------------------
@@ -180,6 +194,16 @@ class Settings:
     # unresearched answer to a question that was researched *because* it needed
     # today's facts. Reserving the rest means the research always gets said.
     answer_first_share: float = _env_float("ANSWER_FIRST_SHARE", 0.5)
+    # legacy | phase6 - see STREAMING_PIPELINES above.
+    #
+    # Defaults to `legacy` and will keep defaulting to it until the Phase 6
+    # path has been measured through the real interface. An unrecognised value
+    # is refused at import rather than falling back: a typo that quietly picks
+    # a pipeline is exactly the silent-success failure this project has paid
+    # for more than once.
+    streaming_pipeline: str = field(
+        default_factory=lambda: os.environ.get("STREAMING_PIPELINE", "legacy").strip().lower()
+    )
 
     cache_enabled: bool = field(
         default_factory=lambda: os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")
@@ -243,6 +267,21 @@ class Settings:
     # a pace. Opening a tab fires several at once, so anything that throttles
     # a burst throttles correct use. 0 switches it off.
     read_limit_per_window: int = _env_int("READ_LIMIT_PER_WINDOW", 60)
+
+    def __post_init__(self) -> None:
+        """Refuse a configuration that names a pipeline that does not exist.
+
+        Deliberately at construction, so it also catches
+        `dataclasses.replace(settings, ...)` - which `pipeline._answer_first`
+        uses - and not only the environment. The app failing to start is the
+        correct outcome: a misconfigured deployment that serves the wrong
+        generation path is worse than one that refuses to serve.
+        """
+        if self.streaming_pipeline not in STREAMING_PIPELINES:
+            raise ValueError(
+                f"STREAMING_PIPELINE={self.streaming_pipeline!r} is not a "
+                f"pipeline. Use one of: {', '.join(STREAMING_PIPELINES)}."
+            )
 
     @property
     def bytes_per_second(self) -> int:
