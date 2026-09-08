@@ -3,9 +3,11 @@
 # static file and the server is one Python process.
 FROM python:3.12-slim
 
-# espeak-ng is the fallback voice. Piper voices are downloaded on first run
-# into ~/.fam/voices (see voice_store.py); espeak means the container can
-# always speak, even before that has happened.
+# espeak-ng is a development engine only, reachable through TTS_ENGINE and
+# never selected by production - nothing falls back to it. It is installed so
+# that a container can be used for local work; an image that is meant to speak
+# needs a GPU and requirements-chatterbox.txt, and without those FAM reports
+# `interim: true` and plays a placeholder tone rather than a worse voice.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends espeak-ng ca-certificates \
  && rm -rf /var/lib/apt/lists/*

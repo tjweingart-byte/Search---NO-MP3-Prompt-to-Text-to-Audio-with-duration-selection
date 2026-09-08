@@ -189,28 +189,32 @@ another rule.
 
 ## Open problems, in the order they hurt
 
-1. **Voice quality — reopened.** Piper works and sounds flat, which is the
-   complaint. The first attempt to replace it (WellSaid Labs) was removed after
-   **two episodes exhausted a month's quota** — a seat product used as an API,
-   not a voice that was too expensive (PROBLEMS.md §61). `VOICE_OPTIONS.md` has
-   the arithmetic and the shortlist; the short version is that a 3-minute
-   episode is ~2,610 characters, so the best-sounding hosted voices cost more
-   per episode than Claude does, which breaks the "audio is nearly free"
-   premise the prefetch plan rests on. **Kokoro-82M is the candidate to try
-   first** — open weights, ships with the app like Piper, no quota — and nobody
-   has heard it on a FAM script yet. That listening test is the next move.
-   What is settled about the current setup: Piper
-   is now a pip dependency (`piper-tts`) with voice models in a **shared
-   per-user folder** (`~/.fam/voices`, see `voice_store.py`) installed by
-   `python setup_voices.py`. They deliberately live outside the project so a new
-   version of the app reuses them instead of re-downloading. It ships **with the app** rather than
-   depending on the host OS: espeak only exists if apt-installed and macOS `say`
-   does not exist on a Linux server, so relying on either means the deployed app
-   sounds worse than the laptop it was built on. Hosted neural voices were not
-   adopted: they bill per character, which can dwarf the model cost.
-   *The ONNX inference could not be exercised on the build machine (the models
-   are hosted somewhere it cannot reach) — `python verify_voice.py` is the check
-   that closes that gap.*
+1. **Voice quality — answered, and unheard.** **Chatterbox is the production
+   voice and the only one.** Piper is gone: engine class, configuration,
+   `piper-tts` dependency, `setup_voices.py` and the interim slot itself. It
+   was removed rather than switched off because it reached listeners three ways
+   nobody chose — `build_engine` fell through to it, `engine_for_voice` fell
+   back to it, `list_voices` offered it whenever the production slot was empty
+   — and an app that quietly sounds worse than intended is the failure this
+   project has lost the most time to. A knob left behind is an invitation to
+   turn it back on, and this one turned itself.
+   There are now exactly two honest states: Chatterbox speaks, or nothing does
+   and everything says so — `/api/health` reports `interim: true`,
+   `build_engine` logs why Chatterbox was unavailable, `demo.sh` refuses to
+   start quietly broken, and playback is a **placeholder tone**, not a lesser
+   voice. A tone cannot be mistaken for FAM; a flat neural voice can.
+   Hosted neural voices were not adopted: WellSaid was removed after **two
+   episodes exhausted a month's quota** — a seat product used as an API, not a
+   voice that was too expensive (PROBLEMS.md §61) — and per-character billing
+   breaks the "audio is nearly free" premise the prefetch plan rests on
+   (`VOICE_OPTIONS.md` has the arithmetic). Chatterbox has open weights and no
+   quota, and clones a reference recording in the same shared per-user folder
+   (`~/.fam/voices`, see `voice_store.py`) that Piper's models used, for the
+   same reason: a new copy of the app must find it already there.
+   *Nobody has heard a FAM episode in this voice.* The build container has no
+   GPU, so `RUNPOD_PRODUCTION.md` is the procedure that closes that gap and
+   `python verify_voice.py` is the check that says whether a given machine can
+   speak at all. **That listening test is the next move.**
 2. ~~**Voice selection**~~ — *done*. `/api/voices` lists what the machine can
    speak; `voice=` on `/api/audio` selects one; the player has a picker.
    Note: voice is deliberately **not** part of the script cache key, because a

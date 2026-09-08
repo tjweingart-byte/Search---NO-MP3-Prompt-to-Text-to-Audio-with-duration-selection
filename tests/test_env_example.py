@@ -41,7 +41,7 @@ def defaults(monkeypatch):
 
     for name in list(os.environ):
         if name.startswith(("ANTHROPIC_", "MODEL", "ENABLE_", "EFFORT", "MAX_WEB",
-                            "CACHE_", "TARGET_", "ALLOW_")):
+                            "CACHE_", "TARGET_", "ALLOW_", "STREAMING_")):
             monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("FAM_IGNORE_DOTENV", "1")
     import config
@@ -55,6 +55,7 @@ def defaults(monkeypatch):
     ("MODEL", "model"),
     ("EFFORT", "effort"),
     ("SEARCH_MODE", "search_mode"),
+    ("STREAMING_PIPELINE", "streaming_pipeline"),
 ])
 def test_text_settings_match(defaults, key, attr):
     assert example_values()[key] == str(getattr(defaults, attr))

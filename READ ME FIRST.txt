@@ -45,8 +45,10 @@ CHANGING THE VOICE
   words — the script is cached, so switching voice costs no extra Claude
   call.
 
-  The voices are Piper's, and they run on your machine: no per-word cost,
-  no monthly quota, and nothing leaves the computer to make them.
+  The voice runs on your machine: no per-word cost, no monthly quota, and
+  nothing leaves the computer to make it. It needs a graphics card; without
+  one you hear a placeholder tone instead, and the app says so rather than
+  letting you mistake it for the real thing.
 
 
 IF SOMETHING GOES WRONG

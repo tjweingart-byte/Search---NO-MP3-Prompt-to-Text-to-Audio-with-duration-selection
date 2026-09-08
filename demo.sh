@@ -62,21 +62,22 @@ fi
 
 # The voice model is a separate download and the app is honest about not having
 # it: with none installed, playback is a placeholder tone rather than speech.
+# There is one voice and there is nothing to download: Chatterbox fetches its
+# own weights and clones a reference recording you provide. So this reports and
+# does not offer to install - the two things it can find, no GPU and no cleared
+# reference recording, are not a demo script's to decide.
 if ! $PY -c "
 import sys, tts
 sys.exit(0 if [v for v in tts.list_voices() if v.engine != 'debug'] else 1)
 " 2>/dev/null; then
-  printf '\n\033[1mNo voice model installed.\033[0m Without one, playback is a tone.\n'
-  if [ -t 0 ]; then
-    printf '  Download one now (~60 MB, once, shared by every copy of the app)? [Y/n] '
-    read -r reply
-  else
-    reply=n
-  fi
-  case "$reply" in
-    [nN]*) printf '  Then run:  %s setup_voices.py\n' "$PY" ;;
-    *) $PY setup_voices.py || printf '  Voice install failed - see the message above.\n' ;;
-  esac
+  printf '\n\033[1mNo voice on this machine.\033[0m Playback will be a tone, not FAM.\n'
+  $PY -c "
+from tts import PRODUCTION_ENGINES
+for cls in PRODUCTION_ENGINES:
+    print(f'  {cls.name}: {cls.diagnose()[1]}')
+" 2>/dev/null || printf '  (the reason could not be determined)\n'
+  printf '  Chatterbox needs a GPU and pip install -r requirements-chatterbox.txt.\n'
+  printf '  See RUNPOD_PRODUCTION.md. Do not judge the writing from a tone.\n'
 fi
 
 # Without a key every episode is the same canned sample, which is the one thing

@@ -4,14 +4,15 @@ Design rule for this project: no engine is allowed to produce a file, and no
 step encodes MP3. Each engine takes a short chunk of text plus a speaking rate
 and returns 16-bit PCM bytes that are written straight to the HTTP response.
 
-Engines are subprocess-based on purpose. A subprocess per sentence keeps peak
-memory flat, lets the pacing controller change the rate mid-podcast, and means
-the heavy neural weights stay in one place (piper's own process) instead of
-being loaded into every web worker.
+The production engine, Chatterbox, is in-process and keeps one model resident
+for the life of the server: it is a GPU model that costs ~10s to load, so a
+process per sentence would dominate everything else. The development engines
+below are subprocess-based, which is why the abstraction has both shapes.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import pathlib
 import shutil
@@ -22,6 +23,7 @@ from functools import lru_cache
 from abc import ABC, abstractmethod
 from typing import Optional
 
+import voice_store
 from audio_utils import strip_wav_header
 from config import settings
 
@@ -164,158 +166,6 @@ class EspeakEngine(TTSEngine):
         return shutil.which(settings.espeak_binary) is not None
 
 
-class PiperEngine(TTSEngine):
-    """Piper: a neural voice that ships *with* the app.
-
-    This is the voice the product is meant to have. It matters that it is a pip
-    dependency plus a model file in the project, not something the host machine
-    happens to provide: espeak only exists if someone apt-installed it, and
-    macOS `say` does not exist on a Linux server at all, so relying on either
-    means the deployed app sounds different - and worse - than it does on a
-    laptop.
-
-    Two things this must get right:
-
-    * **Load the model once.** A Piper voice takes roughly a second to load.
-      Loading per sentence would dominate everything else in the pipeline, so
-      loaded voices are cached for the life of the process.
-    * **Do not block the event loop.** Inference is synchronous CPU work. Run
-      directly, it would stall every other listener on the server for the
-      duration of every sentence, so it runs in a worker thread.
-    """
-
-    name = "piper"
-
-    #: model path -> loaded voice. Shared by every request in the process.
-    _loaded: dict = {}
-
-    def __init__(self, model_path: pathlib.Path | None = None) -> None:
-        self._model_path = model_path or default_piper_model()
-        self._rate: int | None = None
-
-    # -- discovery ---------------------------------------------------------
-
-    @staticmethod
-    def installed_models() -> list:
-        """Every .onnx voice in the shared voice store."""
-        import voice_store
-
-        return voice_store.installed(pathlib.Path(settings.voices_dir))
-
-    @classmethod
-    def voices(cls) -> list[Voice]:
-        if not cls.available():
-            return []
-        found = []
-        for path in cls.installed_models():
-            stem = path.stem
-            found.append(
-                Voice(
-                    id=f"piper:{stem}",
-                    label=_prettify_piper_name(stem),
-                    engine="piper",
-                    detail="neural, ships with the app",
-                )
-            )
-        return found
-
-    @staticmethod
-    def available() -> bool:
-        try:
-            import piper  # noqa: F401
-        except ImportError:
-            return False
-        return bool(PiperEngine.installed_models())
-
-    # -- synthesis ---------------------------------------------------------
-
-    def _resolve(self, voice: str | None) -> pathlib.Path | None:
-        wanted = self._voice_arg(voice, "piper")
-        if wanted:
-            for path in self.installed_models():
-                if path.stem == wanted:
-                    return path
-            log.warning("piper voice %r not installed; using the default", wanted)
-        return self._model_path
-
-    @classmethod
-    def _load(cls, path):
-        """Load a voice once and keep it. Model load is ~1s; synthesis is ms."""
-        key = str(path)
-        if key not in cls._loaded:
-            from piper import PiperVoice
-
-            log.info("loading piper voice %s", path.name)
-            cls._loaded[key] = PiperVoice.load(path)
-        return cls._loaded[key]
-
-    def _synth_blocking(self, text: str, wpm: float, path) -> tuple[bytes, int]:
-        from piper import SynthesisConfig
-
-        voice = self._load(path)
-        # length_scale > 1 is slower. Clamped so the pacing controller can hit
-        # the clock without the delivery becoming strange.
-        scale = max(0.6, min(1.6, self.nominal_wpm / max(wpm, 1.0)))
-        config = SynthesisConfig(length_scale=scale)
-
-        buffer = bytearray()
-        rate = settings.sample_rate
-        for chunk in voice.synthesize(text, syn_config=config):
-            buffer += chunk.audio_int16_bytes
-            rate = chunk.sample_rate
-        return bytes(buffer), rate
-
-    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
-        path = self._resolve(voice)
-        if path is None:
-            raise TTSUnavailable("no piper voice is installed")
-        # Off the event loop: inference is blocking CPU work.
-        pcm, rate = await asyncio.to_thread(self._synth_blocking, text, wpm, path)
-        self._rate = rate
-        return pcm
-
-    @property
-    def sample_rate(self) -> int:
-        # Known only after the model is consulted; read it up front so the
-        # stream header is right on the very first chunk.
-        if self._rate is None and self._model_path is not None:
-            self._rate = _piper_model_rate(self._model_path)
-        return self._rate or 22050
-
-
-def _prettify_piper_name(stem: str) -> str:
-    """en_US-lessac-medium -> Lessac (US, medium)."""
-    parts = stem.split("-")
-    locale = parts[0].replace("_", "-") if parts else stem
-    speaker = parts[1].title() if len(parts) > 1 else stem
-    quality = parts[2] if len(parts) > 2 else ""
-    region = locale.split("-")[-1] if "-" in locale else locale
-    return f"{speaker} ({region}{', ' + quality if quality else ''})"
-
-
-def _piper_model_rate(path) -> int:
-    """Read a voice's sample rate from its sidecar JSON, without loading it."""
-    import json
-
-    for candidate in (pathlib.Path(str(path) + ".json"), pathlib.Path(path).with_suffix(".json")):
-        try:
-            if candidate.exists():
-                return int(json.loads(candidate.read_text())["audio"]["sample_rate"])
-        except Exception:  # pragma: no cover - malformed sidecar
-            continue
-    return 22050
-
-
-def default_piper_model():
-    """The configured voice, or the first installed one."""
-    if settings.piper_model:
-        path = pathlib.Path(settings.piper_model)
-        if path.exists():
-            return path
-    models = PiperEngine.installed_models()
-    return models[0] if models else None
-
-
 class SayEngine(TTSEngine):
     """macOS built-in speech. Pre-installed on every Mac - nothing to download.
 
@@ -453,50 +303,307 @@ class DebugEngine(TTSEngine):
         return True
 
 
-def build_engine(preference: str | None = None) -> TTSEngine:
-    """Pick an engine, honouring TTS_ENGINE and falling back sensibly."""
-    choice = (preference or settings.tts_engine or "auto").lower()
+#: The engines production is allowed to serve.
+#:
+#: The generation settings Phase 2 chose and Phase 6 measured. Copied from
+#: `experiments/voice_identity.GENERATION` deliberately rather than imported:
+#: the experiment layer is not a production dependency. Changing a number here
+#: changes the voice, and invalidates every listening judgement made on it.
+CHATTERBOX_GENERATION = {
+    "exaggeration": 0.5,
+    "cfg_weight": 0.5,
+    "temperature": 0.8,
+    "repetition_penalty": 1.2,
+    "min_p": 0.05,
+    "top_p": 1.0,
+}
 
-    explicit = {
-        "piper": PiperEngine,
-        "espeak": EspeakEngine,
-        "say": SayEngine,
-        "debug": DebugEngine,
-    }
-    if choice in explicit:
-        cls = explicit[choice]
+
+def pcm_from_float(samples) -> bytes:
+    """Float waveform in [-1, 1] to 16-bit little-endian PCM."""
+    import numpy as np
+
+    clipped = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
+    return (clipped * 32767.0).astype("<i2").tobytes()
+
+
+class ChatterboxEngine(TTSEngine):
+    """Chatterbox Base: FAM's production voice.
+
+    A thin adapter around the call Phase 6 validated on an RTX 4090
+    (`phase6_4090_20260908T064113Z`: 2.992s search-to-first-listen warm, zero
+    playback stalls). Nothing about the synthesis is reinvented here - the
+    settings, the `inference_mode` wrapper, the tensor-to-PCM conversion and
+    the 24 kHz rate are the measured ones.
+
+    Three things this must get right, and one it deliberately cannot:
+
+    * **Load the model once.** The cold load is ~10s on a 4090. Loaded models
+      are cached on the class for the life of the process and `warm_up()` pays
+      it at startup, so no listener ever does.
+    * **Do not block the event loop.** Generation is blocking GPU work and runs
+      in a worker thread, which is what lets Claude keep streaming underneath -
+      the Phase 6 decoupling depends on it.
+    * **One generation at a time.** A single card cannot run concurrent
+      generations safely, so they serialise on a semaphore. A second listener
+      queues behind the first; at ~4.6x realtime that is fine for a few and is
+      a real capacity limit worth knowing.
+    * **`wpm` is ignored.** Chatterbox exposes no speaking-rate control, so the
+      pacing half of the duration contract does not apply: length is held by
+      the budget and by trimming at a sentence boundary, not by speeding the
+      voice up. This is a decided trade, not an oversight - see PROBLEMS.md.
+      The parameter stays in the signature because `TTSEngine` defines it.
+    """
+
+    name = "chatterbox"
+    #: The rate the model emits at. Read back from the model once loaded, but
+    #: needed before that for the stream header on the very first chunk.
+    SAMPLE_RATE = 24000
+
+    #: device -> loaded model. Shared by every request in the process.
+    _loaded: dict = {}
+    #: One card, one generation. Class-level so it is shared, and built lazily
+    #: because a semaphore binds to the loop that first awaits it.
+    _gate: "asyncio.Semaphore | None" = None
+    #: Memoised availability, so /api/health does not re-import torch.
+    _available: bool | None = None
+
+    # -- configuration -----------------------------------------------------
+
+    @staticmethod
+    def reference_path() -> pathlib.Path:
+        """The voice Chatterbox clones. Per-machine state, never in the repo."""
+        configured = (settings.chatterbox_reference or "").strip()
+        if configured:
+            return pathlib.Path(configured).expanduser()
+        return voice_store.voices_dir() / "reference_3.wav"
+
+    @staticmethod
+    def rights_path(reference: pathlib.Path) -> pathlib.Path:
+        return reference.with_suffix(".rights.json")
+
+    @classmethod
+    def rights_cleared(cls, reference: pathlib.Path) -> tuple[bool, str]:
+        """A cloned voice is somebody's voice. No record, no synthesis.
+
+        The same three fields `tools/check_reference_audio.py` requires, asked
+        again here because a gate that only runs in a tool is not a gate.
+        """
+        path = cls.rights_path(reference)
+        if not path.exists():
+            return False, f"no rights record at {path.name}"
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            return False, f"{path.name} is not valid JSON: {exc}"
+        for field_name in ("consent", "commercial_use", "synthetic_voice_cleared"):
+            value = record.get(field_name)
+            if str(value).strip().lower() not in ("yes", "true"):
+                return False, f"{path.name} does not clear {field_name!r}"
+        return True, "consent, commercial use and synthetic voice cleared"
+
+    @classmethod
+    def device(cls) -> str:
+        """Where the model runs. CPU is refused, not chosen."""
+        configured = (settings.chatterbox_device or "auto").strip().lower()
+        if configured != "auto":
+            return configured
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                return "cuda"
+            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                return "mps"
+        except Exception:
+            pass
+        return "cpu"
+
+    # -- discovery ---------------------------------------------------------
+
+    @classmethod
+    def diagnose(cls) -> tuple[bool, str]:
+        """Why this engine can or cannot serve, in one sentence."""
+        try:
+            import chatterbox.tts  # noqa: F401
+        except Exception as exc:
+            return False, f"chatterbox is not installed ({type(exc).__name__})"
+        device = cls.device()
+        if device == "cpu":
+            # ~1x realtime or worse: the listener would hear silence. Refusing
+            # is better than serving an episode that starves.
+            return False, "no GPU: Chatterbox on CPU is slower than speech"
+        reference = cls.reference_path()
+        if not reference.exists():
+            return False, f"no reference voice at {reference}"
+        cleared, detail = cls.rights_cleared(reference)
+        if not cleared:
+            return False, detail
+        return True, f"{device}, cloning {reference.name}"
+
+    @classmethod
+    def available(cls) -> bool:
+        if cls._available is None:
+            cls._available = cls.diagnose()[0]
+        return cls._available
+
+    @classmethod
+    def voices(cls) -> list:
         if not cls.available():
-            raise TTSUnavailable(f"TTS engine '{choice}' is not installed or not configured")
-        return cls()
+            return []
+        reference = cls.reference_path()
+        return [Voice(id=f"chatterbox:{reference.stem}", label="FAM",
+                      engine=cls.name, detail="Chatterbox")]
 
-    # Preference order: best voice first, then anything already on the machine.
-    # Must match list_voices()' order - they disagreed, so on a Mac with espeak
-    # installed the picker offered "Samantha" and the audio came out robotic.
-    for cls in (PiperEngine, SayEngine, EspeakEngine):
-        if cls.available():
-            return cls()
-    return DebugEngine()
+    # -- synthesis ---------------------------------------------------------
+
+    @classmethod
+    def _model(cls):
+        device = cls.device()
+        if device not in cls._loaded:
+            from chatterbox.tts import ChatterboxTTS
+
+            log.info("loading chatterbox on %s (one-time, ~10s)", device)
+            model = ChatterboxTTS.from_pretrained(device=device)
+            actual = str(getattr(model, "device", device))
+            if actual.split(":")[0] != device.split(":")[0]:
+                raise TTSUnavailable(
+                    f"asked chatterbox for {device!r}, it loaded on {actual!r}")
+            cls._loaded[device] = model
+        return cls._loaded[device]
+
+    def _synth_blocking(self, text: str) -> tuple[bytes, int]:
+        """The validated call, unchanged, plus the tensor-to-PCM conversion."""
+        import numpy as np
+        import torch
+
+        model = self._model()
+        with torch.inference_mode():
+            wav = model.generate(text,
+                                 audio_prompt_path=str(self.reference_path()),
+                                 **CHATTERBOX_GENERATION)
+        samples = wav.squeeze(0).detach().cpu().numpy()
+        del wav
+        return pcm_from_float(samples), int(getattr(model, "sr", self.SAMPLE_RATE))
+
+    async def synth(self, text: str, wpm: float, voice: str | None = None) -> bytes:
+        """`wpm` is accepted and ignored - Chatterbox has no rate control."""
+        if type(self)._gate is None:
+            type(self)._gate = asyncio.Semaphore(1)
+        async with type(self)._gate:
+            # Off the event loop: generation is blocking GPU work, and Claude
+            # has to keep streaming while it runs.
+            pcm, rate = await asyncio.to_thread(self._synth_blocking, text)
+        self._rate = rate
+        return pcm
+
+    @property
+    def sample_rate(self) -> int:
+        rate = getattr(self, "_rate", None)
+        if rate:
+            return int(rate)
+        model = self._loaded.get(self.device())
+        return int(getattr(model, "sr", self.SAMPLE_RATE)) if model else self.SAMPLE_RATE
 
 
-ENGINES = {
-    "piper": PiperEngine,
-    "say": SayEngine,
+#: Chatterbox is FAM's production voice. It gates itself on being able to run:
+#: no package, no GPU, no reference voice or uncleared rights and it reports
+#: unavailable, `build_engine` falls through to the interim engine, and the
+#: health report says `interim: true`. So this is live everywhere it can be and
+#: nowhere it cannot, which is the switch - no separate flag to forget.
+#:
+#: espeak and macOS `say` are deliberately absent and are no longer production
+#: options at all. They exist only if the host OS happens to provide them, so
+#: relying on either means the deployed app sounds different, and worse, than
+#: the laptop it was built on.
+PRODUCTION_ENGINES: tuple = (ChatterboxEngine,)
+
+#: What a machine that cannot run the production engine gets instead: a tone,
+#: not a voice.
+#:
+#: **There is no interim voice any more.** Piper held this slot and is gone -
+#: package, engine class, config and dependency (PROBLEMS.md, and the commit
+#: that removed it). It was removed rather than switched off because a
+#: second engine that can speak is a second engine that can be *selected*, and
+#: an app that quietly sounds worse than intended is the failure this project
+#: has lost the most time to. A tone cannot be mistaken for FAM; a flat neural
+#: voice can.
+#:
+#: So the honest states are exactly two: Chatterbox speaks, or nothing does and
+#: everything says so - `engine_report()` reports `interim: true`, `demo.sh`
+#: refuses to start quietly broken, and `build_engine` logs a warning naming
+#: the reason Chatterbox was unavailable.
+PLACEHOLDER_ENGINE = DebugEngine
+
+#: Reachable only through `TTS_ENGINE`, which is a **development** override -
+#: for deterministic tests and local work, never for a deployment. Production
+#: ignores it entirely unless it names a production engine.
+#:
+#: `debug` is why this exists: the suite must run with no GPU, no model and no
+#: credentials. espeak and macOS `say` remain reachable here for local work and
+#: are not production voices - they exist only if the host OS happens to
+#: provide them.
+DEV_ENGINES = {
     "espeak": EspeakEngine,
+    "say": SayEngine,
     "debug": DebugEngine,
 }
 
 
-def list_voices() -> list[Voice]:
-    """Every voice available on this machine, best-sounding first.
+def production_engine() -> TTSEngine | None:
+    """The first production engine this machine can actually run, or None."""
+    for cls in PRODUCTION_ENGINES:
+        if cls.available():
+            return cls()
+    return None
 
-    Ordered by engine quality rather than alphabetically, because the first
-    entry is what a listener gets by default.
+
+def build_engine(preference: str | None = None) -> TTSEngine:
+    """The engine this process speaks with.
+
+    Production does not choose. There is one production slot, filled by
+    `PRODUCTION_ENGINES`; when it is empty there is no voice at all, only the
+    placeholder tone, and the health report says so. `TTS_ENGINE` names a
+    development engine and is honoured only because deterministic local tests
+    need it - it cannot name a production engine into existence.
+    """
+    choice = (preference or settings.tts_engine or "auto").lower()
+    if choice != "auto":
+        cls = DEV_ENGINES.get(choice)
+        if cls is None:
+            raise TTSUnavailable(f"TTS engine '{choice}' is not a known engine")
+        if not cls.available():
+            raise TTSUnavailable(f"TTS engine '{choice}' is not installed or not configured")
+        return cls()
+
+    engine = production_engine()
+    if engine is not None:
+        return engine
+    # Nothing can speak. Say why, at WARNING, every time an engine is built:
+    # this used to be a flat-sounding voice nobody had chosen, which is a
+    # failure that plays. A tone is a failure that is heard as one.
+    for cls in PRODUCTION_ENGINES:
+        log.warning("%s is unavailable (%s); serving a placeholder tone, not a "
+                    "voice", cls.name, cls.diagnose()[1])
+    return PLACEHOLDER_ENGINE()
+
+
+ENGINES = dict(DEV_ENGINES)
+
+
+def list_voices() -> list[Voice]:
+    """Every voice production may serve on this machine.
+
+    espeak and `say` are gone from this list: they were never a production
+    voice, and offering them in the picker made them one in practice.
     """
     voices: list[Voice] = []
-    for name in ("piper", "say", "espeak"):
-        voices.extend(ENGINES[name].voices())
+    for cls in PRODUCTION_ENGINES:
+        voices.extend(cls.voices())
     if not voices:
-        voices.extend(DebugEngine.voices())
+        # Never empty: the picker must always have something in it, and a
+        # placeholder tone that says what it is beats an empty control.
+        voices.extend(PLACEHOLDER_ENGINE.voices())
     return voices
 
 
@@ -537,12 +644,21 @@ async def warm_up() -> None:
 
 
 def engine_report() -> dict:
-    """What the server can actually do right now — surfaced in /api/health."""
+    """What the server can actually do right now — surfaced in /api/health.
+
+    `interim` is the honest bit, and it now means something stronger than it
+    used to: not "a stand-in voice is speaking" but "no voice is speaking at
+    all". With Piper gone there is nothing between Chatterbox and the tone.
+
+    The keys are unchanged so that `/api/health` keeps its shape; only what
+    fills `interim_engine` changed, from a voice to the placeholder.
+    """
+    selected = build_engine()
     return {
-        "selected": build_engine().name,
-        "piper": PiperEngine.available(),
-        "espeak": EspeakEngine.available(),
-        "say": SayEngine.available(),
+        "selected": selected.name,
+        "production_engines": [cls.name for cls in PRODUCTION_ENGINES],
+        "interim": not PRODUCTION_ENGINES or production_engine() is None,
+        "interim_engine": PLACEHOLDER_ENGINE.name,
         "debug": True,
         "voices": [v.as_dict() for v in list_voices()],
         "default_voice": default_voice(),
