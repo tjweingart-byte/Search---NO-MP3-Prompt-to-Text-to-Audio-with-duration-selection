@@ -359,7 +359,16 @@ being asked:
    Publishing to the same file path within one conversation updates it in
    place; **from a new conversation, pass that URL as `url`** or you will
    create a second artifact and the link the phone has bookmarked will go
-   stale. Read it first, then publish `preview/fam-artifact.html` to it.
+   stale. Read it first, then publish to it.
+
+   **What lives at that URL is now `preview/fam-live-artifact.html`**, built by
+   `python preview/build_live_preview.py` - the same interface, but running on
+   a real database rather than fixtures, with the store shown beside it.
+   Publish it with `capabilities: {"db": {}}`; without that declaration
+   `claude.use("db")` resolves null in the viewer, the page falls back to
+   memory, and the whole point of it is quietly gone. The fixture build
+   (`preview/fam-artifact.html`) is still what `./dev.sh check` produces and
+   smoke-tests; it is just no longer what the bookmarked link serves.
 3. Reply with a short summary of what changed and the preview URL. Not a zip,
    not a wall of files.
 4. If something genuinely cannot be automated, say the exact command to run.

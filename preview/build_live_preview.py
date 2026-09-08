@@ -66,6 +66,8 @@ LIVE_SHIM = r"""
   var SAMPLE_RATE = 22050;
   var ALGO = __ALGO__;
   var TAG_WORDS = __TAG_WORDS__;   // topics.TAG_WORDS, verbatim
+  var VOLATILE = __VOLATILE__;     // cache.research_words(), verbatim
+  var NEAR = __NEAR__;             // the shipped CACHE_VECTOR thresholds
   var realFetch = window.fetch.bind(window);
 
   // ------------------------------------------------------------ db plumbing
@@ -129,6 +131,119 @@ LIVE_SHIM = r"""
     return out.sort().join(" ");
   }
   function keyFor(q, m) { return normalize(q).replace(/\s+/g, "-").slice(0, 60) + "--" + m + "m"; }
+
+  // ------------------------------------------------- near matching, in the browser
+  // A port of embeddings.py and cache.comparable, so the panel can show the
+  // near-match cache deciding rather than describe it. Same features, same
+  // constants, same guards, same order.
+  //
+  // One honest difference: Python hashes features with blake2b and this uses a
+  // 32-bit FNV-1a, because a browser has no blake2b and pulling one in for a
+  // prototype is not worth it. Both are signed hashing over the same feature
+  // set, so which pairs match agrees; the score can differ in the third
+  // decimal. Nothing compares a vector across the two - the browser store is
+  // its own - so the difference cannot produce a wrong answer, only a
+  // slightly different number on screen.
+  var DIMS = 256, ORDER = 3, NGRAM_WEIGHT = 0.15;
+  var NUMERALS = {
+    zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6",
+    seven: "7", eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12",
+    thirteen: "13", fourteen: "14", fifteen: "15", sixteen: "16",
+    seventeen: "17", eighteen: "18", nineteen: "19", twenty: "20",
+    first: "1", second: "2", third: "3", fourth: "4", fifth: "5", sixth: "6",
+    seventh: "7", eighth: "8", ninth: "9", tenth: "10"
+  };
+  function tokensOf(text) {
+    var out = [];
+    String(text).toLowerCase().replace(/[^\w\s]/g, " ").split(/\s+/).forEach(function (t) {
+      if (t) out.push(NUMERALS[t] || t);
+    });
+    return out;
+  }
+  function numbersOf(text) {
+    var set = {};
+    tokensOf(text).forEach(function (t) { if (/^\d+$/.test(t)) set[t] = 1; });
+    return Object.keys(set).sort().join(",");
+  }
+  function slotSign(feature) {
+    var h = 2166136261;
+    for (var i = 0; i < feature.length; i++) {
+      h ^= feature.charCodeAt(i);
+      h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+    }
+    return [h % DIMS, (h >>> 31) ? 1 : -1];
+  }
+  function embed(text) {
+    var v = new Array(DIMS), i;
+    for (i = 0; i < DIMS; i++) v[i] = 0;
+    tokensOf(text).forEach(function (word) {
+      var ss = slotSign("w:" + word);
+      v[ss[0]] += ss[1];
+      var padded = "^" + word + "$";
+      for (var j = 0; j < Math.max(1, padded.length - ORDER + 1); j++) {
+        var g = slotSign("g:" + padded.substr(j, ORDER));
+        v[g[0]] += g[1] * NGRAM_WEIGHT;
+      }
+    });
+    var n = 0;
+    for (i = 0; i < DIMS; i++) n += v[i] * v[i];
+    n = Math.sqrt(n);
+    if (n) for (i = 0; i < DIMS; i++) v[i] /= n;
+    return v;
+  }
+  function cosine(a, b) {
+    if (!a || !b || a.length !== b.length) return 0;
+    var s = 0;
+    for (var i = 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
+  }
+
+  // cache.research_reason: the word list plus the three shapes that make a
+  // question a current one without using any of its words.
+  function needsFresh(q) {
+    var text = String(q).toLowerCase();
+    var toks = text.replace(/[^\w\s]/g, " ").split(/\s+/);
+    for (var i = 0; i < toks.length; i++) {
+      if (toks[i] && VOLATILE.indexOf(toks[i]) > -1) return true;
+    }
+    var thisYear = new Date().getFullYear(), m, re = /\b(20\d\d)\b/g;
+    while ((m = re.exec(text))) { if (Number(m[1]) >= thisYear - 1) return true; }
+    if (/\bwho(?:'s|s)?\b.{0,20}\b(is|are|was|runs|leads|owns|heads|won|makes)\b/.test(text)) return true;
+    return /\bhow (?:many|much)\b/.test(text);
+  }
+
+  // cache.comparable: "" if these may share an episode, else why not. The
+  // reason is the point - the panel prints it, so a refusal is legible.
+  function comparable(asked, stored) {
+    if (numbersOf(asked) !== numbersOf(stored)) return "different numbers";
+    if (needsFresh(asked) !== needsFresh(stored)) {
+      return "one needs today's facts, the other does not";
+    }
+    var a = tokensOf(normalize(asked)), b = tokensOf(normalize(stored));
+    if (!a.length || !b.length) return "nothing left after normalising";
+    var both = {}, all = {}, n = 0;
+    b.forEach(function (t) { both[t] = 1; });
+    a.concat(b).forEach(function (t) { all[t] = 1; });
+    a.forEach(function (t) { if (both[t]) n++; });
+    var overlap = n / Object.keys(all).length;
+    if (overlap < NEAR.overlap) {
+      return "only " + overlap.toFixed(2) + " of the words in common";
+    }
+    return "";
+  }
+
+  // cache.best_match, over the rows already in the browser store.
+  function bestMatch(query, minutes) {
+    var want = embed(normalize(query)), best = null;
+    rows("scripts").forEach(function (r) {
+      if (!r.vector || r.minutes !== minutes || r.expires <= now()) return;
+      var score = cosine(want, r.vector);
+      if (score < NEAR.threshold || (best && score <= best.score)) return;
+      if (comparable(query, r.query)) return;
+      best = { id: r.id, query: r.query, score: score };
+    });
+    return best;
+  }
 
   // topics.tags_for_text: the same keyword pass the server uses, so an episode
   // someone typed is categorised the same way a bank tile is.
@@ -566,23 +681,83 @@ LIVE_SHIM = r"""
     return json({ error: "Not available in this build." }, 404);
   }
 
-  // The script cache, written on the generation path exactly as the pipeline
-  // does: look the key up, count a hit, or write the row on a miss.
+  // Every lookup the cache has resolved, newest first. The panel reads this:
+  // a hit rate is a number, and this is the thing the number is made of.
+  var LOG = [];
+  var EPISODE_COST = 0.0096;   // measured, see PROBLEMS.md 68
+
+  // The script cache on the generation path, in the order the pipeline does
+  // it: exact key, then - only on a miss - the near-match scan, then write.
   function touchScript(query, minutes) {
     var key = keyFor(query, minutes);
     return getOne("scripts", key).then(function (hit) {
       var live = hit && hit.expires > now();
-      return put("scripts", key, live ? {
-        query: hit.query, minutes: hit.minutes, sentences: hit.sentences,
-        created: hit.created, expires: hit.expires, hits: (hit.hits || 0) + 1,
-        thread: hit.thread || ""
-      } : {
-        query: query, minutes: minutes,
-        sentences: "(no model call in this build)",
-        created: now(), expires: now() + 86400, hits: 1,
-        thread: "what that changes next"
-      }).then(function () { paint(); return live; });
+      if (live) return bump(key, hit, "exact", query, null);
+
+      var near = bestMatch(query, minutes);
+      if (near) {
+        return getOne("scripts", near.id).then(function (row) {
+          if (!row) return write(key, query, minutes, near);
+          return bump(near.id, row, "near", query, near);
+        });
+      }
+      return write(key, query, minutes, null);
     });
+  }
+  function bump(id, row, how, asked, near) {
+    note(how, asked, near, row.query);
+    var d = {};
+    for (var k in row) d[k] = row[k];
+    d.hits = (row.hits || 0) + 1;
+    return put("scripts", id, d).then(function () { paint(); return true; });
+  }
+  function write(key, query, minutes, near) {
+    note("miss", query, near, "");
+    return put("scripts", key, {
+      query: query, minutes: minutes,
+      sentences: "(no model call in this build)",
+      created: now(), expires: now() + 86400, hits: 1,
+      thread: "what that changes next",
+      // The two columns the near-match cache added. The vector is written
+      // here, on the write, for the reason the whole design turns on: doing
+      // it on the read would put work in front of the first word.
+      bucket: "m" + minutes + ":hashing:" + DIMS,
+      vector: embed(normalize(query))
+    }).then(function () { paint(); return false; });
+  }
+  // Why a lookup landed where it did. A near miss records the closest thing
+  // it found and the guard that refused it, because "no match" with no reason
+  // is the kind of report this project keeps getting caught by.
+  function note(how, asked, near, matched) {
+    var why = "";
+    if (how === "miss") {
+      var closest = null;
+      rows("scripts").forEach(function (r) {
+        if (!r.vector || r.expires <= now()) return;
+        var sc = cosine(embed(normalize(asked)), r.vector);
+        if (!closest || sc > closest.score) closest = { query: r.query, score: sc, minutes: r.minutes };
+      });
+      if (closest && closest.score >= 0.3) {
+        // The guard that refused it, or - if no guard did - the fact that it
+        // did not score high enough. Those are the only two ways to miss.
+        why = comparable(asked, closest.query) ||
+          "scored " + closest.score.toFixed(3) + ", under the " + NEAR.threshold + " threshold";
+        near = { query: closest.query, score: closest.score };
+      } else if (closest) {
+        // Naming a "closest" that scored near zero is worse than saying
+        // nothing: it reads as a near miss when the cache simply held nothing
+        // on the subject.
+        why = "nothing in the cache is about this";
+      } else {
+        why = "nothing in the cache yet";
+      }
+    }
+    LOG.unshift({
+      how: how, asked: asked, matched: matched,
+      score: near ? near.score : 0, near: near ? near.query : "", why: why,
+      at: now()
+    });
+    LOG = LOG.slice(0, 40);
   }
 
   var STATIC_SET = {};
@@ -636,10 +811,10 @@ LIVE_SHIM = r"""
   // which collection each tap lands in, what the row looks like, and the two
   // counters that carry the design - every event row against the subset the
   // ranking is allowed to read, and the cache hit rate that decides the bill.
-  var COLTAB = "events", panel = null;
+  var COLTAB = "events", panel = null, OPEN = {};
   var SCHEMA = {
     events:   ["kind", "topic_id", "tags", "section", "algo", "at"],
-    scripts:  ["id", "query", "minutes", "hits", "expires"],
+    scripts:  ["id", "query", "minutes", "hits", "bucket", "expires"],
     people:   ["id", "name", "handle", "joined", "last_seen"],
     sessions: ["id", "user_id", "expires", "last_used"],
     accounts: ["id", "email", "created", "last_login"],
@@ -661,6 +836,9 @@ LIVE_SHIM = r"""
   function fmt(col, r, f) {
     var v = f === "id" ? r.id : r[f];
     if (v === undefined || v === "" || v === null) return '<i>-</i>';
+    // A 256-float vector is data, but printing it is not showing it. The
+    // shape is what tells you the row is embedded and which space it is in.
+    if (Array.isArray(v)) return '<em class="vec">' + v.length + ' floats</em>';
     if (["at", "created", "joined", "last_seen", "last_login", "expires", "last_used"].indexOf(f) > -1) {
       return new Date(v * 1000).toLocaleTimeString();
     }
@@ -700,10 +878,15 @@ LIVE_SHIM = r"""
       metric("cache hit rate", rate + "%", hits + " of " + plays + " plays reused a script", rate >= 50 ? "good" : "warn") +
       metric("model spend", "$" + (sc.length * 0.0096).toFixed(3), "$" + (hits * 0.0096).toFixed(3) + " saved by the cache", "");
 
-    panel.querySelector(".fd-tabs").innerHTML = COLS.map(function (c) {
-      return '<button class="fd-tab' + (COLTAB === c ? " on" : "") + '" data-col="' + c + '">' +
-        c + ' <u>' + rows(c).length + '</u></button>';
-    }).join("");
+    panel.querySelector(".fd-tabs").innerHTML =
+      '<button class="fd-tab live' + (COLTAB === "@log" ? " on" : "") + '" data-col="@log">' +
+      'cache activity <u>' + LOG.length + '</u></button>' +
+      COLS.map(function (c) {
+        return '<button class="fd-tab' + (COLTAB === c ? " on" : "") + '" data-col="' + c + '">' +
+          c + ' <u>' + rows(c).length + '</u></button>';
+      }).join("");
+
+    if (COLTAB === "@log") { panel.querySelector(".fd-table").innerHTML = activity(); return; }
 
     var fields = SCHEMA[COLTAB];
     var list = rows(COLTAB).slice().sort(function (a, b) {
@@ -714,12 +897,74 @@ LIVE_SHIM = r"""
       '<thead><tr>' + fields.map(function (f) { return '<th>' + f + '</th>'; }).join("") + '</tr></thead>' +
       '<tbody>' + (list.length ? list.map(function (r) {
         var isNew = fresh[r.id] && Date.now() - fresh[r.id] < 6000;
-        return '<tr' + (isNew ? ' class="new"' : '') + '>' + fields.map(function (f) {
-          return '<td>' + fmt(COLTAB, r, f) + '</td>';
-        }).join("") + '</tr>';
+        var open = OPEN[r.id];
+        return '<tr class="fd-row' + (isNew ? ' new' : '') + (open ? ' open' : '') +
+          '" data-row="' + esc(r.id) + '">' + fields.map(function (f) {
+            return '<td>' + fmt(COLTAB, r, f) + '</td>';
+          }).join("") + '</tr>' + (open ? document_(r, fields.length) : '');
       }).join("") :
         '<tr><td colspan="' + fields.length + '" class="fd-empty">No rows yet in <b>' +
         COLTAB + '</b> &mdash; it lives in <b>' + FILE[COLTAB] + '</b>.</td></tr>') + '</tbody>';
+  }
+
+  // The whole document, for a row someone clicked. The table above shows the
+  // handful of fields that fit; this is everything the store actually holds,
+  // which is the difference between a summary of the data and the data.
+  function document_(r, span) {
+    var keys = Object.keys(r).sort();
+    return '<tr class="fd-doc"><td colspan="' + span + '"><dl>' + keys.map(function (k) {
+      var v = r[k];
+      if (Array.isArray(v)) {
+        if (k === "vector") {
+          // The first six coordinates of a 256-slot hashed vector are almost
+          // always zero, so printing them showed a column of 0.000 and said
+          // nothing. The occupied slots and the unit norm are what actually
+          // describe it.
+          var nz = v.filter(function (n) { return n !== 0; });
+          var mag = Math.sqrt(v.reduce(function (a, n) { return a + n * n; }, 0));
+          v = v.length + " floats \u00b7 " + nz.length + " non-zero \u00b7 |v| = " +
+            mag.toFixed(3) + " \u2014 " +
+            nz.slice(0, 5).map(function (n) { return n.toFixed(3); }).join(", ") + ", \u2026";
+        } else {
+          v = "[" + v.join(", ") + "]";
+        }
+      } else if (v && typeof v === "object") {
+        v = JSON.stringify(v);
+      }
+      return '<dt>' + esc(k) + '</dt><dd>' + esc(String(v)) + '</dd>';
+    }).join("") + '</dl></td></tr>';
+  }
+
+  // Every cache lookup, and what decided it. This is the near-match cache
+  // working rather than being described: an exact hit, a near hit with the
+  // question it actually matched and the cosine, or a miss with the guard
+  // that refused the closest thing there was.
+  function activity() {
+    if (!LOG.length) {
+      return '<tbody><tr><td class="fd-empty">Nothing looked up yet. Search for ' +
+        'something, then search for the same thing in different words.</td></tr></tbody>';
+    }
+    var near = LOG.filter(function (l) { return l.how === "near"; }).length;
+    var hits = LOG.filter(function (l) { return l.how !== "miss"; }).length;
+    return '<tbody>' +
+      '<tr><td class="fd-sum">' + hits + ' of ' + LOG.length + ' lookups reused a script' +
+      (near ? ', ' + near + ' of them only because of near matching &mdash; $' +
+        (near * EPISODE_COST).toFixed(4) + ' that exact keys would have spent' : '') +
+      '</td></tr>' +
+      LOG.map(function (l) {
+        var tag = l.how === "exact" ? "EXACT HIT" : l.how === "near" ? "NEAR HIT" : "MISS";
+        var detail = l.how === "near"
+          ? 'matched <b>' + esc(l.matched) + '</b> at ' + l.score.toFixed(3) +
+            ' &mdash; every guard passed'
+          : l.how === "exact"
+            ? 'same normalised question, so the same key'
+            : (l.near
+                ? 'closest was <b>' + esc(l.near) + '</b> &mdash; ' + esc(l.why)
+                : esc(l.why));
+        return '<tr class="fd-log ' + l.how + '"><td>' +
+          '<span class="fd-tag">' + tag + '</span> ' + esc(l.asked) +
+          '<em>' + detail + '</em></td></tr>';
+      }).join("") + '</tbody>';
   }
   function metric(label, value, note, tone) {
     return '<div class="fd-metric ' + (tone || "") + '"><span>' + label + '</span><b>' +
@@ -744,7 +989,8 @@ LIVE_SHIM = r"""
     });
     panel.innerHTML =
       '<div class="fd-head"><h2>Live database</h2>' +
-      '<p>Every tap on the phone writes here. Rows that just arrived are green.</p>' +
+      '<p>Every tap on the phone writes here. New rows are green; click any row ' +
+      'for the whole document. <b>cache activity</b> shows each search resolving.</p>' +
       '<div class="fd-status"><i class="fd-dot"></i><span class="fd-state"></span></div></div>' +
       '<div class="fd-metrics"></div>' +
       '<div class="fd-tabs"></div>' +
@@ -754,6 +1000,12 @@ LIVE_SHIM = r"""
     panel.querySelector(".fd-tabs").addEventListener("click", function (e) {
       var b = e.target.closest(".fd-tab"); if (!b) return;
       COLTAB = b.getAttribute("data-col"); paint();
+    });
+    panel.querySelector(".fd-scroll").addEventListener("click", function (e) {
+      var tr = e.target.closest(".fd-row"); if (!tr) return;
+      var id = tr.getAttribute("data-row");
+      if (OPEN[id]) delete OPEN[id]; else OPEN[id] = 1;
+      paint();
     });
     document.getElementById("fdReset").onclick = function () {
       if (!confirm("Delete every document this prototype has written?")) return;
@@ -812,10 +1064,14 @@ LIVE_SHIM = r"""
           tags: (t.tags || []).join(","), at: now() - 3600 * (2 + i * 3 + j),
           thread: "", section: "", algo: ""
         }));
+        // Embedded on the way in, like every other write - otherwise the
+        // seeded episodes are invisible to near matching and a first visit
+        // could only ever miss.
         jobs.push(put("scripts", keyFor(t.query, 3), {
           query: t.query, minutes: 3, sentences: "(seeded — no model call)",
           created: now() - 3600 * (1 + j), expires: now() + 86400,
-          hits: 1 + ((i + j) % 4), thread: "what that changes next"
+          hits: 1 + ((i + j) % 4), thread: "what that changes next",
+          bucket: "m3:hashing:" + DIMS, vector: embed(normalize(t.query))
         }));
       });
     });
@@ -954,6 +1210,34 @@ STAGE = """
                  text-transform: uppercase; }
   #famDb td em.imp { background: #1e2739; color: #86a9de; }
   #famDb td em.beh { background: #17322c; color: #6bc2a8; }
+  #famDb td em.vec { background: #2b2440; color: #b79ae0; }
+  #famDb .fd-tab.live { border-color: #6bc2a8; color: #cfe9df; }
+  #famDb .fd-row { cursor: pointer; }
+  #famDb .fd-row:hover td { background: #262233; }
+  #famDb .fd-row.open td { background: #262233; color: #f1eef7; }
+  /* The whole document under the row it belongs to. Wraps, unlike the table
+     above it, because the point is to read the values rather than scan them. */
+  #famDb .fd-doc td { white-space: normal; background: #16131f; padding: 9px 12px 11px; }
+  #famDb .fd-doc dl { margin: 0; display: grid; grid-template-columns: 88px 1fr;
+                      gap: 3px 10px; }
+  #famDb .fd-doc dt { color: #7c7391; font-size: 9.5px; letter-spacing: .05em;
+                      text-transform: uppercase; padding-top: 1px; }
+  #famDb .fd-doc dd { margin: 0; color: #dcd6e8; font-size: 10.5px;
+                      word-break: break-word; }
+  #famDb .fd-sum { white-space: normal; background: #1f1b2b; color: #dcd6e8;
+                   padding: 10px 12px; font-size: 11px; line-height: 1.5; }
+  #famDb .fd-log td { white-space: normal; line-height: 1.5; color: #dcd6e8;
+                      padding: 9px 12px; }
+  #famDb .fd-log em { display: block; margin-top: 4px; padding: 0; background: none;
+                      text-transform: none; letter-spacing: 0; font-weight: 400;
+                      font-size: 10px; color: #a79eba; }
+  #famDb .fd-log b { color: #f1eef7; font-weight: 600; }
+  #famDb .fd-tag { display: inline-block; margin-right: 6px; padding: 1px 6px;
+                   border-radius: 4px; font-size: 9px; font-weight: 700;
+                   letter-spacing: .05em; }
+  #famDb .fd-log.exact .fd-tag { background: #17322c; color: #6bc2a8; }
+  #famDb .fd-log.near .fd-tag  { background: #2b2440; color: #c4a6f0; }
+  #famDb .fd-log.miss .fd-tag  { background: #3a2430; color: #de8fa8; }
   #famDb .fd-empty { white-space: normal; padding: 20px; text-align: center; color: #a79eba; }
   #famDb .fd-foot { padding: 10px 14px; border-top: 1px solid #3a3348;
                     display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -978,13 +1262,20 @@ def build() -> pathlib.Path:
     # topics.ALGO_VERSION, so an impression row carries the same stamp the
     # server would write rather than a number invented here.
     sys.path.insert(0, str(HERE.parent))
+    import cache  # noqa: E402
     import topics  # noqa: E402
+    from config import settings  # noqa: E402
 
     shim = (LIVE_SHIM
             .replace("__FIXTURES__", json.dumps(bp.load_fixtures()))
             .replace("__ALGO__", json.dumps(topics.ALGO_VERSION))
             .replace("__TAG_WORDS__", json.dumps(
                 {k: list(v) for k, v in topics.TAG_WORDS.items()}))
+            .replace("__VOLATILE__", json.dumps(sorted(cache.research_words())))
+            .replace("__NEAR__", json.dumps({
+                "threshold": settings.cache_vector_threshold,
+                "overlap": settings.cache_vector_overlap,
+            }))
             .replace("__STATIC_PATHS__", json.dumps(list(STATIC_PATHS))))
 
     at = html.index("<script>")
