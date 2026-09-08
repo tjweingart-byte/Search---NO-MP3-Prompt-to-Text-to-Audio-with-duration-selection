@@ -3176,3 +3176,55 @@ near matching is on, and the bench refuses to print numbers without a header
 saying whether they measure meaning or spelling. Reporting the setting without
 the backend would be §52 in a new place: "vector matching is on" reads like
 semantics, and with no model installed it is not.
+
+## 69. numpy was needed and undeclared, and only a clean install could tell
+
+**The problem.** The first CI run on PR #2 failed six tests, all with
+`ModuleNotFoundError: No module named 'numpy'` at `tts.py:477`. `./dev.sh
+check` had passed 852 tests locally minutes earlier.
+
+**The cause.** `tts.pcm_from_float` and `ChatterboxEngine._synth_blocking`
+import numpy, and `requirements.txt` did not list it. Every machine anyone had
+developed on already had numpy sitting there as somebody else's transitive
+dependency - piper pulled it in when piper was still a dependency, torch pulls
+it on a GPU box. CI installs `requirements.txt` and `pytest` and nothing else,
+so CI is the only environment that is a genuinely clean install, and therefore
+the only one that could see it.
+
+Reproduced before fixing, rather than assumed: hiding numpy behind a
+`sys.meta_path` blocker locally produces the identical six failures.
+
+**Why the fix is a declaration and not a skip.** Marking those tests
+`importorskip("numpy")` would have turned CI green in one line. It would also
+have deleted the only coverage the production voice has on a machine that
+cannot run it - the engine contract tests exist precisely to check the
+Chatterbox adapter with `chatterbox` and `torch` stubbed out, which is the one
+configuration CI can exercise. Green by removing the check is the §51 failure
+in a new costume.
+
+numpy is also not filed under the deep-learning stack, tempting as that is.
+`pcm_from_float` runs on the synthesis path with torch absent, and the stdlib
+is not a substitute: a 3-minute episode at 24 kHz is ~4.3M samples, and
+converting those one at a time in Python would put seconds on the one path this
+product refuses to spend seconds on.
+
+**`pydantic` went in at the same time**, for the same reason one step earlier.
+`app.py` imports `BaseModel` and `Field` directly, and it has always worked
+because fastapi happens to require pydantic. A dependency present by luck is
+one nobody notices losing.
+
+**The general fix: `tests/test_requirements.py`.** Every third-party import in
+the shipped root modules must either be declared in `requirements.txt` or be
+named in `DELIBERATELY_OPTIONAL` with the reason it is safe to be missing.
+Seven are legitimately optional - chatterbox and torch belong in
+`requirements-chatterbox.txt`; onnxruntime and tokenizers are the embedding
+model `embeddings.py` falls back from and says so; h2 and httpx2 are imports
+whose *absence* is what `diagnose_api.py` reports. The list makes an eighth a
+deliberate two-line change instead of an invisible one, and a second test
+fails when a name outlives the import it was written for.
+
+This is the same shape as §54 (`.env.example` disagreeing with `config.py`) and
+§64 (a path resolved against the working directory): the thing was true where
+it was written and false where it ran, and nothing compared the two. It is
+worth noticing that all three were caught by an environment that was *poorer*
+than the developer's, not richer.
