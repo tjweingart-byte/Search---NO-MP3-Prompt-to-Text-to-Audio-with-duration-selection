@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from anthropic_client import build_async_client, describe_http_version, http2_enabled
 from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_words
+import embeddings
 from demo_script import DemoGenerator
 from config import describe_key, settings
 from pipeline import GenerationStats, NotCached, PodcastPipeline
@@ -188,6 +189,17 @@ def _cache_report() -> dict:
     if SCRIPT_CACHE is None:
         return {"enabled": False}
     report = {"enabled": True, "semantic_key": settings.cache_semantic_key}
+    # Near matching is the one cache setting that can serve a *wrong* episode,
+    # so the health report says whether it is on and, if it is, what kind of
+    # embedding is behind it. "vector matching on" reads like semantics; with
+    # no model installed it is lexical, and the difference decides how much to
+    # trust a hit. Reporting one without the other would be the §52 mistake in
+    # a new place.
+    report["near_match"] = settings.cache_vector
+    if settings.cache_vector:
+        report["embedding"] = embeddings.describe()
+        report["threshold"] = settings.cache_vector_threshold
+        report["overlap"] = settings.cache_vector_overlap
     if isinstance(SCRIPT_CACHE, (MemoryScriptCache, SqliteScriptCache)):
         report.update(SCRIPT_CACHE.stats())
     return report

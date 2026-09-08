@@ -3065,3 +3065,114 @@ of a server and useless advice inside a published page. Health now reports
 this build. And the session token lives in `localStorage` rather than the
 HttpOnly cookie the server sets, because a published page has no cookie of its
 own - the single divergence, stated in the badge the shim renders.
+
+## 68. The near-match cache, and the measurement that says the vector is not earning it
+
+**The problem.** The script cache keys on a SHA-256 of `normalize_query`, which
+is an exact token set. It collapses punctuation, word order and filler, and
+nothing else - it does not stem, and it has no idea that "the fall of the roman
+empire" and "why did the roman empire fall" are one episode. Measured on a
+corpus of 20 questions asked three ways each, **9 of 41 re-phrasings found the
+episode already sitting in the cache**. The other 32 paid ~$0.0096 and several
+seconds to write a script that existed.
+
+`cache.canonical_key` was the existing answer and it is off by default for a
+good reason: it puts a model call (~300-500 ms, ~$0.0002) in front of *every*
+request, which is pure overhead on a miss. That is the wrong side of the
+one-sentence spec to spend on.
+
+**The idea, and why it belongs at write time.** Embed the question once when
+its script is stored, and compare locally when the next question arrives. The
+lookup then costs a scan, not a round trip. This is the same trade the whole
+prefetch plan rests on - do the expensive part before the listener is waiting -
+applied to matching rather than generating.
+
+**What was built.** `embeddings.py` (one vector per query, two backends),
+a `vector BLOB` and a `bucket TEXT` column added to `scripts` by the existing
+additive-`ALTER` pattern, `cache.best_match` / `cache.comparable`, a
+`nearest()` on both cache backends, `CACHE_VECTOR` off by default, and
+`tools/bench_vector_cache.py` to measure it.
+
+`bucket` is everything in the cache key **except** the question - duration,
+context, whether it was researched, the model, and the vector space - so a scan
+only ever compares entries that were interchangeable to begin with. Putting the
+vector space in it means switching embedding backend retires the old vectors
+instead of comparing coordinates that no longer mean the same thing.
+
+**sqlite-vec was the obvious thing to reach for and is premature.** Benchmarked
+here, exact cosine KNN over 384-dim vectors takes 0.06 ms at 1,000 vectors,
+0.39 ms at 10,000 and 2.35 ms at 100,000, against a live cache bounded by a
+24-hour TTL. An extension means a loadable binary on every deployment to save a
+number nobody can perceive. The scan is brute force, capped at
+`CACHE_VECTOR_SCAN` rows, and measures 5.5 ms over 400 vectors in pure Python -
+which is the entire miss-path overhead, against 3-5 seconds of generation.
+
+**The guards matter more than the threshold.** A cache miss costs a cent; a
+false hit plays a fluent, confident answer to a question nobody asked, which
+fails the first duty of an episode - *satisfy the thing that brought them* -
+before a single word of it is wrong. So a score has to clear a bar and then
+survive three checks a vector is known to be bad at: numbers must be identical,
+the questions must share a set fraction of their actual words, and they must
+agree about needing today's facts. `comparable()` returns the *reason* rather
+than a bool, for the same cause `research_reason` does.
+
+Two of those guards were written because the bench found the failure, not
+because they seemed wise:
+
+* **"the causes of world war one" and "the causes of world war two" score
+  0.756.** With the threshold at 0.76, four thousandths of cosine were the only
+  thing between a listener and the wrong war. The digit guard could not see it
+  because the numbers were spelled. `embeddings._NUMERALS` folds spelled
+  numbers to digits, which closes it - and pays for itself on the other side,
+  since "week five" now reaches the episode cached for "week 5".
+* **The two halves of the decision disagreed with each other.** The vector
+  folded numerals and the overlap guard did not, so "week five" and "week 5"
+  were one question to one half and two to the other, and a perfect match was
+  refused for having half its words in common. `_token_set` now goes through
+  `embeddings.tokens` too.
+
+**The result, and it is not the one the idea predicted.**
+
+| | re-phrasings found, of 41 | wrong episodes served, of 20 |
+|---|---|---|
+| exact keys only (today) | 9 | 0 |
+| + near matching, shipped defaults | 23 | 0 |
+| the guards alone, cosine ignored | **23** | 0 |
+
+Near matching is worth **+14 of the 32 missed re-phrasings** - a 22% hit rate
+becomes 56% on this corpus. But the third row is the finding: at the safe
+operating point **the vector contributes nothing**. Everything the cosine finds,
+the free token-overlap guard finds too. The cosine only adds recall (26 of 41)
+at an overlap floor of 0.5, and there the margin to the nearest wrong answer
+collapses to 0.024 - a false hit waiting for a question phrased slightly
+differently, which is not a trade worth making for three matches.
+
+That is what a **lexical** embedding is worth here, and the bench says so in
+its own output rather than leaving it to be inferred. The shipped backend is
+signed hashing over words and character 3-grams: no dependency, microseconds,
+deterministic across workers - and permanently unable to know that "car" and
+"automobile" are the same thing. The mechanism is not the problem. The
+embedding is.
+
+**So the defaults are conservative on purpose.** `CACHE_VECTOR=0`.
+`CACHE_VECTOR_THRESHOLD=0.68` and `CACHE_VECTOR_OVERLAP=0.6` are the
+highest-recall setting at which *every* must-not-collapse pair is refused by a
+guard rather than by a threshold - so there is no near miss waiting for a query
+slightly unlike the ones measured. The bench prints a `margin` column for
+exactly that distinction: zero false hits is not the same as being safe.
+
+**What is untested.** `embeddings._OnnxEmbedder` loads a real sentence model
+from `~/.fam/embed`, on the same reasoning as the voice models - it ships with
+the app rather than billing per call. **No model exists on this machine, so
+that path has never produced a vector.** It is in the same position the Piper
+ONNX path was in before `verify_voice.py`: written, plausible, unproven. The
+honest next step is not more tuning of the lexical backend - it is installing a
+model, re-running the bench, and watching whether the "guards alone" row stops
+matching the row above it. That single line is how anyone will know the
+embedding started earning its place.
+
+`describe()` reports which backend is live, `/api/health` carries it whenever
+near matching is on, and the bench refuses to print numbers without a header
+saying whether they measure meaning or spelling. Reporting the setting without
+the backend would be §52 in a new place: "vector matching is on" reads like
+semantics, and with no model installed it is not.

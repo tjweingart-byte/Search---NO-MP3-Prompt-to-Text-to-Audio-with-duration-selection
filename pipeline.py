@@ -25,7 +25,8 @@ from typing import AsyncIterator, Optional
 import time
 
 from audio_utils import PaceController, pcm_duration, silence, streaming_wav_header
-from cache import ScriptCache, build_cache, cache_key, canonical_key, is_shareable, ttl_for
+from cache import (ScriptCache, build_cache, cache_key, canonical_key, is_shareable,
+                   key_bucket, ttl_for)
 from config import settings
 from script_generator import EpisodePlan, ScriptGenerator, ScriptNotes, count_words
 from tts import TTSEngine, build_engine
@@ -134,6 +135,12 @@ class GenerationStats:
     truncated: bool = False
     topups: int = 0
     #: "hit" | "miss" | "off" - whether this episode reused a shared script.
+    #: "exact" | "near" | "" - *how* a hit was found. A near hit replayed an
+    #: episode written for a differently-worded question, which is worth being
+    #: able to see: it is the one kind of hit that can be wrong.
+    match: str = ""
+    #: Cosine of a near hit, 0.0 otherwise.
+    match_score: float = 0.0
     answered_first: bool = False
     handover_seconds: float = 0.0
     cache: str = "off"
@@ -172,6 +179,8 @@ class GenerationStats:
             "answered_first": self.answered_first,
             "handover_seconds": round(self.handover_seconds, 2),
             "cache": self.cache,
+            "match": self.match,
+            "match_score": round(self.match_score, 3),
             "synth_seconds": round(self.synth_seconds, 2),
             "min_headroom": round(self.min_headroom, 1) if self.min_headroom < 999 else None,
             "starved": self.starved,
@@ -407,6 +416,17 @@ class PodcastPipeline:
             canonical = await canonical_key(plan.query, self.generator.client)
         return cache_key(plan.query, plan.minutes, canonical, plan.context, plan.search)
 
+    def _bucket(self, plan: EpisodePlan) -> str:
+        """The set of entries this episode could stand in for.
+
+        Empty when the episode is nobody else's business - an attachment makes
+        it personal, and a personal episode must not be findable by anyone,
+        including by being near something.
+        """
+        if not self.cache or plan.attachments or not settings.cache_vector:
+            return ""
+        return key_bucket(plan.minutes, plan.context, plan.search)
+
     async def thread_for(self, plan: EpisodePlan) -> str:
         """The go-deeper thread of an episode that has already been generated.
 
@@ -438,12 +458,32 @@ class PodcastPipeline:
         # --- Cache: has anyone already asked for this? --------------------
         shareable = is_shareable(plan.query)
         key = await self._cache_key(plan) if shareable else ""
+        bucket = self._bucket(plan) if shareable else ""
         if self.cache and shareable:
             cached = self.cache.get(key)
             if cached:
+                stats.match = "exact"
+            elif bucket and not plan.cached_only:
+                # Nobody has asked this in these words. Someone may have asked
+                # it in different ones - which is most of what the cache misses,
+                # since the key is an exact token set and people do not phrase
+                # questions the same way twice.
+                #
+                # Not for `cached_only`: Explore offers a specific episode that
+                # a listener has already seen the title of, and handing them a
+                # near neighbour instead would be answering a question they did
+                # not tap. A replay surface has to replay.
+                near = self.cache.nearest(bucket, plan.query)
+                if near:
+                    cached = self.cache.get(near[0])
+                    if cached:
+                        key = near[0]
+                        stats.match, stats.match_score = "near", near[1]
+                        log.info("near cache hit %.3f for %r", near[1], plan.query)
+            if cached:
                 stats.cache = "hit"
                 stats.thread = self.cache.thread(key)
-                log.info("cache hit for %r (%d min)", plan.query, plan.minutes)
+                log.info("cache %s hit for %r (%d min)", stats.match, plan.query, plan.minutes)
                 # Replaying the same sentences through the same controller
                 # reproduces the episode exactly - and costs zero API tokens.
                 async for chunk in self._speak(self._start(_replay(cached)), pace, stats):
@@ -497,7 +537,8 @@ class PodcastPipeline:
 
         if self.cache and self.cache_writes and shareable and stats.script:
             ttl = ttl_for(plan.query)
-            self.cache.put(key, stats.script, ttl, plan.query, stats.thread, plan.minutes)
+            self.cache.put(key, stats.script, ttl, plan.query, stats.thread,
+                           plan.minutes, bucket)
             log.info("cached %d sentences for %r (ttl %ds)", len(stats.script), plan.query, ttl)
 
         async for chunk in self._finish(pace, stats):

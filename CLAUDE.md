@@ -41,6 +41,12 @@ text when a prediction is wrong — not audio compute or bandwidth. The existing
 script cache (`cache.py`) is already the right place to put pre-generated
 scripts; it stores scripts, not audio, for exactly this reason.
 
+The same "do it before the listener is waiting" logic is why matching happens
+at write time too: `CACHE_VECTOR` embeds a question once when its script is
+stored and compares locally on the next lookup, instead of `CACHE_SEMANTIC_KEY`'s
+model call in front of every request. Off by default, and PROBLEMS.md §68 says
+plainly what it is and is not currently buying.
+
 Corollary: **latency is answered by starting earlier, never by filling the
 gap.** The cold open tried to fill it and was removed. Prefetch on the browse
 surfaces; on search, keep the work small enough that there is no gap to fill.
@@ -325,6 +331,14 @@ another rule.
   does.
 - **How much to prefetch?** Every speculative script costs money; every one not
   fetched costs a wait.
+- **Is a local embedding model worth installing?** The near-match cache
+  (PROBLEMS.md §68) is built, measured and off by default. It raises the share
+  of re-phrasings that find an existing episode from 22% to 56% on a measured
+  corpus - but the bench's own control line shows the *vector* earning none of
+  that: a free token-overlap guard finds everything the lexical embedding
+  finds. A real sentence model in `~/.fam/embed` is the only thing that changes
+  that answer, and it is the same trade as the voices - ship a model with the
+  app, or pay a service per call. Nobody has run one yet.
 
 ## How to ship a change (standing instruction)
 
