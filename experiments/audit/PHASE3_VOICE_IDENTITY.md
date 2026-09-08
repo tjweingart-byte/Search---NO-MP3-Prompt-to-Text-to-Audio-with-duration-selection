@@ -185,6 +185,22 @@ counsel.
 **Step 1 is yours.** No reference audio is sourced, invented or downloaded by
 this repository.
 
+## Dry run before the real one
+
+The runner was exercised end to end against a stubbed Chatterbox and torch,
+because it had never actually executed and the previous bake-off was killed by
+a fault in the harness rather than in the thing being measured. Confirmed:
+
+* **one model load** serves all nine clips (3 identities x 3 passages)
+* **three distinct seeds, nine applications** - one seed per passage, shared by
+  every identity, so no voice can win on a luckier sample
+* the model receives the **working (equalised) reference**, asserted in the stub
+* the settings dict reaching `generate()` is exactly the six pinned values
+* all nine clips written, labelled A/B/C, exit 0
+* **no speaker name in `listen.html`, `choices.md` or `progress.log`** - only
+  `KEY.json`, which is the reveal
+* letters differ per passage, so Voice A is a different identity each time
+
 ## Constraints held
 
 No production code modified. No GPU rented. No T3 rewrite, no Kokoro latency
