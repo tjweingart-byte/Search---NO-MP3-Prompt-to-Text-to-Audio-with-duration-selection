@@ -231,9 +231,19 @@ class PodcastPipeline:
             try:
                 async for sentence in sentences:
                     await queue.put(sentence)
+            except asyncio.CancelledError:
+                # `close()` cancelled us. The sentinel is deliberately NOT sent
+                # here, and this must not be a `finally`: on the close path
+                # nobody is draining, so a blocking put on a full queue would
+                # suspend, swallow the cancellation that `close()` just
+                # delivered, and `close()` would wait for a task that can never
+                # finish. Re-raising ends the task, which is what `close()`
+                # is waiting for. Nothing is lost - the sentinel only tells a
+                # consumer the stream ended, and there is no consumer left.
+                raise
             except Exception as exc:  # surfaced to the consumer, never swallowed
                 await queue.put(exc)
-            finally:
+            else:
                 await queue.put(None)
 
         return _Pump(queue, asyncio.create_task(produce()))
@@ -270,22 +280,6 @@ class PodcastPipeline:
         """
         queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_DEPTH)
 
-        async def offer(item) -> None:
-            """Put on the bounded queue without a blocking `Queue.put`.
-
-            A task suspended inside `Queue.put` on a full queue was observed
-            not to resume when cancelled: it stays in `cancelling` forever and
-            `_Pump.close` never returns. `asyncio.sleep` is always cancellable,
-            and 10ms of polling is nothing beside a synthesis call; the queue
-            stays bounded either way. `_start` still has the blocking form -
-            see `test_closing_a_blocked_pump_hangs_on_legacy_and_not_on_phase6`.
-            """
-            while True:
-                try:
-                    queue.put_nowait(item)
-                    return
-                except asyncio.QueueFull:
-                    await asyncio.sleep(0.01)
 
         async def produce() -> None:
             """Reader, buffer and assembler, with the reader owned explicitly.
@@ -320,21 +314,21 @@ class PodcastPipeline:
                                                           ASSEMBLER_TICK)
                     except asyncio.TimeoutError:
                         for chunk in assembler.due():
-                            await offer(chunk)
+                            await queue.put(chunk)
                         continue
                     if sentence is None:
                         for chunk in assembler.flush():
-                            await offer(chunk)
+                            await queue.put(chunk)
                         break
                     for chunk in assembler.offer(sentence):
-                        await offer(chunk)
-                await offer(None)
+                        await queue.put(chunk)
+                await queue.put(None)
             except asyncio.CancelledError:
                 # Closed early. No sentinel: nobody is draining, and sending
                 # one would only be another chance to block.
                 raise
             except Exception as exc:  # surfaced to the consumer, never swallowed
-                await offer(exc)
+                await queue.put(exc)
             finally:
                 reader.cancel()
 
@@ -369,14 +363,17 @@ class PodcastPipeline:
                 if stats.truncated:
                     break
         finally:
-            # Cancelled, deliberately not awaited - which is where this
-            # diverges from `_speak`. `_Pump.close()` awaits the producer, and
-            # a producer cancelled mid-flight does not reliably unwind: it sits
-            # in `cancelling` with its wakeup already resolved and never runs
-            # again, so `close()` never returns. `_speak` reaches that state
-            # too (a truncated episode with the producer still mid-stream);
-            # this path simply does not wait for it. Nothing is lost: the
-            # producer writes only to a queue nobody will read again.
+            # Cancelled, not awaited - unlike `_speak`, which now safely calls
+            # `_Pump.close()`.
+            #
+            # The `_start` defect Step 5 fixed is not this: switching this line
+            # to `await pump.close()` still hangs on a truncated episode at
+            # some lengths, so `_start_phase6`'s producer has an unwind problem
+            # of its own that is not the sentinel. It is unresolved, it is
+            # tracked as the first item of Step 6, and it cannot reach a
+            # listener while this path is unreachable. Cancelling without
+            # awaiting is what Step 4 measured, and it is kept until the cause
+            # is found rather than papered over with a timeout.
             pump.task.cancel()
 
     async def _speak_chunk(

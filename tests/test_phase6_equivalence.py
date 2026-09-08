@@ -440,38 +440,22 @@ def test_a_slow_consumer_cannot_stop_the_phase6_reader():
         "legacy did not block, so this test proves nothing about the difference")
 
 
-def test_closing_a_blocked_pump_hangs_on_legacy_and_not_on_phase6():
-    """A latent production defect, characterised rather than fixed here.
-
-    `_Pump.close` cancels the producer, but `_start`'s producer ends with
-    `finally: await queue.put(None)`. Cancellation is delivered once; that
-    `finally` then awaits a full queue nobody will drain, swallowing the
-    cancellation, so `await self.task` never returns. `wait_for` does not
-    reveal it either - the swallowed cancellation makes `close` return
-    normally - which is why this measures the clock.
-
-    Reachable wherever `_speak` leaves early with the producer blocked: a
-    truncated episode, a failure mid-stream, and `_answer_first`, which closes
-    its instant pump early by design.
-
-    Step 4 may not change the shipped path, so `_start` keeps the defect and it
-    is reported. `_start_phase6` does not reproduce it: its producer re-raises
-    `CancelledError` instead of sending a sentinel nobody is waiting for. That
-    divergence is deliberate, and it is the one behavioural difference in this
-    step that is an improvement rather than a cost.
-    """
-    async def probe(path):
+def test_closing_a_blocked_legacy_pump_no_longer_hangs():
+    """Step 5 fixed this on the shipped path; the detail lives in
+    `tests/test_pump_close.py`. Kept here so the equivalence file notices if
+    the two paths diverge on teardown again."""
+    async def probe():
         pipeline = PodcastPipeline(generator=None, engine=ENGINE, cache=None)
         source = ScriptedGenerator([sized(12) for _ in range(60)]
                                    ).stream_sentences(None)
-        pump = (pipeline._start(source) if path == "legacy"
-                else pipeline._start_phase6(source))
+        pump = pipeline._start(source)
         await pump.next()
         await asyncio.sleep(0.2)
-        return await _close(pump, budget=0.4)
+        elapsed = await _close(pump, budget=0.4)
+        return elapsed, pump.task.done()
 
-    assert asyncio.run(probe("legacy")) >= 0.4, "legacy stopped hanging - update this"
-    assert asyncio.run(probe("phase6")) < 0.1, "Phase 6 inherited the hang"
+    elapsed, done = asyncio.run(probe())
+    assert elapsed < 0.4 and done
 
 
 # ==========================================================================
@@ -518,8 +502,12 @@ def test_the_flag_still_selects_nothing():
         importlib.reload(config)
 
 
-def test_legacy_start_is_byte_for_byte_what_trunk_shipped():
-    """The safety rule of this step, checked rather than promised."""
+def test_legacy_start_differs_from_trunk_only_by_the_step_5_fix():
+    """`_start` was byte-identical to trunk through Step 4. Step 5 changed it
+    on purpose - and only in one place: the sentinel moved out of `finally`,
+    so a cancelled producer can no longer re-block delivering it. Everything
+    else about the method, including the queue and its depth, is untouched.
+    """
     import subprocess
 
     def method(source: str, name: str) -> str:
@@ -534,5 +522,18 @@ def test_legacy_start_is_byte_for_byte_what_trunk_shipped():
         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).stdout
     if not trunk:
         pytest.skip("trunk revision not available in this checkout")
-    current = open(pipeline_module.__file__).read()
-    assert method(current, "_start") == method(trunk, "_start")
+
+    before = method(trunk, "_start")
+    after = method(open(pipeline_module.__file__).read(), "_start")
+
+    # The defect, gone.
+    assert "finally:\n                await queue.put(None)" in before
+    assert "finally:" not in after
+    # The fix, present.
+    assert "except asyncio.CancelledError:" in after
+    assert "else:\n                await queue.put(None)" in after
+    # Everything up to the producer is identical, queue depth included.
+    head = "        queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_DEPTH)"
+    assert before.split(head)[0] == after.split(head)[0]
+    assert "async for sentence in sentences:\n                    await queue.put(sentence)" in after
+    assert "except Exception as exc:" in after and "await queue.put(exc)" in after
