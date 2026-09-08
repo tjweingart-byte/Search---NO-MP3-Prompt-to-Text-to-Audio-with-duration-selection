@@ -7,6 +7,8 @@ Put the three recordings in here **under whatever names they already have** -
 nothing renames, moves or converts them - then:
 
     python tools/check_reference_audio.py experiments/references --adopt
+    python tools/equalise_references.py experiments/references
+    python tools/check_reference_audio.py experiments/references
 
 That writes `sources.json`, mapping neutral ids to the real files, and creates
 a rights template for each. The assignment is shuffled rather than
@@ -52,7 +54,7 @@ each voice while feeding the other two the same. Make them the same length.
 
 | | |
 |---|---|
-| duration | **12-15 seconds**, and **all three within 2 seconds of each other** |
+| duration | **12-15 seconds**. They need not match exactly - `tools/equalise_references.py` derives equal-length working copies without touching the originals |
 | format | any file `librosa` can open - **wav, m4a, mp3, flac**. No conversion needed; Chatterbox calls `librosa.load` itself |
 | sample rate | 24 kHz or higher (44.1/48 kHz is ideal). Never below 16 kHz |
 | channels | mono preferred; stereo is downmixed automatically |

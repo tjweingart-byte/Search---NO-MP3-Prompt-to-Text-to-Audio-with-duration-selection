@@ -77,8 +77,27 @@ to do with the voice. *Mitigation:* record all three in similar conditions,
 unprocessed, and the checker reports each one's noise floor and dynamic range
 so a mismatched recording is visible before it is used.
 
-**3. Length asymmetry. Removable.** Covered above. *Mitigation:* the checker
-fails the set if the references differ by more than 2 seconds.
+**3. Length asymmetry. Removable, and removed.** Covered above. The checker
+fails a set differing by more than 2 seconds, and
+`tools/equalise_references.py` fixes it non-destructively:
+
+* **Crop, never pad.** Padding with silence would put non-speech into the very
+  conditioning being equalised - the embedding averages over the whole file, so
+  appended silence dilutes the speaker's frames, and dilutes the shortest
+  recording most. That is the opposite of the intended effect.
+* **Crop from the head.** The s3gen reference reads the first 10 s and the T3
+  prompt the first 6 s, so a head-anchored crop leaves both *bit-identical* to
+  what the original would have produced and changes only the untruncated
+  speaker embedding - precisely the one that needed equalising. A centre or
+  tail crop would shift all three.
+* **Target the shortest recording.** The only duration reachable without
+  padding. A longer target is refused.
+* **Cut at a zero crossing** within 10 ms, so the file ends without a step
+  discontinuity. No fade, no gain change, no padding: samples are dropped and
+  nothing else.
+* **Originals are untouched.** Working copies land in `references/working/`
+  with a `MANIFEST.json` recording which original each came from and how much
+  was removed; `sources.json` is repointed at the working copies.
 
 **4. Sampling is stochastic. Removable, and removed.**
 `temperature=0.8` with `min_p` and `top_p` means identical settings do not give
@@ -157,10 +176,11 @@ counsel.
 1. Obtain three reference recordings and put them in
    `experiments/references/` under any names.
 2. `python tools/check_reference_audio.py experiments/references --adopt`
-3. Fill in the three `.rights.json` files.
-4. `python tools/check_reference_audio.py experiments/references`
-5. `python tools/voice_identity_bakeoff.py --device mps --out experiments/results/identity`
-6. Open `listen.html`, record choices in `choices.md`, then open `KEY.json`.
+3. `python tools/equalise_references.py experiments/references`
+4. Fill in the three `.rights.json` files.
+5. `python tools/check_reference_audio.py experiments/references`
+6. `python tools/voice_identity_bakeoff.py --device mps --out experiments/results/identity`
+7. Open `listen.html`, record choices in `choices.md`, then open `KEY.json`.
 
 **Step 1 is yours.** No reference audio is sourced, invented or downloaded by
 this repository.
