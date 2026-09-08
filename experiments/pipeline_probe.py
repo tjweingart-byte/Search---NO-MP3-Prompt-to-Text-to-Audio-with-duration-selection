@@ -39,6 +39,14 @@ class EventLog:
         self.events.append({"name": name, "at": at, "detail": detail or {}})
         return at
 
+    def now(self) -> float:
+        """The clock, without leaving a mark.
+
+        For sampling something continuous - queue depth - where one named event
+        per sample would bury the named ones it sits between.
+        """
+        return time.perf_counter() - self.started
+
     def cannot(self, name: str, why: str) -> None:
         """Declare a stage unmeasurable, with the reason, before anyone asks."""
         self.unavailable[name] = why

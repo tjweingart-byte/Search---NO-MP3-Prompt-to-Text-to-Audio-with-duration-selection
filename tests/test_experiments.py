@@ -518,10 +518,25 @@ def test_actual_cost_uses_real_token_counts():
 # The engine does not touch production
 # --------------------------------------------------------------------------
 def test_the_experiment_package_never_writes_to_the_script_cache():
+    """No experiment may put a script into the shared cache.
+
+    The check used to be a bare search for `.put(`, which also banned
+    `asyncio.Queue.put` - and the concurrent pipeline needs a queue, because
+    production uses one. So the receiver is named instead: a `.put(` is allowed
+    only on something called a queue, and importing the production cache module
+    at all is refused.
+    """
+    import re
+
     root = pathlib.Path(__file__).resolve().parent.parent / "experiments"
     for path in root.rglob("*.py"):
         text = path.read_text()
-        assert ".put(" not in text, f"{path.name} appears to write to a cache"
+        assert not re.search(r"^\s*(?:from cache import|import cache\b)", text,
+                             re.M), f"{path.name} imports the production cache"
+        for receiver in re.findall(r"(\w+)\.put\(", text):
+            assert receiver.lower().endswith("queue"), (
+                f"{path.name} calls {receiver}.put(...) - if that is a cache, "
+                "an experiment must not write to it")
 
 
 def test_the_real_generator_disables_the_cache():

@@ -295,3 +295,97 @@ Every artefact carries `is_production_latency: false` and the string *RTX 4090 /
 DEVELOPMENT BENCHMARK*: one machine, one request at a time, no concurrency and
 no queueing. The two numbers to read first are `search_to_first_listen` and
 `search_to_complete_audio` in the cold run.
+
+---
+
+# Phase 5 — the concurrent pipeline: Claude and Chatterbox at once
+
+Design and reasoning: `experiments/audit/PHASE5_CONCURRENT_PIPELINE.md`. This
+section is the procedure only.
+
+Phase 4 measured the three stages **in sequence** — it found the first
+speakable chunk at ~2.4s and then waited for `claude_complete` before
+synthesising. Phase 5 measures FAM's actual architecture: the first chunk goes
+to the voice while the model is still writing. The overlap is **asserted**; a
+run that did not overlap writes its results and exits non-zero.
+
+## 1. On the Mac, free
+
+    git pull
+    python3 -m pytest tests/test_concurrent_pipeline.py -q     # 19 tests
+    python3 tools/streaming_4090_experiment.py --dry-run --runs 1
+
+The dry run exercises the whole path — the same queue, the same assertions, the
+same audio writing — with no model, no GPU and no API calls. It writes to a
+directory named `streaming_STUB_<stamp>` and stamps every artefact **NOT A
+RESULT**.
+
+## 2. Get the new code onto the pod
+
+**A pod that ran Phase 4 is running an older tarball** and does not have
+`experiments/concurrent_pipeline.py`. Gate 3 refuses in that case rather than
+running something stale. Re-pack and copy across:
+
+    python3 tools/pack_for_pod.py \
+      --reference experiments/references/working/reference_3.wav
+    scp fam-pod.tar.gz root@<pod>:/workspace/
+    ssh root@<pod>
+    cd /workspace && tar xzf fam-pod.tar.gz && cd FAM
+
+The weights under `HF_HOME` and the installed packages survive; only the source
+tree is replaced, so this costs seconds rather than the ten-minute install.
+
+## 3. The whole experiment, as one command
+
+    export EXA_API_KEY='...'
+    export ANTHROPIC_API_KEY='...'
+    bash tools/pod_streaming.sh experiments/references/working/reference_3.wav
+
+Gates, in cost order:
+
+| gate | cost | what it settles |
+|---|---|---|
+| 1. RTX 4090 | free, instant | the same card as every earlier run |
+| 2. both keys exported | free, instant | the run will not silently become a stubbed one |
+| 3. voice present, and the tarball is current | free, instant | an old tree is caught before the install, not after the run |
+| 4. **the stub run overlaps** | free, ~5s | if the harness is wrong, it is wrong here rather than on the meter |
+| 5. dependencies | seconds on a configured pod | a no-op after Phase 4 |
+| 6. preflight | ~$0.006 | one **real** Exa search, one **real** Claude call, the watermarker, and production's chunker |
+
+Then the run itself: cold, then warm.
+
+## 4. Reading the result
+
+The first thing in `ANALYSIS.md` is **"Did it actually overlap?"** — a yes with
+the number of seconds by which TTS beat `claude_complete`, or a no with exactly
+which assertion failed.
+
+Then, per run: `claude_ttft`, `claude_to_first_chunk`,
+`first_chunk_tts_seconds`, **`search_to_first_listen`**, `claude_total`,
+`search_to_complete_audio`, `overlap_seconds`, `backpressure_seconds`; whether
+synthesis kept ahead of playback and by how much headroom; and a per-chunk
+table of words, ready / start / done, audio duration, generation time, realtime
+factor and queue wait.
+
+Compare `search_to_first_listen` against the Phase 4 sequential run. That
+difference is what the architecture is worth, and it costs no extra compute —
+only a different order.
+
+**Read `claude_total` against Phase 4's too.** Chatterbox's T3 stage is a Python
+autoregressive loop holding the GIL, so the overlapped Claude stream may run
+slower than the sequential one. That is a real cost of the architecture, and it
+should be read rather than assumed away.
+
+## 5. Getting it back, then terminating
+
+    scp -r root@<pod>:/workspace/FAM/experiments/results/streaming_4090_<stamp> \
+        experiments/results/
+
+    open experiments/results/streaming_4090_<stamp>/ANALYSIS.md
+    afplay experiments/results/streaming_4090_<stamp>/audio/cold_episode.wav
+
+    git add -f experiments/results/streaming_4090_<stamp>
+    git commit -m "Concurrent pipeline on a 4090: Claude and Chatterbox at once"
+    git push -u origin claude/fam-repo-inventory-5lznba
+
+Copy first, destroy second, rotate the keys third.
