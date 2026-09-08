@@ -267,6 +267,13 @@ class Settings:
     # a pace. Opening a tab fires several at once, so anything that throttles
     # a burst throttles correct use. 0 switches it off.
     read_limit_per_window: int = _env_int("READ_LIMIT_PER_WINDOW", 60)
+    # How much *audio* must exist before the response starts. A quantity, not
+    # a delay: at TARGET_WPM this is 3.75 words, so any ordinary opening
+    # sentence satisfies it on the first chunk and it costs nothing. It exists
+    # because models stream in bursts, and because it is the last point at
+    # which a failed generation can still become an HTTP error rather than a
+    # silent empty episode. See app.PREROLL_SECONDS.
+    preroll_seconds: float = _env_float("PREROLL_SECONDS", 1.5)
 
     def __post_init__(self) -> None:
         """Refuse a configuration that names a pipeline that does not exist.
@@ -277,6 +284,16 @@ class Settings:
         correct outcome: a misconfigured deployment that serves the wrong
         generation path is worse than one that refuses to serve.
         """
+        if self.preroll_seconds <= 0:
+            # Zero is not "no preroll", it is a broken contract: on `fmt=wav`
+            # the 44-byte header alone satisfies a zero gate, the
+            # empty-episode guard then fires, and a perfectly good episode
+            # comes back as a 502.
+            raise ValueError(
+                f"PREROLL_SECONDS={self.preroll_seconds} must be greater than "
+                "zero. At zero a streamed WAV's header alone satisfies the "
+                "gate and every episode is refused as empty."
+            )
         if self.streaming_pipeline not in STREAMING_PIPELINES:
             raise ValueError(
                 f"STREAMING_PIPELINE={self.streaming_pipeline!r} is not a "
