@@ -29,6 +29,7 @@ from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_wo
 import embeddings
 from demo_script import DemoGenerator
 from config import DEFAULT_PIPELINE, describe_key, settings
+from research import report as research_report
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import attachments as attachments_mod
@@ -356,6 +357,11 @@ async def health() -> dict:
         "min_minutes": settings.min_minutes,
         "max_minutes": settings.max_minutes,
         "tts": engine_report(),
+        # Who does the looking on a researched episode, and whether that
+        # backend can actually run. `unavailable: true` means researched
+        # episodes will fail rather than quietly search another way - worth
+        # seeing on a tab rather than discovering in a log.
+        "research": research_report(),
         # Which streaming architecture this process is actually running, and
         # whether that was chosen or inherited. A deployment that has been
         # rolled back to `legacy` by hand looks identical to one that has not

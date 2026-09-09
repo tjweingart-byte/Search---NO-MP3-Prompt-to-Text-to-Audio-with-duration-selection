@@ -115,6 +115,30 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+#: How a researched episode gets its facts.
+#:
+#: `claude` gives the model Anthropic's server-side `web_search` tool, so it
+#: searches while it writes: one call, one credential, and the searching
+#: happens inside the model's turn.
+#:
+#: `exa` retrieves first and hands Claude an evidence packet to read. Two
+#: calls and a second credential, but the retrieval is a bounded, timed step
+#: this codebase can measure - `research.py` keeps the call and the packet
+#: byte-for-byte as the manual benchmark measured them, so the numbers already
+#: taken by hand stay comparable.
+#:
+#: `claude` is the default because it needs no EXA_API_KEY: a deployment that
+#: has never heard of this setting keeps working exactly as it does today. A
+#: value outside this tuple is refused - at import by `Settings.__post_init__`,
+#: and again at retrieval time by `research.retrieve` - rather than falling
+#: back to either. A deployment that asked for Exa and silently got the model's
+#: own search would be measuring one thing while believing another.
+RESEARCH_BACKENDS = ("claude", "exa")
+
+#: What a deployment gets when it says nothing. Named rather than repeated as a
+#: literal, for the same reason as DEFAULT_PIPELINE.
+DEFAULT_RESEARCH_BACKEND = "claude"
+
 #: Which generation pipeline a request runs through.
 #:
 #: `phase6` is production and is `DEFAULT_PIPELINE` below: a character-bounded
@@ -222,6 +246,20 @@ class Settings:
     # stopped buying anything - research would have nothing left to speak into
     # - so the gap is accepted and logged rather than hidden.
     answer_first_max_share: float = _env_float("ANSWER_FIRST_MAX_SHARE", 0.8)
+    # claude | exa - see RESEARCH_BACKENDS above. Only consulted when an
+    # episode is actually being researched; an unresearched one costs nothing
+    # either way.
+    research_backend: str = field(
+        default_factory=lambda: os.environ.get(
+            "RESEARCH_BACKEND", DEFAULT_RESEARCH_BACKEND).strip().lower())
+    # The three numbers the manual Exa benchmark hard-coded, which are exactly
+    # the knobs worth sweeping. Their defaults reproduce that run: 8 results
+    # fetched, the top 3 in the packet, 2 highlights each. Raising
+    # `exa_packet_sources` buys more evidence and costs prompt tokens on every
+    # researched episode; nobody has measured where that stops paying.
+    exa_num_results: int = _env_int("EXA_NUM_RESULTS", 8)
+    exa_packet_sources: int = _env_int("EXA_PACKET_SOURCES", 3)
+    exa_highlights_per_source: int = _env_int("EXA_HIGHLIGHTS_PER_SOURCE", 2)
     # legacy | phase6 - see STREAMING_PIPELINES above.
     #
     # **phase6 is production.** It defaulted to `legacy` until the Phase 6 path
@@ -387,6 +425,23 @@ class Settings:
                 f"STREAMING_PIPELINE={self.streaming_pipeline!r} is not a "
                 f"pipeline. Use one of: {', '.join(STREAMING_PIPELINES)}."
             )
+        if self.research_backend not in RESEARCH_BACKENDS:
+            raise ValueError(
+                f"RESEARCH_BACKEND={self.research_backend!r} is not a research "
+                f"backend. Use one of: {', '.join(RESEARCH_BACKENDS)}."
+            )
+        for name in ("exa_num_results", "exa_packet_sources",
+                     "exa_highlights_per_source"):
+            if getattr(self, name) < 1:
+                raise ValueError(
+                    f"{name.upper()}={getattr(self, name)} must be at least 1. "
+                    "Zero would send Claude an empty evidence packet and call "
+                    "it research.")
+        if self.exa_packet_sources > self.exa_num_results:
+            raise ValueError(
+                f"EXA_PACKET_SOURCES={self.exa_packet_sources} exceeds "
+                f"EXA_NUM_RESULTS={self.exa_num_results}: the packet cannot "
+                "hold more sources than were fetched.")
 
     @property
     def bytes_per_second(self) -> int:

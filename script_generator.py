@@ -15,6 +15,7 @@ Two things matter here:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import re
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from typing import AsyncIterator
 from anthropic_client import build_async_client
 from cache import research_reason
 from config import settings
+
+import research as research_mod
 
 log = logging.getLogger(__name__)
 
@@ -251,6 +254,12 @@ class ScriptNotes:
     #: in the script - it exists to fill the Go Deeper suggestion.
     #: a listener would ask for. Empty when the model did not name one.
     thread: str = ""
+    #: What retrieval did, when a backend retrieved: sources, seconds, cost,
+    #: packet size. Written to and never read back by the writing path -
+    #: instrumentation must not be able to change what a listener hears - and
+    #: surfaced so a researched episode can be costed and its sources judged.
+    #: Empty dict on the `claude` backend, where nothing was retrieved.
+    research: dict = dataclasses.field(default_factory=dict)
 
 
 def extract_thread(text: str) -> str:
@@ -291,6 +300,19 @@ class EpisodePlan:
     #: research underneath: the listener never waits, and what covers the wait
     #: is the answer rather than filler.
     role: str = ""
+    #: Retrieved evidence for a researched episode, when the `exa` backend
+    #: fetched it. Empty on the `claude` backend, where the model searches
+    #: inside its own turn and there is nothing to carry. Its presence is what
+    #: `_request_kwargs` reads to decide whether to attach the search tool -
+    #: the two are alternatives, never both, or the model would search on top
+    #: of evidence it was already given.
+    #:
+    #: Last on purpose. This class is built positionally below, so a field
+    #: inserted anywhere earlier silently shifts every argument after it -
+    #: which is exactly what adding this one did the first time, turning
+    #: `cached_only` into `evidence` and `attachments` into `cached_only`.
+    #: The constructor is keyword-based now, and this stays last anyway.
+    evidence: str = ""
 
     @property
     def images(self) -> list:
@@ -373,9 +395,19 @@ def plan_episode(
         use_search = bool(search)
         log.info("SEARCH %-3s %r - the request asked for it explicitly",
                  "yes" if use_search else "no", query)
+    # Keywords, not positions. Ten positional arguments is a landmine: adding
+    # a field in the middle shifts everything after it and the result is a
+    # plan that looks plausible and is wrong in a different place each time.
     return EpisodePlan(
-        query, minutes, target_seconds, word_budget, sections, context,
-        use_search, cached_only, tuple(attachments or ()),
+        query=query,
+        minutes=minutes,
+        target_seconds=target_seconds,
+        word_budget=word_budget,
+        sections=sections,
+        context=context,
+        search=use_search,
+        cached_only=cached_only,
+        attachments=tuple(attachments or ()),
     )
 
 
@@ -433,6 +465,27 @@ and do not claim anything about a document beyond what is in it.
 {blocks}
 {photo_line}"""
 
+    evidence = ""
+    if plan.evidence:
+        evidence = f"""
+Someone has already searched the web for this and pulled out the passages
+below. They are your source for anything current: read them and use what they
+actually say. Do not claim anything they do not support, and do not pretend to
+have looked anything else up.
+
+Where they contradict what you recall, they win and you say so plainly and in
+passing - "that figure has since moved to X" - and carry on. Where they are
+thin or silent on part of the question, answer that part from what you know and
+do not stretch a source to cover it.
+
+Never read a source's title, number or URL aloud. This is someone listening,
+not reading a citation list.
+
+<evidence>
+{plan.evidence}
+</evidence>
+"""
+
     follow_up = ""
     if plan.context:
         follow_up = f"""
@@ -448,7 +501,7 @@ straight into the narrower thing they asked for and stay on it.
 <request>{plan.query}</request>
 
 It is currently {now_line()}. Prefer the newest information you can establish.
-{attached}{follow_up}{ROLE_BRIEFS.get(plan.role, "")}
+{attached}{evidence}{follow_up}{ROLE_BRIEFS.get(plan.role, "")}
 You have about {plan.minutes} minute{"s" if plan.minutes != 1 else ""} - roughly
 {budget} words. That is room for {plan.sections[0]}.
 
@@ -532,7 +585,11 @@ class ScriptGenerator:
             "output_config": {"effort": settings.effort},
             "messages": [{"role": "user", "content": content}],
         }
-        if plan.search:
+        # The tool and the packet are alternatives. With evidence already in
+        # the prompt, attaching the tool would let the model search on top of
+        # what it was handed - paying the 10-25s this design exists to avoid,
+        # and making it impossible to tell which source an episode came from.
+        if plan.search and not plan.evidence:
             kwargs["tools"] = [
                 {
                     "type": "web_search_20260209",
@@ -542,6 +599,38 @@ class ScriptGenerator:
             ]
         return kwargs
 
+    async def research(self, plan: EpisodePlan,
+                       notes: ScriptNotes | None = None) -> EpisodePlan:
+        """Retrieve evidence, if this episode is researched and Exa is the backend.
+
+        Returns the plan to write from - the same one on the `claude` backend,
+        or a copy carrying the packet on `exa`. Separate from
+        `stream_sentences` so that the retrieval is a step a caller can see,
+        time and skip, rather than something buried inside the streaming call.
+
+        A retrieval that fails does not fall back to the model's own search.
+        The exception reaches the pipeline, which on a researched episode is
+        already the half `_answer_first` covers - the from-knowledge answer
+        keeps playing and the failure is logged, which is the designed
+        behaviour for a research half that dies. Substituting a different
+        source silently would make the episode unattributable.
+        """
+        if not plan.search or plan.evidence:
+            return plan
+        if settings.research_backend == "claude":
+            return plan
+
+        packet = await research_mod.retrieve(plan.query)
+        if notes is not None:
+            notes.research = packet.as_dict()
+        if not packet:
+            # Nothing usable came back. The episode is still answerable, and
+            # without an evidence block the tool stays attached - so the model
+            # searches after all rather than being handed an empty packet and
+            # told it is research.
+            return plan
+        return dataclasses.replace(plan, evidence=packet.context)
+
     async def stream_sentences(
         self, plan: EpisodePlan, notes: ScriptNotes | None = None
     ) -> AsyncIterator[str]:
@@ -550,7 +639,14 @@ class ScriptGenerator:
         Sentence granularity is deliberate: it is the largest unit that keeps
         time-to-first-audio low, and the smallest unit that still gives the TTS
         engine enough context for natural intonation.
+
+        Research happens here rather than in the caller so that every entry
+        point gets it - the pipeline, `write.py`, the top-up path - and so that
+        it happens on this coroutine's own task. On a researched episode that
+        task is the half `_answer_first` runs underneath the cover, which is
+        the only reason a retrieval before the first token is affordable.
         """
+        plan = await self.research(plan, notes)
         buffer = ""
         emitted_words = 0
 
