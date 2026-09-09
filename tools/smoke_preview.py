@@ -305,6 +305,84 @@ def main() -> int:
             assert "start you over" in text, \
                 "the gate did not say signing up keeps what they already have"
 
+        def the_bar_can_be_dragged_to_seek():
+            """Sliding the bar is a seek, and it has to be a real one.
+
+            Driven with the mouse rather than by calling FamAudio.seek: the
+            thing under test is the gesture - pointer capture, the clamp at the
+            buffered edge, the class that says the bar has been picked up -
+            not the seek underneath it, which the transport already had.
+            """
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(500)
+            page.evaluate("startBankTopic(Object.keys(myFamTopics)[0])")
+            page.wait_for_selector("#screen-player.active", timeout=15000)
+            # Enough audio has to have arrived for there to be anywhere to
+            # seek to: the bar clamps at what has been written.
+            page.wait_for_timeout(4500)
+            before = page.evaluate("() => FamAudio.position()")
+
+            box = page.eval_on_selector(
+                "#screen-player .progress-bar",
+                "e => { var r = e.getBoundingClientRect();"
+                " return {x: r.x, y: r.y, w: r.width}; }")
+            page.mouse.move(box["x"] + 4, box["y"] + 2)
+            page.mouse.down()
+            page.mouse.move(box["x"] + box["w"] * 0.9, box["y"] + 2, steps=8)
+            assert page.query_selector("#screen-player .progress-bar.scrubbing"), \
+                "the bar did not say it had been picked up"
+            page.mouse.up()
+            page.wait_for_timeout(400)
+
+            after = page.evaluate("() => FamAudio.position()")
+            assert after > before + 0.5, \
+                f"dragging the bar did not move playback ({before:.2f} -> {after:.2f})"
+            assert not page.query_selector("#screen-player .progress-bar.scrubbing"), \
+                "the bar stayed picked up after the drag ended"
+            # And the two gestures still coexist: the buttons were the point of
+            # "on top of", not a thing this replaced.
+            page.evaluate("skipAudio(-15)")
+            page.wait_for_timeout(300)
+            assert page.evaluate("() => FamAudio.position()") < after, \
+                "the 15-second button stopped working once the bar could be dragged"
+            page.evaluate("goBack()")
+            page.wait_for_timeout(400)
+
+        def explores_bar_scrubs_without_swiping():
+            """The bar in Explore seeks, and does not deal the next card.
+
+            Explore listens for swipes on an ancestor of its bar, so without
+            the guard in makeScrubbable a drag along the bar is both a seek and
+            a swipe - and the episode you were aiming at is gone.
+            """
+            page.evaluate("openExplore()")
+            page.wait_for_selector("#screen-explore.active", timeout=10000)
+            # Coming back to the tab keeps the listener's place but does not
+            # resume - setTab stops playback - so press play the way they
+            # would, then let enough audio arrive to have somewhere to seek to.
+            page.evaluate("if(!FamAudio.isActive()) reelTogglePlay();")
+            page.wait_for_timeout(4500)
+            was = page.text_content("#reelTitle")
+            before = page.evaluate("() => FamAudio.position()")
+            box = page.eval_on_selector(
+                "#screen-explore .reel-progress",
+                "e => { var r = e.getBoundingClientRect();"
+                " return {x: r.x, y: r.y, w: r.width}; }")
+            page.mouse.move(box["x"] + 3, box["y"] + 1)
+            page.mouse.down()
+            page.mouse.move(box["x"] + box["w"] * 0.9, box["y"] + 1, steps=8)
+            assert page.query_selector("#screen-explore .reel-progress.scrubbing"), \
+                "the reel bar did not say it had been picked up"
+            page.mouse.up()
+            page.wait_for_timeout(500)
+            assert page.text_content("#reelTitle") == was, \
+                "dragging the bar swiped to the next episode"
+            after = page.evaluate("() => FamAudio.position()")
+            assert after > before + 0.5, \
+                f"dragging the reel bar did not move playback ({before:.2f} -> {after:.2f})"
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
         def dailyfam():
             ensure_account()
             page.evaluate("openPlayFAM()")
@@ -462,10 +540,12 @@ def main() -> int:
               your_fam_offers_the_recap_and_explore_new)
         check("What's next offers four with a countdown",
               whats_next_offers_four_and_counts_down)
+        check("The bar can be dragged to seek", the_bar_can_be_dragged_to_seek)
         check("The account gate reads as a choice", the_account_gate_reads_as_a_choice)
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)
+        check("Explore's bar scrubs without swiping", explores_bar_scrubs_without_swiping)
         check("Messages opens and closes", messages_sheet)
         check("Profile renders identity, folders and echoes", profile)
         check("Mix visibility can be toggled", mix_visibility)

@@ -3490,3 +3490,53 @@ name: "already has its own auto-advance flow" and "already a continuous
 exploration space" are the reel and Explore New, and those are the two surfaces
 where the popup does not fire. If the intent was the other way round, the change
 is one condition in `nextUpAllowedHere`.
+
+## 71. The bar was a readout; now it is a control
+
+The progress bar showed where you were and could not be used to change it.
+Getting to the middle of a five-minute episode meant twenty presses of the
+back-15 button, and there was no way at all to go to a point you could see.
+
+**Both gestures stay, because they are not the same gesture.** The buttons are
+the precise move — go back to the sentence that was missed — and the drag is
+the coarse one, get to roughly there. A scrubber does not replace a fifteen
+second button any more than a scrollbar replaces a page-down key, and the
+smoke test asserts the buttons still work after a drag for exactly that reason.
+
+Four things this had to get right, each of which is a way scrubbers usually
+feel broken:
+
+* **The seek lands on release, not on every pointermove.** `FamAudio.seek`
+  goes through `rescheduleFrom`, which stops every queued audio source and
+  starts the schedule again. Seeking continuously through a drag would stutter
+  the audio for the whole length of the gesture and do it a hundred times over
+  to arrive at one position. So the drag paints, and one seek happens when the
+  finger lifts.
+* **The ticker has to let go of the bar.** `refreshProgressNow` runs every
+  200ms from the real playback position, so without a guard the knob crawls
+  back to where the audio actually is while the listener is still holding it
+  somewhere else. `scrubbingBar` is that guard, and it is one variable rather
+  than one per bar because FamAudio plays one episode at a time.
+* **The knob stops at what has been written.** The episode is still being
+  generated, so `seekLimit()` is the end of the audio that exists, and the
+  drag clamps there. That is legible only because the buffered edge is already
+  drawn on the bar — a knob that followed the finger past it and then sprang
+  back on release would not be. Overshooting gets the same sentence the
+  forward button gives: a limit, not a stall.
+* **A 4px bar is not a touch target.** The hit area is grown to ±14px with a
+  `::before`, so the line stays a line. `touch-action: none` stops the browser
+  claiming the gesture as a scroll halfway through, and pointer capture keeps
+  the scrub alive when the finger slides off the bar.
+
+**Explore needed one more thing.** Its bar sits inside a stage that listens for
+swipes, so a drag along it was both a seek and a swipe to the next episode —
+the card you were aiming at, gone. The scrubber stops touch events at the bar,
+and `explores_bar_scrubs_without_swiping` is the check that it stays that way.
+
+**And it turned up a placeholder.** The segmented player's bar was never wired
+to anything: a fixed 44% fill from the CSS and a time set to a fifth of the
+episode's length, neither of which moved. It survived because it looks correct
+in a screenshot and nobody watches that screen for thirty seconds. It runs on
+the same FamAudio as everything else, so it now shares the same ticker and the
+same scrubber. The alternative was worse than leaving it: the shared
+`.progress-bar` styles would have made a decorative bar look draggable.

@@ -46,6 +46,20 @@ SURFACES = [
     ("nextup", "showScreen('player'); "
                "maybeOfferNextUp('what the fed did to interest rates', '')"),
     ("recap", "openRecapFromTile()"),
+    # The drag state. Held open by hand because it only exists under a finger,
+    # which is exactly why it is the one thing here worth a photograph.
+    ("player-scrubbing",
+     "setTab('myfam'); document.querySelectorAll('.gd-card')[0].click();"
+     " setTimeout(function(){ var b = document.querySelector('#screen-player .progress-bar');"
+     " b.classList.add('scrubbing');"
+     # scrubbingBar tells the 200ms ticker the bar is held. Without it the
+     # real position is painted back over the pose before the shutter opens.
+     " scrubbingBar = b;"
+     " b.querySelector('.fill').style.width = '38%';"
+     " b.querySelector('.knob').style.left = '38%';"
+     # The time reads the target during a real drag, so the pose must too -
+     # a photograph that shows the old position is a photograph of a bug.
+     " document.getElementById('curTime').textContent = '1:08'; }, 900)"),
 ]
 
 

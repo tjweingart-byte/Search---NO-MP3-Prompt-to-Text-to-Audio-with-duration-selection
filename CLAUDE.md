@@ -295,6 +295,13 @@ another rule.
   substance now ends early instead of being padded. Enforcing the number in both
   directions is what produced filler: it made the model pad. `ALLOW_TOPUPS=1`
   restores the old behaviour.
+- **Transport: two gestures, and both stay.** *(PROBLEMS.md §71.)* The
+  progress bar is draggable on all three listening surfaces, and the
+  fifteen-second buttons are untouched. They answer different questions - the
+  buttons "say that again", the drag "get me to roughly there" - so neither is
+  a replacement for the other, and removing either would be a regression. The
+  drag clamps at what has actually been written, because the episode is still
+  being generated while it plays.
 - **No filler, ever, and no setting for it.** The cold open was deleted, not
   disabled - a knob left behind is an invitation to turn it back on, and this
   one was turned back on by an example file. Nothing plays until the real
@@ -428,7 +435,7 @@ and the second one is not optional:
 
 Then run `./dev.sh check` before changing anything, so you know the baseline is
 green rather than assuming it. A complete run ends with `all checks passed` and
-nineteen named smoke behaviours; anything less means something was skipped, and
+twenty-one named smoke behaviours; anything less means something was skipped, and
 `dev.sh` now says so out loud (PROBLEMS.md §49).
 
 What is true but not obvious from the code:
@@ -438,7 +445,7 @@ What is true but not obvious from the code:
   the browser smoke test all run without one. Anything about *how the writing
   sounds* is unverified until someone runs it with a key.
 - The checks answer "does it work", not "does it look right". `tools/shots.py`
-  photographs all fifteen surfaces so a refactor can be proved neutral;
+  photographs all sixteen surfaces so a refactor can be proved neutral;
   `tools/stall_probe.py` measures browser stalls without a key, and
   `tools/compare_search.py` measures what research actually buys. Each exists
   because a claim was once made without it and was wrong.

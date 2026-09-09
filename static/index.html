@@ -265,9 +265,19 @@
   .reel-sub{ margin-top:16px; font-size:11px; line-height:1.5; color:var(--text-muted); }
   .reel-stage.turning .reel-body{ opacity:0; transform:translateY(18px); }
   .reel-body{ transition:opacity 220ms ease, transform 220ms ease; }
-  .reel-progress{ flex:none; height:3px; border-radius:2px; background:var(--border-strong);
-    overflow:hidden; margin-bottom:16px; }
-  .reel-fill{ height:100%; width:0%; background:var(--copper); transition:width 200ms linear; }
+  .reel-progress{ flex:none; position:relative; height:3px; border-radius:2px;
+    background:var(--border-strong); margin-bottom:16px;
+    touch-action:none; cursor:pointer; }
+  /* Same hit area as the player's bar, and for the same reason. It reaches
+     outside the bar, so the bar cannot be overflow:hidden any more - the fill
+     carries the rounded end itself instead. */
+  .reel-progress::before{ content:""; position:absolute; left:0; right:0; top:-14px; bottom:-14px; }
+  .reel-fill{ height:100%; width:0%; background:var(--copper); border-radius:2px;
+    transition:width 200ms linear; }
+  /* No knob on this one - it is a story bar, not a transport - so the drag
+     announces itself by the bar thickening under the finger instead. */
+  .reel-progress.scrubbing{ height:7px; border-radius:4px; }
+  .reel-progress.scrubbing .reel-fill{ transition:none; }
   .reel-controls{ flex:none; display:flex; align-items:center; justify-content:center; gap:26px;
     margin-bottom:14px; }
   .reel-btn{ position:relative; width:42px; height:42px; border-radius:50%; display:flex;
@@ -480,10 +490,27 @@
   .captions-panel.on .cc-text mark{ background:var(--copper); color:var(--ink); border-radius:3px; padding:0 3px; }
 
   .progress-wrap{ flex:none; padding:12px 20px 4px; }
-  .progress-bar{ height:4px; border-radius:4px; background:rgba(244,239,228,0.12); position:relative; margin-bottom:6px; }
+  .progress-bar{ height:4px; border-radius:4px; background:rgba(244,239,228,0.12); position:relative; margin-bottom:6px;
+    /* Draggable. touch-action:none so the browser does not claim the gesture
+       as a scroll halfway through a scrub, which is what makes a bar this
+       thin feel broken on a phone. */
+    touch-action:none; cursor:pointer; }
+  /* The thing a thumb actually hits. A 4px bar is about a third of the
+     smallest reliable touch target, so the hit area is grown here rather than
+     the bar being drawn thicker - the line stays a line. */
+  .progress-bar::before{ content:""; position:absolute; left:0; right:0; top:-14px; bottom:-14px; }
   .progress-bar .buffered{ position:absolute; left:0; top:0; bottom:0; width:0; background:rgba(224,181,99,0.22); border-radius:4px; }
   .progress-bar .fill{ position:absolute; left:0; top:0; bottom:0; width:44%; background:var(--copper); border-radius:4px; }
-  .progress-bar .knob{ position:absolute; left:44%; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; border-radius:50%; background:var(--copper); box-shadow:0 0 0 3px rgba(224,181,99,0.25); }
+  .progress-bar .knob{ position:absolute; left:44%; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; border-radius:50%; background:var(--copper); box-shadow:0 0 0 3px rgba(224,181,99,0.25);
+    transition:width 120ms ease, height 120ms ease, box-shadow 120ms ease; }
+  /* Under the finger the knob grows and its ring widens: the drag needs to
+     say it has been picked up, or a scrub that lands somewhere unexpected
+     reads as the app having ignored you. */
+  .progress-bar.scrubbing .knob{ width:16px; height:16px;
+    box-shadow:0 0 0 6px rgba(224,181,99,0.22); }
+  @media (prefers-reduced-motion: reduce){
+    .progress-bar .knob{ transition:none; }
+  }
   .time-row{ display:flex; justify-content:space-between; font-family:'JetBrains Mono', monospace; font-size:9.5px; color:var(--text-muted); }.ctrl-btn{ display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; }
   .ctrl-btn .cc{ width:44px; height:44px; border-radius:50%; background:var(--ink); color:var(--paper); display:flex; align-items:center; justify-content:center; }
   .ctrl-btn.mid .cc{ width:52px; height:52px; background:var(--copper); color:var(--ink); }
@@ -2100,6 +2127,11 @@
   // Drives the player's own progress bar and timer off real playback position.
   var progressTotal = 0;
   function refreshProgressNow(){
+    // A drag owns the bar for as long as it lasts. Repainting from the true
+    // playback position underneath the finger is exactly what makes a
+    // scrubber feel broken - the knob crawls back to where the audio is
+    // while you are still holding it somewhere else.
+    if(scrubbingBar) return;
     var wrap = document.querySelector("#screen-player .progress-bar");
     var fill = wrap ? wrap.querySelector(".fill") : null;
     var knob = wrap ? wrap.querySelector(".knob") : null;
@@ -2121,6 +2153,21 @@
     }
     if(cur) cur.textContent = formatTime(seconds);
     if(tot) tot.textContent = formatTime(total);
+
+    // The segmented player runs on the same FamAudio, so one ticker serves
+    // both. Its bar used to be a placeholder - a fixed 44% fill in the CSS and
+    // a time set to a fifth of the length, neither of which moved - which is
+    // the kind of thing that survives because it looks right in a screenshot.
+    var paWrap = document.querySelector("#screen-playall .progress-bar");
+    if(paWrap){
+      var paFill = paWrap.querySelector(".fill"), paKnob = paWrap.querySelector(".knob");
+      if(paFill) paFill.style.width = pct + "%";
+      if(paKnob) paKnob.style.left = pct + "%";
+      var paCur = document.getElementById("pa-curtime");
+      var paTot = document.getElementById("pa-totaltime");
+      if(paCur) paCur.textContent = formatTime(seconds);
+      if(paTot) paTot.textContent = formatTime(total);
+    }
   }
 
   function startProgress(totalSeconds){
@@ -2150,6 +2197,121 @@
     }
     refreshProgressNow();
   }
+
+  // ---- Scrubbing -----------------------------------------------------
+  // Dragging the bar seeks. The 15-second buttons stay exactly as they were,
+  // because the two gestures are not the same one: a button is the precise
+  // move - go back to the sentence that was missed - and a drag is the coarse
+  // one, get to roughly the middle. Neither replaces the other.
+  //
+  // The seek lands on release rather than on every pointermove. A seek
+  // rebuilds the whole scheduling queue (FamAudio.rescheduleFrom stops every
+  // queued source and starts again), so seeking continuously through a drag
+  // would stutter the audio for the length of the gesture and do it a hundred
+  // times over to arrive at one position.
+  var scrubbingBar = null;
+
+  // The same authority refreshProgressNow uses: the real length once the whole
+  // episode has arrived, the requested length while it is still being written.
+  // One value serves both bars because FamAudio plays one episode at a time.
+  function scrubTotal(){
+    return FamAudio.isComplete() ? FamAudio.duration() : progressTotal;
+  }
+
+  function makeScrubbable(bar, paint){
+    if(!bar) return;
+    var wanted = 0;
+
+    function show(e){
+      var rect = bar.getBoundingClientRect();
+      if(!rect.width) return;
+      var frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      var total = scrubTotal();
+      wanted = frac * total;
+      // Never past what has been written. The knob stopping at the buffered
+      // edge is legible, because that edge is drawn on the bar; a knob that
+      // followed the finger and then sprang back on release would not be.
+      var seconds = Math.min(wanted, FamAudio.seekLimit());
+      paint(total ? Math.min(100, (seconds / total) * 100) : 0, seconds);
+    }
+
+    bar.addEventListener("pointerdown", function(e){
+      if(!FamAudio.isActive() && !FamAudio.isComplete()){
+        toast("Nothing playing yet");
+        return;
+      }
+      e.preventDefault();
+      scrubbingBar = bar;
+      bar.classList.add("scrubbing");
+      // Capture, so a finger that slides off the bar - or off the phone -
+      // keeps scrubbing instead of silently dropping the gesture.
+      try { bar.setPointerCapture(e.pointerId); } catch(err){}
+      show(e);
+    });
+
+    bar.addEventListener("pointermove", function(e){
+      if(scrubbingBar !== bar) return;
+      show(e);
+    });
+
+    function release(e){
+      if(scrubbingBar !== bar) return;
+      scrubbingBar = null;
+      bar.classList.remove("scrubbing");
+      try { bar.releasePointerCapture(e.pointerId); } catch(err){}
+      var landed = FamAudio.seek(wanted);
+      // The same sentence the forward button gives, for the same reason: a
+      // drag that stops short of where the finger went is a limit rather than
+      // a stall, and saying so is the whole difference between the two.
+      if(wanted - landed > 1 && !FamAudio.isComplete()){
+        toast("Caught up with the writing — it will keep going");
+      }
+      refreshProgressNow();
+      refreshReelProgress();
+    }
+    bar.addEventListener("pointerup", release);
+    bar.addEventListener("pointercancel", release);
+
+    // Explore listens for swipes on an ancestor of its bar. A drag along the
+    // bar is not a swipe to the next episode, and without this it is both.
+    ["touchstart", "touchmove", "touchend"].forEach(function(type){
+      bar.addEventListener(type, function(e){ e.stopPropagation(); }, { passive: true });
+    });
+  }
+
+  function paintPlayerScrub(pct, seconds){
+    var wrap = document.querySelector("#screen-player .progress-bar");
+    if(!wrap) return;
+    var fill = wrap.querySelector(".fill"), knob = wrap.querySelector(".knob");
+    if(fill) fill.style.width = pct + "%";
+    if(knob) knob.style.left = pct + "%";
+    // The time reads the target, not the playback position: aiming at a time
+    // is the entire point of dragging rather than pressing a button.
+    var cur = document.getElementById("curTime");
+    if(cur) cur.textContent = formatTime(seconds);
+  }
+
+  function paintReelScrub(pct){
+    var fill = document.getElementById("reelFill");
+    if(fill) fill.style.width = pct + "%";
+  }
+
+  function paintPlayAllScrub(pct, seconds){
+    var wrap = document.querySelector("#screen-playall .progress-bar");
+    if(!wrap) return;
+    var fill = wrap.querySelector(".fill"), knob = wrap.querySelector(".knob");
+    if(fill) fill.style.width = pct + "%";
+    if(knob) knob.style.left = pct + "%";
+    var cur = document.getElementById("pa-curtime");
+    if(cur) cur.textContent = formatTime(seconds);
+  }
+
+  // All three listening surfaces, because all three are listening to the same
+  // episode. A bar that is draggable on one screen and decorative on the next
+  // is worse than one that is decorative everywhere.
+  makeScrubbable(document.querySelector("#screen-player .progress-bar"), paintPlayerScrub);
+  makeScrubbable(document.querySelector("#screen-playall .progress-bar"), paintPlayAllScrub);
+  makeScrubbable(document.querySelector("#screen-explore .reel-progress"), paintReelScrub);
 
   function applyPlaybackSpeed(){
     FamAudio.setRate(parseSpeed(selectedSpeed));
@@ -3810,7 +3972,14 @@
     document.getElementById("pa-index").textContent = "Topic " + (paIndex + 1) + " of " + b.topics.length;
     var totalSeconds = selectedLengthMinutes * 60;
     document.getElementById("pa-totaltime").textContent = formatTime(totalSeconds);
-    document.getElementById("pa-curtime").textContent = formatTime(totalSeconds * 0.2);
+    document.getElementById("pa-curtime").textContent = formatTime(0);
+    (function(){
+      var wrap = document.querySelector("#screen-playall .progress-bar");
+      if(!wrap) return;
+      var fill = wrap.querySelector(".fill"), knob = wrap.querySelector(".knob");
+      if(fill) fill.style.width = "0%";
+      if(knob) knob.style.left = "0%";
+    })();
     document.getElementById("paSpeedLenPill").textContent = "1.2× · " + selectedLengthMinutes + " min";
     paCcOn = false;
     var panel = document.getElementById("paCcPanel");
@@ -4573,12 +4742,19 @@
   }
 
   var reelTimer = null;
+  function refreshReelProgress(){
+    if(scrubbingBar) return;      // the drag owns the bar; see makeScrubbable
+    var fill = document.getElementById("reelFill");
+    var total = scrubTotal();
+    if(!fill || !total) return;
+    fill.style.width = Math.min(100, (FamAudio.position() / total) * 100) + "%";
+  }
   function startReelProgress(totalSeconds){
     stopReelProgress();
-    reelTimer = setInterval(function(){
-      var pct = Math.min(100, (FamAudio.position() / totalSeconds) * 100);
-      document.getElementById("reelFill").style.width = pct + "%";
-    }, 200);
+    // Explore drives the same FamAudio as the player, so it publishes the
+    // length the same way - which is what lets one scrubber serve both bars.
+    progressTotal = totalSeconds;
+    reelTimer = setInterval(refreshReelProgress, 200);
   }
   function stopReelProgress(){
     if(reelTimer){ clearInterval(reelTimer); reelTimer = null; }
