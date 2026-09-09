@@ -148,6 +148,49 @@ RESEARCH_BACKENDS = ("claude", "exa")
 #: literal, for the same reason as DEFAULT_PIPELINE.
 DEFAULT_RESEARCH_BACKEND = "exa"
 
+#: Backends slow enough that the from-knowledge cover earns its second call.
+#:
+#: `answer_first` exists for exactly one reason: Claude's server-side search
+#: costs 10-25 seconds before a word can be written, and a listener will not
+#: wait that long in silence. The cover is what fills it - with the durable
+#: half of the answer rather than filler, which is the one thing the deleted
+#: cold open could never be.
+#:
+#: Exa is not that. It retrieves in about half a second, and Claude then writes
+#: from the packet immediately, so there is no gap to cover. Running the cover
+#: anyway costs a second model call, delays the first word, and - the part that
+#: matters most - means most of a researched episode is the *unresearched*
+#: half: the RunPod run measured the cover speaking 85.8 seconds before
+#: research took over. Someone who asked a question that needed today's facts
+#: got mostly what the model already knew.
+#:
+#: So the cover follows the wait rather than the setting. `ANSWER_FIRST=1` or
+#: `=0` still wins, because a deployment that has measured its own numbers
+#: should not be argued with.
+SLOW_RESEARCH_BACKENDS = ("claude",)
+
+
+def _answer_first_default() -> bool:
+    """Cover the wait when there is a wait to cover.
+
+    Reads the environment directly rather than a sibling field: a
+    `default_factory` cannot see the rest of the dataclass, and reaching for
+    `__post_init__` would overwrite an explicit
+    `dataclasses.replace(settings, answer_first=...)`, which several tests and
+    `_answer_first` itself depend on.
+
+    The consequence worth knowing: this is derived once, at process start, from
+    the environment. `dataclasses.replace(settings, research_backend="claude")`
+    does not re-derive it - that is a deliberate in-process override, not a
+    deployment being configured.
+    """
+    raw = os.environ.get("ANSWER_FIRST")
+    if raw is not None and raw.strip():
+        return raw.strip().lower() not in ("0", "false", "no", "off")
+    backend = os.environ.get(
+        "RESEARCH_BACKEND", DEFAULT_RESEARCH_BACKEND).strip().lower()
+    return backend in SLOW_RESEARCH_BACKENDS
+
 #: Which generation pipeline a request runs through.
 #:
 #: `phase6` is production and is `DEFAULT_PIPELINE` below: a character-bounded
@@ -225,13 +268,15 @@ class Settings:
     # Answer first, research underneath. When an episode is going to be
     # researched, run a second call with no tools that starts writing
     # immediately, speak that while the search runs, and hand over the moment
-    # the researched half has a sentence ready. The listener never waits, and
-    # what covers the wait is the answer rather than filler - which is the one
-    # thing the deleted cold open could never be. Costs a second model call on
+    # the researched half has a sentence ready. Costs a second model call on
     # researched episodes only.
-    answer_first: bool = field(
-        default_factory=lambda: os.environ.get("ANSWER_FIRST", "1") not in ("0", "false", "False")
-    )
+    #
+    # **Unset, this now follows the research backend** - see
+    # SLOW_RESEARCH_BACKENDS above. It covers a wait, and with Exa retrieving
+    # in about half a second there is no wait to cover; on `claude`, where the
+    # model's own search costs 10-25 seconds, there is. ANSWER_FIRST=1 or =0
+    # still wins outright.
+    answer_first: bool = field(default_factory=_answer_first_default)
     # The most of an episode the instant half may speak before it must give way.
     #
     # Without a ceiling this design quietly defeats itself: synthesis runs far

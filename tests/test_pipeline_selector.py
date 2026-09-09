@@ -415,8 +415,18 @@ def _bounded(coro, timeout: float = 20.0):
 # ==========================================================================
 def test_answer_first_under_phase6_keeps_its_two_streams_apart(flag):
     """Two pumps, so two buffers and two assemblers. No chunk may hold text
-    from both halves, and the instant half must come first."""
+    from both halves, and the instant half must come first.
+
+    Asks for the cover explicitly. It is no longer the default - it follows
+    RESEARCH_BACKEND, and Exa needs no covering - so a test about the cover has
+    to turn it on rather than inherit it.
+    """
     flag("phase6")
+    import dataclasses
+
+    import pipeline as _pipeline
+    _pipeline.settings = dataclasses.replace(_pipeline.settings,
+                                             answer_first=True)
 
     class TwoHalves:
         async def stream_sentences(self, plan, notes=None):
