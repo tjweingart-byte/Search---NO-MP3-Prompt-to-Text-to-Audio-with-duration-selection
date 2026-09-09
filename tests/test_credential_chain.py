@@ -29,6 +29,8 @@ def clean(monkeypatch):
     credentials._OWNED.clear()
     credentials._POOL.clear()
     credentials._CURSOR.clear()
+    credentials._SOURCED.clear()
+    credentials._PUBLISHED.clear()
     credentials._STATE.update(configured=False, state="unset", detail="", at=0.0,
                               names=[])
     for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEYS", "EXA_API_KEY",
@@ -40,6 +42,42 @@ def clean(monkeypatch):
     credentials._OWNED.clear()
     credentials._POOL.clear()
     credentials._CURSOR.clear()
+    credentials._SOURCED.clear()
+    credentials._PUBLISHED.clear()
+
+
+# --- the memo must not outrank a newer key -------------------------------
+
+def test_a_rotated_key_is_not_undone_by_the_memoised_pool(monkeypatch):
+    """The failure this closes, reproduced outside pytest first: the pool was
+    memoised on first read and never rechecked, so `prime()` republished the
+    *old* key over a freshly loaded one. Rotating `~/.fam/env` and re-reading
+    it left the process still sending the key that had been replaced - the
+    exact precedence error this module exists to state correctly."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-old")
+    assert credentials.pool("ANTHROPIC_API_KEY") == ["sk-ant-old"]
+    credentials.prime()
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-new")
+    assert credentials.pool("ANTHROPIC_API_KEY") == ["sk-ant-new"]
+    credentials.prime()
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-new"
+
+
+def test_a_failover_still_keeps_the_keys_behind_it(monkeypatch):
+    """The reason the memo exists at all, and what any staleness check must not
+    break: `demote` writes the key in force into the environment, so rebuilding
+    the pool from there would rediscover only the key it failed over *to*."""
+    monkeypatch.setenv("ANTHROPIC_API_KEYS", "k1,k2,k3")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k1")
+    assert credentials.pool("ANTHROPIC_API_KEY") == ["k1", "k2", "k3"]
+
+    assert credentials.demote("ANTHROPIC_API_KEY", "429") == "k2"
+    assert credentials.pool("ANTHROPIC_API_KEY") == ["k1", "k2", "k3"]
+    assert credentials.demote("ANTHROPIC_API_KEY", "429") == "k3"
+
+    credentials.reset("ANTHROPIC_API_KEY")
+    assert os.environ["ANTHROPIC_API_KEY"] == "k1"
 
 
 # --- what a secrets manager hands back -----------------------------------

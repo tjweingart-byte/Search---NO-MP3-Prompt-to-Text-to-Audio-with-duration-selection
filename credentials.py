@@ -135,6 +135,23 @@ _STATE: dict[str, object] = {
 _POOL: dict[str, list[str]] = {}
 _CURSOR: dict[str, int] = {}
 
+#: The raw `(NAMES, NAME)` environment strings each pool was built from, and
+#: the value `_publish` last wrote. Together they let `pool()` tell the two
+#: reasons the environment can disagree with the memo apart:
+#:
+#: * **we changed it** - a failover wrote the next key into `NAME`. The memo is
+#:   still right and must be kept, or rebuilding would rediscover only the key
+#:   we failed over *to* and lose every one behind it.
+#: * **someone else changed it** - a later `_load_dotenv()`, a rotated
+#:   `~/.fam/env`, a test setting a different key. The memo is now stale, and
+#:   serving it means `prime()` republishes the old key over the new one.
+#:
+#: Without this distinction the second case won silently: a memoised pool
+#: outranked a freshly read key, in the one module whose job is to state that
+#: precedence correctly.
+_SOURCED: dict[str, tuple[str, str]] = {}
+_PUBLISHED: dict[str, str] = {}
+
 
 def _timeout() -> float:
     try:
@@ -339,6 +356,8 @@ def load(force: bool = False) -> dict[str, str]:
         log.info("%s supplied %s", PROVIDER_VAR, ", ".join(sorted(applied)))
     _POOL.clear()
     _CURSOR.clear()
+    _SOURCED.clear()
+    _PUBLISHED.clear()
     return {name: found[name] for name in applied}
 
 
@@ -358,6 +377,21 @@ def refresh(reason: str = "") -> bool:
     return True
 
 
+def _memo_is_current(name: str, raw: tuple[str, str]) -> bool:
+    """Whether the memoised pool still describes what the environment holds.
+
+    True when nothing moved, and when the only thing that moved is the single
+    value this module itself published - that is a failover, not new input.
+    Anything else is somebody supplying a different key, and the memo has to go.
+    """
+    built_from = _SOURCED.get(name)
+    if built_from is None:
+        return False
+    if raw == built_from:
+        return True
+    return raw[0] == built_from[0] and raw[1] == _PUBLISHED.get(name)
+
+
 def pool(name: str) -> list[str]:
     """Every key configured for `name`, in order, without duplicates.
 
@@ -365,16 +399,18 @@ def pool(name: str) -> list[str]:
     One key is a pool of one and behaves exactly as it did before this module
     existed.
     """
-    if name in _POOL:
+    raw = (os.environ.get(name + "S", ""), os.environ.get(name, ""))
+    if name in _POOL and _memo_is_current(name, raw):
         return _POOL[name]
     keys: list[str] = []
-    for raw in (os.environ.get(name + "S", ""), os.environ.get(name, "")):
-        for key in (raw or "").split(","):
+    for source_text in raw:
+        for key in (source_text or "").split(","):
             key = key.strip()
             if key and key not in keys:
                 keys.append(key)
     _POOL[name] = keys
-    _CURSOR.setdefault(name, 0)
+    _SOURCED[name] = raw
+    _CURSOR[name] = 0
     return keys
 
 
@@ -406,6 +442,7 @@ def _publish(name: str) -> str:
     """
     key = active(name)
     os.environ[name] = key
+    _PUBLISHED[name] = key
     return key
 
 

@@ -3811,3 +3811,50 @@ bill. `PRICES` was checked against the card on 2026-09-09. The first real month
 should be compared line by line against the Anthropic and Exa invoices, and
 `METERING.md` corrected wherever they disagree - a metering system nobody has
 reconciled is a metering system that is confidently wrong.
+
+## 74. The memoised key pool outranked a newly read key
+
+**Found while answering a question, not while chasing a bug.** Asked to confirm
+the automatic credential plugin works, the check ran `tests/test_key_store.py`
+next to `tests/test_credentials.py` and two tests failed that pass on their own.
+Order-dependent tests are usually a dirty fixture. This one was not.
+
+Reproduced with no pytest anywhere, in one process, on `~/.fam/env` alone:
+
+    write ANTHROPIC_API_KEY=sk-ant-FIRST ; _load_dotenv()   -> sk-ant-FIRST
+    rewrite it to sk-ant-SECOND ; _load_dotenv()            -> sk-ant-FIRST
+
+`pool()` memoised its list into `_POOL` on first read and never looked at the
+environment again; only `load()` cleared it, and `load()` returns early when no
+`FAM_SECRETS` provider is configured - which is every machine that uses the
+`~/.fam/env` file the plural pool was built alongside. So `prime()`, whose whole
+job is to make the environment agree with the configuration, republished the
+*stale* key over the fresh one. Rotating the machine-wide key and re-reading it
+left the process still sending the key that had just been replaced.
+
+That is the precedence error this module exists to prevent, made by the module
+itself, and it failed in the direction this project dislikes most: silently, and
+looking fine. `key_source()` still named `~/.fam/env`, because the file really
+was read - it was the value that got overwritten afterwards.
+
+**Why the memo exists, and why deleting it is the wrong fix.** `demote()`
+writes the key it failed over *to* into the environment. Rebuilding the pool
+from the environment after that would rediscover only that key and lose every
+one behind it, which is exactly what `reset()`'s docstring warns about. The memo
+is load-bearing for failover.
+
+**The fix distinguishes the two reasons the environment can disagree with the
+memo.** `_SOURCED` records the raw `(NAMES, NAME)` strings the pool was built
+from and `_PUBLISHED` records what `_publish` last wrote. The memo is served
+when nothing moved, or when the only thing that moved is the single value this
+module published itself - a failover. Anything else is somebody supplying a
+different key, and the pool is rebuilt.
+
+Both halves are pinned by test, and the first one was checked against the
+unfixed code to confirm it actually fails there: a rotated key is not undone,
+and a failover still keeps the keys behind it.
+
+**What this says about the shape of the class of bug.** The module was reasoned
+about as a chain - environment, then provider, then files - and the chain is
+right. The cache in front of it was not part of that reasoning, and a cache is a
+precedence decision whether or not anyone wrote it down as one.
