@@ -35,6 +35,31 @@ SURFACES = [
     ("mixdetail", "setTab('playfam'); document.querySelectorAll('.mix-card')[0].click()"),
     ("mixpicker", "openMixPicker && openMixPicker()"),
     ("player", "setTab('myfam'); document.querySelectorAll('.gd-card')[0].click()"),
+    # The first run, which is otherwise the hardest set of screens to look at
+    # twice - they are shown once by design.
+    # startEntry rather than restartFirstRun: the latter replays the 1.4s
+    # splash, which is what the camera would catch instead of the screen.
+    ("welcome", "try{ localStorage.removeItem('fam.prefs'); }catch(e){}; startEntry()"),
+    ("auth", "openAuth('signup'); showAuthForm()"),
+    ("intro", "renderIntro(); showScreen('intro')"),
+    ("explorenew", "openExploreNew()"),
+    ("nextup", "showScreen('player'); "
+               "maybeOfferNextUp('what the fed did to interest rates', '')"),
+    ("recap", "openRecapFromTile()"),
+    # The drag state. Held open by hand because it only exists under a finger,
+    # which is exactly why it is the one thing here worth a photograph.
+    ("player-scrubbing",
+     "setTab('myfam'); document.querySelectorAll('.gd-card')[0].click();"
+     " setTimeout(function(){ var b = document.querySelector('#screen-player .progress-bar');"
+     " b.classList.add('scrubbing');"
+     # scrubbingBar tells the 200ms ticker the bar is held. Without it the
+     # real position is painted back over the pose before the shutter opens.
+     " scrubbingBar = b;"
+     " b.querySelector('.fill').style.width = '38%';"
+     " b.querySelector('.knob').style.left = '38%';"
+     # The time reads the target during a real drag, so the pose must too -
+     # a photograph that shows the old position is a photograph of a bug.
+     " document.getElementById('curTime').textContent = '1:08'; }, 900)"),
 ]
 
 
@@ -55,9 +80,22 @@ def capture(out_dir: pathlib.Path) -> int:
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.goto(PAGE.as_uri())
-            await page.wait_for_timeout(1500)
+            # The app now opens on the first-run entry flow, which never loads
+            # the feed - so every surface below it would photograph an empty
+            # myFAM. Marked done here and shown deliberately by the three entry
+            # surfaces further down the list.
+            await page.evaluate("finishEntry()")
+            await page.wait_for_timeout(1800)
             for name, script in SURFACES:
                 try:
+                    # Whatever the last surface left open. Two overlays in one
+                    # frame photograph as one broken screen, and the first
+                    # version of this list produced exactly that.
+                    await page.evaluate(
+                        "document.querySelectorAll('.modal-overlay.active')"
+                        ".forEach(function(o){ o.classList.remove('active'); });"
+                        "if(window.stopNextUpTimer) stopNextUpTimer();"
+                    )
                     await page.evaluate(script)
                 except Exception as exc:  # a surface that will not open is itself news
                     print(f"  {name:11} could not open: {exc}")

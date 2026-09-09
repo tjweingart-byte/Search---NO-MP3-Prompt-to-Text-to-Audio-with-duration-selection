@@ -135,8 +135,12 @@ def client(monkeypatch, tmp_path):
 def test_opening_a_tab_does_not_rate_limit_itself(client):
     """These are the calls the interface makes when a tab opens. Under the old
     limiter the second one 429'd, which is what the listener saw."""
-    for path in ("/api/topics", "/api/mixes?user=me", "/api/myfam?user=me",
-                 "/api/explore?user=me", "/api/profile?user=me", "/api/voices"):
+    # /api/mixes is left out: it is account-gated, so an anonymous client gets
+    # 401 for a reason that has nothing to do with the limiter and would make
+    # this test pass or fail for the wrong reason. The gate has its own test.
+    for path in ("/api/topics", "/api/myfam?user=me", "/api/explore?user=me",
+                 "/api/profile?user=me", "/api/voices", "/api/nextup",
+                 "/api/explorenew"):
         assert client.get(path).status_code == 200, f"{path} was throttled"
 
 

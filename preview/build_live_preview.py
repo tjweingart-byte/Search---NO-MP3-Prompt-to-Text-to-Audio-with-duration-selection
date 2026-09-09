@@ -66,13 +66,18 @@ LIVE_SHIM = r"""
   var SAMPLE_RATE = 22050;
   var ALGO = __ALGO__;
   var TAG_WORDS = __TAG_WORDS__;   // topics.TAG_WORDS, verbatim
+  var TAG_LABELS = __TAG_LABELS__; // topics.TAG_LABELS, verbatim
+  var LANGUAGES = __LANGUAGES__;   // preferences.LANGUAGES, verbatim
+  var MAX_INTERESTS = __MAX_INTERESTS__;
+  var INTEREST_WEIGHT = __INTEREST_WEIGHT__;
   var VOLATILE = __VOLATILE__;     // cache.research_words(), verbatim
   var NEAR = __NEAR__;             // the shipped CACHE_VECTOR thresholds
   var realFetch = window.fetch.bind(window);
 
   // ------------------------------------------------------------ db plumbing
   var db = null, MEM = {}, COLS =
-    ["sessions", "accounts", "people", "events", "scripts", "mixes", "echoes"];
+    ["sessions", "accounts", "people", "events", "scripts", "mixes", "echoes",
+     "prefs"];
   var cache = {}; COLS.forEach(function (c) { cache[c] = []; });
   var UID = "", EMAIL = "", TOKEN = "";
   var badge = null;
@@ -302,8 +307,14 @@ LIVE_SHIM = r"""
     });
   }
   var WEIGHT = { search: 1.0, play: 1.0, complete: 2.5, skip: -1.5 };
-  function taste(uid) {
+  // `seed` is the intro's chosen interests, entering flat and before decay
+  // exactly as topics.taste does - a starting position that real listening
+  // overtakes rather than a rule it has to fight.
+  function taste(uid, seed) {
     var s = {}, t = now(), HALF = 14 * 86400;
+    (seed || []).forEach(function (g) {
+      if (TAG_LABELS[g]) s[g] = INTEREST_WEIGHT;
+    });
     behavioural(uid).forEach(function (e) {
       var w = (WEIGHT[e.kind] || 0) * Math.pow(0.5, Math.max(0, t - e.at) / HALF);
       (e.tags ? String(e.tags).split(",") : []).forEach(function (g) {
@@ -321,7 +332,8 @@ LIVE_SHIM = r"""
   }
 
   function feed() {
-    var profile = taste(UID), mine = playedIds(UID), used = {}, out = {};
+    var profile = taste(UID, myPrefs().interests), mine = playedIds(UID),
+        used = {}, out = {};
     function take(list, n) {
       var got = [];
       for (var i = 0; i < list.length && got.length < n; i++) {
@@ -447,6 +459,151 @@ LIVE_SHIM = r"""
     return out.slice(0, 8);
   }
 
+  // ------------------------------------------------- preferences and recap
+  // One row per listener, and - like the server - only read back for one with
+  // an account. An anonymous listener's answers live in their own browser and
+  // arrive as a hint on the request, which is what `hint` below is.
+  function myPrefs() {
+    var row = rows("prefs").filter(function (r) { return r.id === UID; })[0];
+    return {
+      interests: row && row.interests ? String(row.interests).split(",").filter(Boolean) : [],
+      language: (row && row.language) || "en",
+      weekly_recap: row ? row.weekly_recap !== 0 : true,
+      recap_week: (row && row.recap_week) || "",
+      intro_done: !!(row && row.intro_done)
+    };
+  }
+
+  function hintedInterests(qs) {
+    if (EMAIL) return myPrefs().interests;
+    return String(qs.get("interests") || "").split(",")
+      .filter(function (g) { return TAG_LABELS[g]; })
+      .slice(0, MAX_INTERESTS);
+  }
+
+  // The Sunday that started the week `t` falls in, in UTC - preferences.week_start.
+  function weekStart(t) {
+    var d = new Date((t || now()) * 1000);
+    d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+    return d.toISOString().slice(0, 10);
+  }
+
+  function recapBody() {
+    var since = now() - 7 * 86400;
+    var week = behavioural(UID).filter(function (e) { return e.at >= since; });
+    var counts = {};
+    week.forEach(function (e) {
+      var w = WEIGHT[e.kind] || 0;
+      var tags = e.tags ? String(e.tags).split(",").filter(Boolean) : tagsForText(e.text || "");
+      tags.forEach(function (g) { counts[g] = (counts[g] || 0) + w; });
+    });
+    var subjects = Object.keys(counts).filter(function (g) { return counts[g] > 0; })
+      .sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 3);
+    var played = week.filter(function (e) { return e.kind === "play" || e.kind === "complete"; }).length;
+    var finished = week.filter(function (e) { return e.kind === "complete"; }).length;
+    var searched = week.filter(function (e) { return e.kind === "search"; }).length;
+    var prefs = myPrefs();
+    var body = {
+      week: weekStart(), played: played, finished: finished, searched: searched,
+      subjects: subjects,
+      subject_labels: subjects.map(function (g) { return TAG_LABELS[g]; }),
+      minutes: 5, title: "Your week in FAM", subtitle: "", query: "",
+      empty: true, reason: "",
+      due: prefs.weekly_recap && prefs.recap_week !== weekStart(),
+      enabled: prefs.weekly_recap
+    };
+    if (!played && !searched) {
+      body.reason = "Nothing to recap yet \u2014 this fills in once you have "
+        + "listened to something this week.";
+      return body;
+    }
+    if (!subjects.length) {
+      body.reason = "You listened this week, but not to anything we could group "
+        + "into a subject \u2014 so there is nothing to recap.";
+      return body;
+    }
+    var labels = subjects.map(function (g) { return TAG_LABELS[g].toLowerCase(); });
+    var joined = labels.length === 1 ? labels[0]
+      : labels.slice(0, -1).join(", ") + " and " + labels[labels.length - 1];
+    body.empty = false;
+    body.query = "what happened this week in " + joined;
+    body.subtitle = (finished ? finished + " finished \u00b7 " : "")
+      + subjects.map(function (g) { return TAG_LABELS[g]; }).join(", ");
+    return body;
+  }
+
+  // topics.rank_next_up: the feed's own signals over a profile seeded with the
+  // episode that just ended, never a second recommender.
+  function nextUpBody(topicId, text, seed) {
+    var profile = taste(UID, seed);
+    var heard = BY_ID[topicId] ? (BY_ID[topicId].tags || []) : tagsForText(text || "");
+    heard.forEach(function (g) { profile[g] = (profile[g] || 0) + 3.0; });
+    var mine = playedIds(UID), picks = [], taken = {};
+    if (topicId) taken[topicId] = 1;
+    function add(list, skipPlayed) {
+      for (var i = 0; i < list.length && picks.length < 4; i++) {
+        var t = list[i];
+        if (!t || taken[t.id]) continue;
+        if (skipPlayed && mine[t.id]) continue;
+        taken[t.id] = 1; picks.push(t);
+      }
+    }
+    var scored = BANK.map(function (t) {
+      var sc = 0; (t.tags || []).forEach(function (g) { sc += (profile[g] || 0); });
+      return { t: t, s: sc / Math.sqrt((t.tags || []).length || 1) };
+    }).filter(function (x) { return x.s > 0; })
+      .sort(function (a, b) { return b.s - a.s; })
+      .map(function (x) { return x.t; });
+    add(scored, true);
+    add(BANK, true);
+    add(BANK, false);   // four tiles is the layout; two empty squares is not
+    if (UID) {
+      picks.forEach(function (t) {
+        addDoc("events", {
+          user_id: UID, kind: "impression", topic_id: t.id, text: "",
+          tags: (t.tags || []).join(","), at: now(), thread: "",
+          section: "next_up", algo: ALGO
+        });
+      });
+    }
+    return { topics: picks, algo: ALGO };
+  }
+
+  // topics.rank_might_like: adjacent to a taste rather than inside it. The
+  // strongest tag is suppressed on purpose - that is the whole signal.
+  function exploreNewBody(seed) {
+    var profile = taste(UID, seed), mine = playedIds(UID);
+    var keys = Object.keys(profile);
+    var top = keys.sort(function (a, b) { return profile[b] - profile[a]; })[0];
+    var muted = {};
+    keys.forEach(function (g) { if (g !== top) muted[g] = profile[g]; });
+    var picks = [], taken = {};
+    function add(list) {
+      for (var i = 0; i < list.length && picks.length < 6; i++) {
+        var t = list[i];
+        if (!t || taken[t.id] || mine[t.id]) continue;
+        taken[t.id] = 1; picks.push(t);
+      }
+    }
+    if (keys.length) {
+      add(BANK.map(function (t) {
+        var sc = 0; (t.tags || []).forEach(function (g) { sc += (muted[g] || 0); });
+        if ((t.tags || []).some(function (g) { return profile[g] === undefined; })) sc *= 1.4;
+        return { t: t, s: sc };
+      }).filter(function (x) { return x.s > 0; })
+        .sort(function (a, b) { return b.s - a.s; })
+        .map(function (x) { return x.t; }));
+    }
+    add(BANK);
+    return {
+      topics: picks, personalised: keys.length > 0,
+      reason: keys.length
+        ? "Next to what you already listen to, rather than more of it."
+        : "A spread across the whole bank, until there is something to be next to.",
+      algo: ALGO
+    };
+  }
+
   function exploreBody(limit) {
     var labels = {};
     rows("echoes").forEach(function (e) {
@@ -538,6 +695,9 @@ LIVE_SHIM = r"""
       }
     }), { status: 200, headers: { "Content-Type": "audio/L16", "X-Sample-Rate": String(SAMPLE_RATE) } }));
   }
+
+  var ACCOUNT_REQUIRED = "You need an account for this. Signing up keeps the "
+    + "listening you have already done \u2014 it does not start you over.";
 
   var READY = null;   // resolves once storage and the session are settled
 
@@ -637,6 +797,71 @@ LIVE_SHIM = r"""
       }).then(function () { paint(); return json({ id: id, query: body.query, at: now() }); });
     }
 
+    // ---- preferences, the recap, and what plays next
+    if (path === "/api/preferences" && method === "GET") {
+      var stored = myPrefs();
+      return json({
+        interests_available: Object.keys(TAG_LABELS).map(function (g) {
+          return { id: g, label: TAG_LABELS[g] };
+        }),
+        languages: LANGUAGES, max_interests: MAX_INTERESTS,
+        language_active: false,
+        account: !!EMAIL, saved: !!EMAIL,
+        account_required: ACCOUNT_REQUIRED,
+        interests: EMAIL ? stored.interests : [],
+        language: EMAIL ? stored.language : "en",
+        weekly_recap: stored.weekly_recap, recap_week: stored.recap_week,
+        intro_done: EMAIL ? stored.intro_done : false
+      });
+    }
+    if (path === "/api/preferences" && method === "POST") {
+      if (!EMAIL) return json({ error: ACCOUNT_REQUIRED }, 401);
+      var was = myPrefs();
+      var chosen = (body.interests !== undefined && body.interests !== null)
+        ? body.interests.filter(function (g) { return TAG_LABELS[g]; })
+        : was.interests;
+      if (chosen.length > MAX_INTERESTS) {
+        return json({ error: "Choose at most " + MAX_INTERESTS + " interests." }, 400);
+      }
+      return put("prefs", UID, {
+        interests: chosen.join(","),
+        language: body.language !== undefined && body.language !== null
+          ? body.language : was.language,
+        weekly_recap: body.weekly_recap !== undefined && body.weekly_recap !== null
+          ? (body.weekly_recap ? 1 : 0) : (was.weekly_recap ? 1 : 0),
+        recap_week: was.recap_week,
+        intro_done: body.intro_done !== undefined && body.intro_done !== null
+          ? (body.intro_done ? 1 : 0) : (was.intro_done ? 1 : 0),
+        updated: now()
+      }).then(function () { paint(); return json(myPrefs()); });
+    }
+    if (path === "/api/recap" && method === "GET") {
+      if (!EMAIL) return json({ error: ACCOUNT_REQUIRED }, 401);
+      return json(recapBody());
+    }
+    if (path === "/api/recap/seen") {
+      if (!EMAIL) return json({ error: ACCOUNT_REQUIRED }, 401);
+      var before = myPrefs();
+      return put("prefs", UID, {
+        interests: before.interests.join(","), language: before.language,
+        weekly_recap: before.weekly_recap ? 1 : 0, recap_week: weekStart(),
+        intro_done: before.intro_done ? 1 : 0, updated: now()
+      }).then(function () { paint(); return json({ ok: true }); });
+    }
+    if (path === "/api/nextup") {
+      return json(nextUpBody(qs.get("topic_id") || "", qs.get("q") || "",
+                             hintedInterests(qs)));
+    }
+    if (path === "/api/explorenew") {
+      return json(exploreNewBody(hintedInterests(qs)));
+    }
+
+    // Mixes are kept for you, so they need an account - see ACCOUNT_REQUIRED
+    // in app.py. Mirrored here rather than left open, because a preview that
+    // is more permissive than the server hides exactly this decision.
+    if (path.indexOf("/api/mixes") === 0 && !EMAIL) {
+      return json({ error: ACCOUNT_REQUIRED }, 401);
+    }
     if (path === "/api/mixes" && method === "GET") {
       return json({
         mixes: rows("mixes").filter(function (m) { return m.user_id === UID; }).map(shapeMix),
@@ -1263,6 +1488,7 @@ def build() -> pathlib.Path:
     # server would write rather than a number invented here.
     sys.path.insert(0, str(HERE.parent))
     import cache  # noqa: E402
+    import preferences as prefs_mod  # noqa: E402
     import topics  # noqa: E402
     from config import settings  # noqa: E402
 
@@ -1271,6 +1497,13 @@ def build() -> pathlib.Path:
             .replace("__ALGO__", json.dumps(topics.ALGO_VERSION))
             .replace("__TAG_WORDS__", json.dumps(
                 {k: list(v) for k, v in topics.TAG_WORDS.items()}))
+            # The intro's vocabulary, from the modules that own it. Typed out
+            # here it would drift, and a picker offering a facet the ranker
+            # does not score is the drift that matters.
+            .replace("__TAG_LABELS__", json.dumps(topics.TAG_LABELS))
+            .replace("__LANGUAGES__", json.dumps([dict(l) for l in prefs_mod.LANGUAGES]))
+            .replace("__MAX_INTERESTS__", json.dumps(prefs_mod.MAX_INTERESTS))
+            .replace("__INTEREST_WEIGHT__", json.dumps(topics.INTEREST_WEIGHT))
             .replace("__VOLATILE__", json.dumps(sorted(cache.research_words())))
             .replace("__NEAR__", json.dumps({
                 "threshold": settings.cache_vector_threshold,
