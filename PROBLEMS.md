@@ -3338,3 +3338,155 @@ So there are now two configurations on purpose, and the pin says why in the
 Dockerfile and in DEPLOY.md. The reproduction that collapses them back into one
 is `ANSWER_FIRST=1 bash tools/pod_production_test.sh` against the same harness
 without it. Whichever way the numbers go, one of the two lines is deleted.
+
+## 70. Seven interface changes, and the three that were product decisions
+
+An interface packet asked for seven things. Five were UI work; the other two
+were questions wearing UI clothes, and the packet said so - it asked for the
+account boundary to be "made explicit before implementation, not left implicit
+in the code", and refused to guess between two readings of the DailyFAM item.
+Both were put to the product owner before anything was built. Recording the
+answers here rather than only in the diff, because each one is a rule the next
+change has to obey.
+
+**1. What plays next.** An episode used to end in one of two ways on the
+player: silence, or - if it had not come from search - a jump straight into a
+*random* myFAM topic (`playerTapAdvance`, on the `onEnd` path). The random jump
+is the worse of the two: it is a recommendation nobody made and nobody could
+decline. Both are now the same popup, four tiles in a 2x2 grid, the first
+starting itself after five seconds unless something else is tapped.
+
+The tiles are `topics.rank_next_up`, which is deliberately **not** a second
+recommender: it is `build_feed`'s three signals, in the same order, over a
+profile seeded with the episode that just finished (`JUST_HEARD_WEIGHT = 3.0`,
+above a completion, because "what next" is a question about this episode first
+and the history second). `test_it_agrees_with_the_shelf_it_came_from` is the
+anti-drift check - a listener must not be told one thing by myFAM and another
+by the popup an hour later.
+
+Three things it is careful about. The countdown tile prefers the *album's* next
+episode when there is one, so album continuity survives the change; failing
+that it prefers the follow-up the model already named on the trailing
+`<<NEXT:>>` line, which is free and is a better answer than any ranking because
+it read what was actually covered. It never offers back the episode that just
+ended, or anything already played - except as a last resort, where it drops the
+"not already played" rule rather than the grid, since two empty squares are
+worse than hearing something twice. And it does not fire on Explore or Explore
+New: both are already continuous exploration, and a popup between cards there
+interrupts rather than helps. The first version of that fallback was wrong and a
+test caught it - it filtered against the same `taken` set that carried the
+played-ids exclusion, so the fallback could never add anything and a listener
+who had heard most of the bank got an empty grid.
+
+**2. What "Skip for now" costs.** The answer chosen: *anything the server keeps
+for you needs an account; anything you can hear does not.* So saved mixes,
+chosen interests and language, and the weekly recap are gated (401, with a
+message that offers signup rather than reporting a fault); search, myFAM,
+DailyFAM's episodes, Explore, Go Deeper and the whole audio path are not.
+
+The interaction log is deliberately outside the gate, and that line is the
+load-bearing part: it is ambient personalisation rather than a thing the
+listener made and can point at, and gating it would mean an anonymous
+listener's feed could never be ranked - which is the product, not an account
+perk. `ACCOUNT_REQUIRED` in app.py holds the reasoning next to the code that
+enforces it.
+
+This is the first time this app has taken something away from an anonymous
+listener, so the cost is worth naming: mixes made before the gate are still
+there, under the same `user_id`, and appear the moment that listener signs up.
+That is `accounts.py`'s original design paying off rather than a migration -
+signing up attaches credentials to the identity you already have. Five existing
+tests failed on the change and were updated rather than relaxed; `test_mixes`
+now signs up in its fixture, and the gate has its own tests.
+
+**3. Google and Apple, drawn but not connected.** The packet asked for three
+sign-in methods. There is no OAuth in this codebase and no client credentials
+in any environment it runs in, so the honest options were to omit the buttons or
+to show them saying what they are. They are shown, tapping one says it is not
+connected and offers the email path, and nothing pretends to work. Same rule as
+the language picker below, and the same rule that deleted the cold open: a
+control that silently does nothing is the failure this project has lost the most
+time to.
+
+The email path captures a phone number at signup, and the interface says
+plainly what that is: a contact detail, not an authentication factor. There is
+no SMS delivery behind it, so it cannot sign anybody in or recover an account -
+and password reset is still the honest gap named in §66.
+
+**4. Interests, and the reason to ask at all.** The intro's first page takes up
+to six facets. The cap is enforced in three places on purpose - the chip
+disables past six, `clean_interests` refuses a seventh, and the endpoint turns
+that into a message - because a cap only the client applies is not a cap.
+
+The important decision is that they are **tags, not topics**. Six of the
+twenty-eight bank topics would have seeded six tiles and taught the ranker
+nothing; the eight facets in `TAG_WORDS` are exactly what `taste` scores, so
+choosing them ranks the whole bank. They enter `taste` flat, at
+`INTEREST_WEIGHT = 1.0` - a play, well under a completion, and without decay -
+so they carry the first feed and are quietly outvoted once there is real
+behaviour. That is tested in both directions: a declared interest fills the
+"Made for you" shelf that was honestly empty for every new listener before
+this, and three completed tech episodes beat a declared interest in sport.
+
+An anonymous listener's answers stay in their own browser and arrive as
+`?interests=` on the feed request. That is not the thing "a listener id is
+never accepted from the client" forbids: an id is an identity and grants
+access to somebody's data, while this is a hint validated against a fixed
+eight-word vocabulary, used for one response and never written down. It is
+also the only route by which the ranker can honour them at all.
+
+**5. Language: stored, and inert, and saying so.** The packet scoped this
+narrowly - capture and persist the preference, do not build per-language
+generation - which leaves a setting that changes nothing. `LANGUAGE_ACTIVE`
+is `False`, `/api/preferences` returns it, and the intro prints "Stored, but
+not yet acted on: every episode is still written and spoken in English. This is
+the setting, not the feature." The flag exists so that the day generation
+learns about languages, the claim in the interface flips with it rather than
+having to be remembered.
+
+**6. Why the recap is a stored date and not a flag.** "The first time they open
+on or after Sunday" cannot be a boolean, because nothing would ever clear it: a
+listener who does not open the app until Wednesday must still get Sunday's
+recap and must not then get it again on Thursday. `preferences.week_start`
+names a week by the Sunday that began it (UTC - the server has no idea where
+the listener is, and a recap a few hours early is a smaller wrong than one that
+arrives twice), and the recap is due whenever the stored week differs from the
+current one. It needs no scheduled job, which this app has no way to run.
+
+It is marked seen on display rather than on dismissal: someone who swipes the
+app away has still had their recap, and showing it again on Thursday would read
+as a bug. The content is only what the event log holds - and a listener with
+nothing to recap is told so, in a sentence, rather than shown a tile of
+invented numbers. Same rule as `/api/profile` in §66.
+
+**7. Explore New reuses a ranking that had been written and hidden.**
+`rank_might_like` - the exploration signal, which suppresses the listener's
+strongest tag on purpose - has existed and been tested since myFAM was built
+and has been shown nowhere since its shelf came off that page. It was the only
+signal in the app offering anything outside an established taste. Explore New
+is its surface, which makes the two-shelf loss recorded in CLAUDE.md a
+one-shelf loss.
+
+**8. DailyFAM had two of the same button.** The packet's literal request was to
+move the "add new" control to the top right. The reading it was worried about -
+that DailyFAM might need a folder concept it does not have - turned out not to
+be the situation: the screen already had a "+" in its header *and* an inline
+"New mix" button above the list, so the same action sat twice on one page and
+the second copy pushed every mix card down. Confirmed as reading (a) and the
+inline one is gone. Nothing about Explore changed.
+
+**9. The label question, asked rather than guessed.** The sketch said "Your
+FAM" where the app said "Messages". Confirmed as an in-page header only: the
+sheet's heading changed, the envelope entry point and everything else did not.
+Two tiles sit above the thread list - Weekly Recap, which opens the same
+content the Sunday popup shows, and Explore New.
+
+**A note on where this could still be wrong.** The packet's names for two
+screens are the reverse of the code's. It calls DailyFAM "a single continuous
+stories feed with no folder concept" - which is the app's **explore** tab - and
+describes PlayFAM as the grid of playlist tiles, which is the app's **DailyFAM**
+tab. The exclusions in item 1 were therefore read by description rather than by
+name: "already has its own auto-advance flow" and "already a continuous
+exploration space" are the reel and Explore New, and those are the two surfaces
+where the popup does not fire. If the intent was the other way round, the change
+is one condition in `nextUpAllowedHere`.

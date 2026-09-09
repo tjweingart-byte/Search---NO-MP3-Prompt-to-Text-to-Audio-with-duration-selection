@@ -37,6 +37,7 @@ import topics as topics_mod
 import accounts as accounts_mod
 from paths import PROJECT_ROOT
 import mixes as mixes_mod
+import preferences as prefs_mod
 import social as social_mod
 import voice_store
 from tts import (
@@ -284,6 +285,7 @@ def _database_report() -> list[dict]:
         ("mixes", "MIXES_DB", MIXES.path),
         ("attachments", "ATTACHMENTS_PATH", ATTACHMENTS.path),
         ("accounts", "ACCOUNTS_DB", ACCOUNTS.path),
+        ("preferences", "PREFS_DB", PREFS.path),
     ]
     report = []
     for name, env_var, path in stores:
@@ -531,6 +533,7 @@ EVENTS = topics_mod.EventStore()
 MIXES = mixes_mod.MixStore()
 SOCIAL = social_mod.SocialStore()
 ACCOUNTS = accounts_mod.AccountStore()
+PREFS = prefs_mod.PreferenceStore()
 
 
 @app.middleware("http")
@@ -611,6 +614,38 @@ def _require_listener(request: Request) -> str:
     return user
 
 
+#: What "Skip for now" costs, in one place. Playback is never gated: search,
+#: myFAM, DailyFAM's episodes, Explore and Go Deeper all work with no account,
+#: because a login in front of the first word breaks the one-sentence spec and
+#: that mistake has already been avoided once here (see accounts.py).
+#:
+#: What *is* gated is everything the server keeps for you long-term - saved
+#: mixes, chosen interests and language, the weekly recap - on the product
+#: decision that durable per-listener storage is what an account is for.
+#:
+#: The interaction log is deliberately NOT in that set. It is ambient
+#: personalisation rather than a thing the listener made and can point at, and
+#: gating it would mean an anonymous listener's feed could never be ranked -
+#: which is the product, not an account perk.
+ACCOUNT_REQUIRED = ("You need an account for this. Signing up keeps the "
+                    "listening you have already done — it does not start you over.")
+
+
+def _require_account(request: Request) -> str:
+    """The listener id, but only if credentials are attached to it.
+
+    401 rather than 403: the listener genuinely has an identity, it just has
+    nothing proving it is theirs on another device. The interface reads the
+    status and offers signup rather than printing a failure.
+    """
+    listener = getattr(request.state, "listener", None)
+    if listener is None or not listener.user_id:
+        raise HTTPException(status_code=503, detail="Could not start a session.")
+    if not listener.is_authenticated:
+        raise HTTPException(status_code=401, detail=ACCOUNT_REQUIRED)
+    return listener.user_id
+
+
 class MixRequest(BaseModel):
     # No `user` field: identity comes from the session cookie, never the body.
     name: Optional[str] = Field(None, max_length=mixes_mod.MAX_NAME)
@@ -681,9 +716,14 @@ async def bank(request: Request):
 
 @app.get("/api/mixes")
 async def list_mixes(request: Request):
-    """This listener's playFAM mixes, each with its topics resolved."""
+    """This listener's DailyFAM mixes, each with its topics resolved.
+
+    Account-gated along with the rest of /api/mixes: a mix is a thing the
+    listener made and expects to find again, which is the definition this app
+    uses for "needs an account". See ACCOUNT_REQUIRED.
+    """
     _read_limit(request)
-    user = _listener(request)
+    user = _require_account(request)
     return {
         "mixes": [m.as_dict() for m in MIXES.list_for_user(user)],
         "starters": [
@@ -697,7 +737,7 @@ async def list_mixes(request: Request):
 async def create_mix(req: MixRequest, request: Request):
     _read_limit(request)
     try:
-        mix = MIXES.create(_listener(request), req.name or "", req.topic_ids or [])
+        mix = MIXES.create(_require_account(request), req.name or "", req.topic_ids or [])
     except mixes_mod.MixError as exc:
         # Phrased for the listener: these are things they did, not faults.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -707,8 +747,9 @@ async def create_mix(req: MixRequest, request: Request):
 @app.patch("/api/mixes/{mix_id}")
 async def update_mix(mix_id: str, req: MixRequest, request: Request):
     _read_limit(request)
+    account = _require_account(request)
     try:
-        mix = MIXES.update(_listener(request), mix_id, req.name, req.topic_ids, req.public)
+        mix = MIXES.update(account, mix_id, req.name, req.topic_ids, req.public)
     except mixes_mod.MixError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return mix.as_dict()
@@ -717,9 +758,160 @@ async def update_mix(mix_id: str, req: MixRequest, request: Request):
 @app.delete("/api/mixes/{mix_id}")
 async def delete_mix(mix_id: str, request: Request):
     _read_limit(request)
-    if not MIXES.delete(_listener(request), mix_id):
+    if not MIXES.delete(_require_account(request), mix_id):
         raise HTTPException(status_code=404, detail="That mix no longer exists.")
     return {"ok": True}
+
+
+class PreferenceRequest(BaseModel):
+    """Every field optional: the intro saves one page at a time, and the recap
+    popup writes one flag from a screen that knows nothing about the rest."""
+
+    # No `user` field, for the same reason MixRequest has none.
+    interests: Optional[list[str]] = None
+    language: Optional[str] = Field(None, max_length=8)
+    weekly_recap: Optional[bool] = None
+    intro_done: Optional[bool] = None
+
+
+def _interests_for(request: Request, given: str = "") -> tuple[str, ...]:
+    """Chosen facets for ranking: stored ones for an account, the query string
+    for anyone else.
+
+    Taking these off the request for an anonymous listener is not what "a
+    listener id is never accepted from the client" forbids. An id is an
+    identity and grants access to somebody's data; this is a ranking hint,
+    validated against a fixed eight-word vocabulary, used for one response and
+    never written down. An anonymous listener's intro answers live in their own
+    browser and nowhere else, so this is the only route by which the ranker can
+    honour them at all - and honouring them is the entire reason the intro asks.
+    """
+    listener = getattr(request.state, "listener", None)
+    if listener is not None and listener.is_authenticated:
+        return PREFS.get(listener.user_id).interests
+    try:
+        return prefs_mod.clean_interests(given.split(","))
+    except prefs_mod.PreferenceError:
+        # A malformed hint costs one less-personal feed. It must never be what
+        # stops the page loading.
+        return ()
+
+
+@app.get("/api/preferences")
+async def read_preferences(request: Request):
+    """What is on offer, and what this listener chose.
+
+    The *choices* are public - the intro is shown before anyone has an account,
+    and a picker that cannot list its own options is no picker. What was chosen
+    comes back only for an account, and `saved` says which of the two the
+    caller is looking at, so the interface can tell the listener the truth
+    about whether their answers are being kept.
+    """
+    _read_limit(request)
+    listener = getattr(request.state, "listener", None)
+    authed = bool(listener is not None and listener.is_authenticated)
+    stored = (PREFS.get(listener.user_id) if authed
+              else prefs_mod.Preferences(_listener(request)))
+    body = {
+        "interests_available": [{"id": tag, "label": label}
+                                for tag, label in topics_mod.TAG_LABELS.items()],
+        "languages": [dict(lang) for lang in prefs_mod.LANGUAGES],
+        "max_interests": prefs_mod.MAX_INTERESTS,
+        # False until per-language generation exists. Printed under the picker
+        # rather than left implicit: a setting that silently changes nothing is
+        # the failure mode this project has paid for most often.
+        "language_active": prefs_mod.LANGUAGE_ACTIVE,
+        "account": authed,
+        "saved": authed,
+        "account_required": ACCOUNT_REQUIRED,
+    }
+    body.update(stored.as_dict())
+    return body
+
+
+@app.post("/api/preferences")
+async def write_preferences(req: PreferenceRequest, request: Request):
+    """Store the intro's answers. Account only - see ACCOUNT_REQUIRED."""
+    _read_limit(request)
+    user = _require_account(request)
+    try:
+        prefs = PREFS.save(user, interests=req.interests, language=req.language,
+                           weekly_recap=req.weekly_recap, intro_done=req.intro_done)
+    except prefs_mod.PreferenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return prefs.as_dict()
+
+
+@app.get("/api/recap")
+async def recap(request: Request):
+    """This listener's week, and whether they are still owed this one.
+
+    `due` is what decides the popup, and it is answered here rather than in the
+    browser because the rule is "the first open on or after Sunday" - a
+    question about a stored date, not about this session.
+    """
+    _read_limit(request)
+    user = _require_account(request)
+    body = topics_mod.weekly_recap(EVENTS, user)
+    prefs = PREFS.get(user)
+    body["due"] = PREFS.recap_due(user)
+    body["enabled"] = prefs.weekly_recap
+    return body
+
+
+@app.post("/api/recap/seen")
+async def recap_seen(request: Request):
+    """Mark this week's recap shown, so it does not appear again until Sunday."""
+    _read_limit(request)
+    PREFS.mark_recap_seen(_require_account(request))
+    return {"ok": True}
+
+
+@app.get("/api/nextup")
+async def next_up(
+    request: Request,
+    topic_id: str = Query("", max_length=64),
+    q: str = Query("", max_length=300, description="What the finished episode asked"),
+    interests: str = Query("", max_length=200),
+):
+    """The four tiles the post-episode popup offers.
+
+    Costs no model call - it ranks the same fixed bank myFAM does, seeded with
+    what just finished. See topics.rank_next_up for why this is the feed's
+    ranker rather than a second one.
+    """
+    _read_limit(request)
+    user = _listener(request)
+    picks = topics_mod.rank_next_up(
+        EVENTS, user, after_id=topic_id, after_text=q,
+        interests=_interests_for(request, interests),
+    )
+    # Recorded on the same terms as a shelf: one tile, one listener, one
+    # ranking version. Without it the popup would be the one surface whose
+    # picks nobody could account for afterwards.
+    if user:
+        EVENTS.record_impressions(user, [("next_up", t.id) for t in picks])
+    return {"topics": [t.as_dict() for t in picks], "algo": topics_mod.ALGO_VERSION}
+
+
+@app.get("/api/explorenew")
+async def explore_new(request: Request, interests: str = Query("", max_length=200)):
+    """Explore New: episodes adjacent to a taste rather than inside it.
+
+    This is `rank_might_like`, which has been written and tested since myFAM
+    was built and shown nowhere since its shelf was removed - the only signal
+    in the app that offers anything outside an established taste. Giving it a
+    surface of its own is what makes it worth keeping.
+    """
+    _read_limit(request)
+    user = _listener(request)
+    body = topics_mod.build_explore_new(
+        EVENTS, user, interests=_interests_for(request, interests)
+    )
+    if user:
+        EVENTS.record_impressions(user, [("explore_new", t["id"]) for t in body["topics"]])
+    body["algo"] = topics_mod.ALGO_VERSION
+    return body
 
 
 class EventRequest(BaseModel):
@@ -732,7 +924,7 @@ class EventRequest(BaseModel):
 
 
 @app.get("/api/myfam")
-async def myfam(request: Request):
+async def myfam(request: Request, interests: str = Query("", max_length=200)):
     """The four myFAM sections, ranked for this listener.
 
     Costs no model call: the topic bank is fixed and this only orders it.
@@ -743,7 +935,7 @@ async def myfam(request: Request):
     # reader's limit rather than the generation one.
     _read_limit(request)
     user = _listener(request)
-    feed = topics_mod.build_feed(EVENTS, user)
+    feed = topics_mod.build_feed(EVENTS, user, interests=_interests_for(request, interests))
     # Logged here rather than inside build_feed, which stays a pure function of
     # the log - the whole ranking design is "computed on read, never stored",
     # and a ranker that writes cannot be tested by calling it. The impression

@@ -64,7 +64,7 @@ FAM_ENVIRONMENT = (
 #: would point the suite at a developer's real cache or account store.
 DATA_ENVIRONMENT = (
     "ACCOUNTS_DB", "ATTACHMENTS_PATH", "CACHE_PATH", "MIXES_DB", "MYFAM_DB",
-    "SOCIAL_DB",
+    "PREFS_DB", "SOCIAL_DB",
 )
 
 #: The embedding backend, which decides whether near matching is lexical or
@@ -132,14 +132,18 @@ def config_environment_names() -> set:
 
 @pytest.fixture(autouse=True)
 def isolated_accounts(tmp_path, monkeypatch):
-    """Every test gets its own sessions and credentials.
+    """Every test gets its own sessions, credentials and stored preferences.
 
     Without this the suite would mint session rows into the real accounts.db in
     the project root - the store holding password hashes, which is the last one
-    that should collect debris from a test run.
+    that should collect debris from a test run. Preferences ride along because
+    they are keyed on the same listener id and gated on the same account: a
+    leaked row here would give the next test somebody else's interests, and a
+    ranked feed is exactly the kind of thing that fails quietly when it does.
     """
     import accounts as accounts_mod
     import app as appmod
+    import preferences as prefs_mod
 
     # In a subdirectory, not tmp_path itself: a test that asserts no store
     # followed the working directory looks for these filenames in the cwd, and
@@ -148,4 +152,9 @@ def isolated_accounts(tmp_path, monkeypatch):
         appmod,
         "ACCOUNTS",
         accounts_mod.AccountStore(str(tmp_path / "auth" / "accounts.db")),
+    )
+    monkeypatch.setattr(
+        appmod,
+        "PREFS",
+        prefs_mod.PreferenceStore(str(tmp_path / "auth" / "preferences.db")),
     )

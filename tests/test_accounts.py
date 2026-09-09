@@ -47,11 +47,19 @@ def other(monkeypatch=None) -> TestClient:
 
 
 def test_a_listener_id_can_no_longer_be_asserted_by_the_caller(client):
-    """The whole point. `?user=` used to be identity; it is now ignored."""
+    """The whole point. `?user=` used to be identity; it is now ignored.
+
+    Both sides hold an account, because mixes are account-gated now and an
+    anonymous attacker would be turned away for the wrong reason - proving the
+    gate works rather than proving the id cannot be forged.
+    """
+    client.post("/api/auth/signup", json={"email": "mine@example.com", "password": GOOD})
     mine = client.get("/api/auth/me").json()["user_id"]
     client.post("/api/mixes", json={"name": "Mine"})
 
     attacker = other()
+    attacker.post("/api/auth/signup",
+                  json={"email": "them@example.com", "password": GOOD})
     listed = attacker.get("/api/mixes", params={"user": mine}).json()["mixes"]
     assert listed == [], "a mix was readable by naming its owner in the query"
     assert attacker.get("/api/auth/me").json()["user_id"] != mine

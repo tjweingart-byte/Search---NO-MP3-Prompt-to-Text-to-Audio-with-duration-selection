@@ -66,6 +66,55 @@ def main() -> int:
                 failures.append(f"{label}: {exc}")
                 print(f"  FAIL  {label}: {exc}")
 
+        def first_run_asks_before_it_shows_the_app():
+            """The entry flow runs once, and every path through it lands in
+            the app. A first-run screen with no way out is the worst bug this
+            file could miss, because it is the only screen everybody sees."""
+            assert page.eval_on_selector(".screen.active", "e => e.id") == "screen-welcome", \
+                "a first open did not start on the welcome screen"
+            assert page.query_selector("#screen-welcome .entry-skip"), \
+                "there was no way past the account step"
+            # Signed up rather than skipped, because the gated surfaces below
+            # (mixes, the recap) are the ones with something to check, and
+            # skipping is asserted above as reachable.
+            page.evaluate("openAuth('signup')")
+            page.wait_for_timeout(400)
+            page.evaluate("showAuthForm()")
+            page.fill("#authEmail", "smoke@example.com")
+            page.fill("#authPassword", "a-long-enough-password")
+            page.evaluate("submitAuthForm()")
+            page.wait_for_selector("#screen-intro.active .intro-chip",
+                                   timeout=10000, state="attached")
+            chips = page.eval_on_selector_all(".intro-chip", "e => e.length")
+            assert chips >= 6, f"only {chips} interests offered"
+            # The cap is a disabled chip, not a message after the fact.
+            for i in range(7):
+                page.evaluate(f"var c=document.querySelectorAll('.intro-chip')[{i}];"
+                              " if(c) c.click();")
+            chosen = page.eval_on_selector_all(".intro-chip.on", "e => e.length")
+            assert chosen == 6, f"the six-interest cap let {chosen} through"
+            assert page.query_selector(".intro-chip.full"), \
+                "the seventh chip was still selectable"
+            page.evaluate("introNext()")
+            page.wait_for_selector("#introPageLanguage .intro-lang",
+                                   timeout=10000, state="attached")
+            page.evaluate("finishIntro()")
+            page.wait_for_timeout(900)
+            assert page.eval_on_selector(".screen.active", "e => e.id") == "screen-myfam", \
+                "finishing the intro did not land in the app"
+
+        def the_weekly_recap_pops_on_a_new_week():
+            """Fixture says this week's recap is still owed, so it fires on the
+            first open after the intro - and has to be dismissable."""
+            page.wait_for_selector("#recapOverlay.active", timeout=10000)
+            # A tile when there is a week to recap, a sentence saying so when
+            # there is not. Both are correct; an empty card is not.
+            assert page.text_content("#recapBody").strip(), "the recap card was blank"
+            page.evaluate("closeRecap()")
+            page.wait_for_timeout(400)
+            assert not page.query_selector("#recapOverlay.active"), \
+                "the recap could not be dismissed"
+
         def myfam():
             page.evaluate("openMyFamTab()")
             page.wait_for_selector(".feed-rail .seed-card", timeout=10000, state="attached")
@@ -176,7 +225,88 @@ def main() -> int:
             page.reload()
             page.wait_for_timeout(1200)
 
+        def your_fam_offers_the_recap_and_explore_new():
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(500)
+            page.click("#screen-myfam .myfam-msg-btn")
+            page.wait_for_timeout(600)
+            tiles = page.eval_on_selector_all(".yf-tile-name", "e => e.map(x => x.textContent)")
+            assert tiles == ["Weekly Recap", "Explore New"], f"saw {tiles}"
+            page.evaluate("openExploreNew()")
+            page.wait_for_selector("#screen-explorenew.active .xn-card",
+                                   timeout=10000, state="attached")
+            assert page.eval_on_selector_all(".xn-card", "e => e.length") >= 4
+            assert page.text_content("#xnReason").strip(), \
+                "Explore New did not say why it was showing these"
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
+        def whats_next_offers_four_and_counts_down():
+            """The popup, driven the way an ended episode drives it. The
+            countdown tile is checked for existence, not waited out - five
+            seconds of real time in a smoke test buys nothing."""
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+            page.evaluate("showScreen('player')")
+            page.evaluate("maybeOfferNextUp('what the fed did to interest rates', '')")
+            page.wait_for_selector("#nextUpOverlay.active .nextup-tile",
+                                   timeout=10000)
+            tiles = page.eval_on_selector_all(".nextup-tile", "e => e.length")
+            assert tiles == 4, f"expected a 2x2 grid, saw {tiles} tiles"
+            assert page.query_selector(".nextup-tile.lead .nextup-timer"), \
+                "the first tile has no countdown"
+            assert "starts in" in page.text_content("#nextUpSub").lower()
+            # Tapping anything else cancels the countdown rather than racing it.
+            page.evaluate("closeNextUp()")
+            page.wait_for_timeout(300)
+            assert not page.query_selector("#nextUpOverlay.active")
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
+        def ensure_account():
+            """Sign up unless this browser already has an account.
+
+            Needed because one check above clears localStorage on purpose, and
+            on the live preview that is a real logout: the session token lives
+            there. Mixes are account-gated, so anything below that touches them
+            has to put an account back first. The email is unique per call -
+            the store is durable and the same address twice is refused, exactly
+            as the server refuses it.
+            """
+            if page.evaluate("() => AUTH && AUTH.authenticated"):
+                return
+            page.evaluate(
+                """() => {
+                    var who = "smoke-" + Math.random().toString(36).slice(2, 9)
+                              + "@example.com";
+                    return fetch("/api/auth/signup", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({ email: who,
+                                               password: "a-long-enough-password" })
+                    }).then(function(){ return refreshAuth(); });
+                }"""
+            )
+            page.wait_for_timeout(600)
+
+        def the_account_gate_reads_as_a_choice():
+            """Skipping the account step has to look like a decision, not a
+            broken screen - and it has to offer the way out of itself."""
+            page.evaluate("openPlayFAM()")
+            # After the load settles, not with it: loadMixes writes the same
+            # element asynchronously and would paint over this.
+            page.wait_for_timeout(1200)
+            page.evaluate("renderMixesLocked()")
+            page.wait_for_selector("#screen-playfam .locked-note", timeout=10000)
+            assert page.eval_on_selector_all("#screen-playfam .locked-acts .pf-btn",
+                                             "e => e.length") == 2, \
+                "the gate offered no way to sign up or log in"
+            text = page.text_content("#screen-playfam .locked-note").lower()
+            assert "start you over" in text, \
+                "the gate did not say signing up keeps what they already have"
+
         def dailyfam():
+            ensure_account()
             page.evaluate("openPlayFAM()")
             page.wait_for_selector(".mix-card", timeout=10000, state="attached")
             assert page.eval_on_selector_all(".mix-card", "e => e.length") >= 1
@@ -320,12 +450,19 @@ def main() -> int:
             assert page.text_content("#reelTitle") != first, "swipe did not advance"
 
         print(f"smoke test: {target.name}")
+        check("The first run asks, then lets you in", first_run_asks_before_it_shows_the_app)
+        check("The weekly recap pops and closes", the_weekly_recap_pops_on_a_new_week)
         check("myFAM renders three rails", myfam)
         check("Go Deeper titles are not cut off", go_deeper_titles_fit)
         check("Go Deeper fills for a new listener", go_deeper_fills_for_a_new_listener)
         check("A file can be attached to a search", attachments)
         check("Searching shows the loading screen", loading_screen_on_a_search)
         check("One loading screen serves every surface", loading_screen_covers_every_surface)
+        check("Your FAM offers the recap and Explore New",
+              your_fam_offers_the_recap_and_explore_new)
+        check("What's next offers four with a countdown",
+              whats_next_offers_four_and_counts_down)
+        check("The account gate reads as a choice", the_account_gate_reads_as_a_choice)
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)
