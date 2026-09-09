@@ -25,7 +25,7 @@ from config import Settings, settings
 from pipeline import (MAX_TAIL_SILENCE, MAX_TOPUPS, OVERRUN_GRACE,
                       GenerationStats, PodcastPipeline)
 from script_generator import plan_episode
-from speech_assembly import AssemblyPolicy
+from speech_assembly import AssembledChunk, AssemblyPolicy
 from tts import DebugEngine
 
 from tests.test_pipeline import FakeGenerator
@@ -78,19 +78,28 @@ def live_tasks(base: set) -> list:
 # ==========================================================================
 # 1-4. The selector itself
 # ==========================================================================
-def test_the_default_with_no_environment_variable_is_legacy():
-    """Nothing set anywhere: an installation that has never heard of this
-    setting still runs the path it always ran."""
-    assert "STREAMING_PIPELINE" not in os.environ
-    assert settings.streaming_pipeline == "legacy"
-    assert pipeline_module.settings.streaming_pipeline == "legacy"
+def test_a_fresh_deployment_with_nothing_set_runs_phase6():
+    """The production default, asserted at every layer it passes through.
+
+    Reversed from `..._is_legacy`, and the reversal is the change: an
+    installation that has never heard of this setting gets the validated
+    architecture. Reaching the older one takes naming it.
+    """
+    from config import DEFAULT_PIPELINE
+
+    assert "STREAMING_PIPELINE" not in os.environ, (
+        "the suite is not clean; this test would be reading the machine")
+    assert DEFAULT_PIPELINE == "phase6"
+    assert settings.streaming_pipeline == "phase6"
+    assert pipeline_module.settings.streaming_pipeline == "phase6"
     assert PodcastPipeline(generator=None, engine=ENGINE,
-                           cache=None)._phase6() is False
+                           cache=None)._phase6() is True
 
 
-def test_an_unset_flag_routes_to_the_legacy_pair(flag):
+def test_an_unset_flag_routes_to_the_phase6_pair(flag):
+    """Not just the setting - the pump a real request is actually served by."""
     flag(None)
-    assert _pump_item_type() is str
+    assert _pump_item_type() is AssembledChunk
 
 
 def test_legacy_routes_to_the_legacy_pair(flag):

@@ -39,18 +39,37 @@ from tests.test_pipeline import FakeGenerator
 ENGINE = DebugEngine()
 
 
-def episode(minutes: int, ratio: float = 1.0, **kwargs):
-    """One legacy episode, start to finish. Returns (plan, stats, seconds)."""
+def episode(minutes: int, ratio: float = 1.0, pipeline_value: str = "legacy",
+            **kwargs):
+    """One episode, start to finish. Returns (plan, stats, seconds).
+
+    The architecture is named rather than inherited. This helper said "one
+    legacy episode" while reading whatever `STREAMING_PIPELINE` happened to
+    default to, so the day the default became `phase6` every measurement below
+    silently changed subject - a test that names one thing and measures another
+    is the same class of fault as a mark in the wrong place.
+    """
+    import dataclasses
+
+    import pipeline as pipeline_mod
+
     async def run():
         plan = plan_episode("what is the nasdaq", minutes)
-        pipeline = PodcastPipeline(generator=FakeGenerator(ratio), engine=ENGINE,
-                                   cache=None, **kwargs)
+        pipe = PodcastPipeline(generator=FakeGenerator(ratio), engine=ENGINE,
+                               cache=None, **kwargs)
         stats = GenerationStats()
         total = 0
-        async for chunk in pipeline.stream_pcm(plan, stats):
+        async for chunk in pipe.stream_pcm(plan, stats):
             total += len(chunk)
         return plan, stats, pcm_duration(total, ENGINE.sample_rate)
-    return asyncio.run(run())
+
+    original = pipeline_mod.settings
+    pipeline_mod.settings = dataclasses.replace(
+        original, streaming_pipeline=pipeline_value)
+    try:
+        return asyncio.run(run())
+    finally:
+        pipeline_mod.settings = original
 
 
 def sentences_of(words_each: int, count: int) -> list:
@@ -107,15 +126,43 @@ def test_no_configuration_overshoots_the_requested_length(minutes, ratio):
 
 
 def test_the_measured_baseline_is_recorded_so_a_change_is_visible():
-    """Characterisation. These are not targets - they are what production did
-    when Phase 6 work began, so a later change cannot pass unnoticed."""
-    measured = {(minutes, ratio): round(episode(minutes, ratio)[2], 2)
+    """Characterisation. These are not targets - they are what the legacy path
+    did when Phase 6 work began, so a later change cannot pass unnoticed."""
+    measured = {(minutes, ratio): round(episode(minutes, ratio, "legacy")[2], 2)
                 for minutes in (1, 3, 5) for ratio in (0.5, 1.0)}
     assert measured == {
         (1, 0.5): 37.97, (1, 1.0): 60.00,
         (3, 0.5): 98.98, (3, 1.0): 180.00,
         (5, 0.5): 162.85, (5, 1.0): 300.00,
     }, f"the legacy duration behaviour moved: {measured}"
+
+
+def test_the_production_baseline_is_recorded_too():
+    """The same characterisation for the path a listener now actually gets.
+
+    Phase 6 speaks slightly more within the same ceiling - it reclaims the gap
+    legacy left between sentences, so at three minutes it fits ~452 words where
+    legacy fit ~442. That difference was characterised when the path was built
+    and deliberately not tuned away to force numerical identity; recording it
+    here is what stops it drifting now that it is the default.
+    """
+    measured = {(minutes, ratio): round(episode(minutes, ratio, "phase6")[2], 2)
+                for minutes in (1, 3, 5) for ratio in (0.5, 1.0)}
+    assert measured == {
+        (1, 0.5): 37.46, (1, 1.0): 60.00,
+        (3, 0.5): 97.50, (3, 1.0): 180.12,
+        (5, 0.5): 160.21, (5, 1.0): 300.00,
+    }, f"the production duration behaviour moved: {measured}"
+
+
+def test_neither_architecture_overshoots_the_ceiling():
+    """The bound that actually matters holds on both, and the production one is
+    the one a listener meets."""
+    for pipeline_value in ("legacy", "phase6"):
+        for minutes in (1, 3, 5):
+            plan, _, seconds = episode(minutes, 1.6, pipeline_value)
+            assert seconds <= plan.target_seconds + OVERRUN_GRACE, (
+                f"{pipeline_value} overshot at {minutes} min: {seconds:.2f}s")
 
 
 # ==========================================================================

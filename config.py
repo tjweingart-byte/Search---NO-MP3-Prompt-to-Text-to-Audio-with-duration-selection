@@ -117,16 +117,28 @@ def _env_float(name: str, default: float) -> float:
 
 #: Which generation pipeline a request runs through.
 #:
-#: `legacy` is the shipped path: `pipeline._start` pumps every sentence
-#: `script_generator.stream_sentences` produces into a bounded queue that the
-#: synthesiser drains, one sentence per synthesis call.
+#: `phase6` is production and is `DEFAULT_PIPELINE` below: a character-bounded
+#: script buffer between the model reader and the voice, so synthesis falling
+#: behind can never stop the reader, and speech-sized chunks after the first.
+#: The first chunk keeps its own latency path - the first complete speakable
+#: thought, no word floor.
 #:
-#: `phase6` is the validated streaming architecture - a character-bounded
-#: script buffer between the reader and the voice, and speech-sized chunks
-#: after the first. It is **not wired to anything yet**: selecting it today
-#: changes no behaviour. The flag exists first so that when the path does
-#: land, turning it off is one environment variable and a restart.
+#: `legacy` is the older path: `pipeline._start` pumps every sentence into a
+#: bounded queue the synthesiser drains, one sentence per synthesis call, so a
+#: slow voice stops the model reading. It is kept, and kept tested, for the
+#: baseline half of a comparison run and for the equivalence suite. Nothing
+#: selects it automatically.
+#:
+#: Both stay listed because rolling back must remain one environment variable
+#: and a restart. A value outside this tuple is refused - at import by
+#: `Settings.__post_init__`, and again at request time by `pipeline._phase6` -
+#: rather than falling back to either.
 STREAMING_PIPELINES = ("legacy", "phase6")
+
+#: What a deployment gets when it says nothing. Named rather than repeated as a
+#: literal, so "the default" is one fact in one place: `Settings`, the health
+#: report and the tests all read it from here.
+DEFAULT_PIPELINE = "phase6"
 
 
 @dataclass(frozen=True)
@@ -212,13 +224,26 @@ class Settings:
     answer_first_max_share: float = _env_float("ANSWER_FIRST_MAX_SHARE", 0.8)
     # legacy | phase6 - see STREAMING_PIPELINES above.
     #
-    # Defaults to `legacy` and will keep defaulting to it until the Phase 6
-    # path has been measured through the real interface. An unrecognised value
-    # is refused at import rather than falling back: a typo that quietly picks
-    # a pipeline is exactly the silent-success failure this project has paid
-    # for more than once.
+    # **phase6 is production.** It defaulted to `legacy` until the Phase 6 path
+    # had been measured through the real interface; that is now done. Validated
+    # on an RTX 4090 running this server with Chatterbox and the real prompt:
+    # synthesis began before the model finished writing, playback stayed
+    # continuous with no gap reaching the listener, the duration ceiling held,
+    # and the first chunk was one complete thought with no word floor.
+    #
+    # `legacy` is kept, and kept tested, for exactly two things: the baseline
+    # half of a comparison run (`tools/pod_production_test.sh` measures both on
+    # one card), and the equivalence suite that proves the user-visible
+    # contract survives the change of execution strategy. Nothing selects it
+    # automatically - reaching it takes setting this variable by hand.
+    #
+    # An unrecognised value is refused at import rather than falling back: a
+    # typo that quietly picks a pipeline is exactly the silent-success failure
+    # this project has paid for more than once. `pipeline._phase6` refuses one
+    # again at request time, so neither gate stands alone.
     streaming_pipeline: str = field(
-        default_factory=lambda: os.environ.get("STREAMING_PIPELINE", "legacy").strip().lower()
+        default_factory=lambda: os.environ.get(
+            "STREAMING_PIPELINE", DEFAULT_PIPELINE).strip().lower()
     )
 
     cache_enabled: bool = field(

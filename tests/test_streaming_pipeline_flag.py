@@ -42,10 +42,22 @@ def _restore():
 # --------------------------------------------------------------------------
 # the default
 # --------------------------------------------------------------------------
-def test_the_default_is_legacy(monkeypatch):
-    """Rollback is trivial because the shipped path is what you get by
-    default, on every machine that has never heard of this setting."""
-    assert reloaded(monkeypatch).settings.streaming_pipeline == "legacy"
+def test_the_default_is_phase6(monkeypatch):
+    """What a fresh production deployment gets with no variable set.
+
+    Reloaded from a clean environment rather than read off the imported
+    module, so this is what a new process actually computes rather than what
+    this one happens to hold.
+    """
+    reloaded_config = reloaded(monkeypatch)
+    assert reloaded_config.settings.streaming_pipeline == "phase6"
+    assert reloaded_config.DEFAULT_PIPELINE == "phase6"
+
+
+def test_rollback_is_still_one_variable(monkeypatch):
+    """Making phase6 the default must not make legacy unreachable - it is the
+    baseline half of a comparison run, and the way back if anything surfaces."""
+    assert reloaded(monkeypatch, "legacy").settings.streaming_pipeline == "legacy"
 
 
 def test_an_empty_value_is_refused_rather_than_treated_as_unset(monkeypatch):
@@ -108,15 +120,24 @@ def test_validation_also_catches_a_replaced_settings_object():
 
 
 # --------------------------------------------------------------------------
-# it selects nothing yet, and that is the point of this step
+# exactly two modules know which architecture is running
 # --------------------------------------------------------------------------
-def test_only_the_pipeline_reads_the_flag():
-    """Step 6B wired it, and only where a pump is made or spoken. Nothing
-    else in the app gets to branch on which architecture is running."""
+def test_only_the_pipeline_and_the_health_report_read_the_flag():
+    """One module branches on it and one reports it. Nothing else.
+
+    `app.py` joined the list when phase6 became the default: a deployment that
+    has been rolled back by hand looks identical from the outside to one that
+    has not, so `/api/health` says which is running. It reads the value and
+    does not branch on it - the branch stays in one place.
+    """
     readers = sorted(path.name for path in ROOT.glob("*.py")
                      if path.name != "config.py"
                      and "streaming_pipeline" in path.read_text())
-    assert readers == ["pipeline.py"], f"unexpected readers: {readers}"
+    assert readers == ["app.py", "pipeline.py"], f"unexpected readers: {readers}"
+    app_source = (ROOT / "app.py").read_text()
+    assert "streaming_pipeline ==" not in app_source.replace(
+        "settings.streaming_pipeline == DEFAULT_PIPELINE", ""), (
+        "app.py is branching on the architecture, not just reporting it")
 
 
 def test_the_legacy_queue_is_untouched():
