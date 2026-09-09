@@ -486,6 +486,10 @@ def test_a_researched_episode_plays_with_claude_reading_the_exa_packet(exa,
     use_backend(monkeypatch, "exa")
     monkeypatch.setattr(research, "settings",
                         dataclasses.replace(settings, research_backend="exa"))
+    # This test is about the split, so it asks for the cover. Unset,
+    # ANSWER_FIRST now follows the backend and Exa does not get one.
+    monkeypatch.setattr(pipeline_mod, "settings", dataclasses.replace(
+        pipeline_mod.settings, answer_first=True))
 
     seen_prompts: list = []
 
