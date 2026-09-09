@@ -3228,3 +3228,66 @@ This is the same shape as §54 (`.env.example` disagreeing with `config.py`) and
 it was written and false where it ran, and nothing compared the two. It is
 worth noticing that all three were caught by an environment that was *poorer*
 than the developer's, not richer.
+
+## 64. A smoke pass over everything forked in today
+
+Trunk had taken a lot of merges - Phase 6 as the default pipeline, Chatterbox,
+the database, accounts, and Exa as the default research backend. This is what a
+full pass over it found.
+
+**CI was red, and the whole loop was blocked behind it.** One test,
+`test_health_flags_a_deployment_that_asked_for_exa_and_cannot_run_it`, failed on
+any machine without `exa_py`. `diagnose()` reports the *first* missing
+prerequisite, so without the package it says "exa_py is not installed" and never
+reaches the key check the test asserted on. CI installs `requirements.txt` only,
+so it never had the package. Worse than one red test: `dev.sh` runs under
+`set -e`, so the interface checks, both preview builds and the browser smoke
+tests never ran at all.
+
+The test was wrong, not the code - `research.py`'s own docstring says "the test
+suite must run without it". It is now split in three, each deterministic
+whatever the machine has (a `None` entry in `sys.modules` makes the import
+raise; a bare module makes it succeed): the package missing, the key missing
+once the package is there, and both present. A fourth pins that the `claude`
+backend never reports unavailable for a missing Exa key. Confirmed each fails
+when the behaviour it covers is broken.
+
+**A listener was told to read a server log.** `friendly_error` reduced
+`ResearchUnavailable` to "Generation failed: ResearchUnavailable. See the server
+log for details." The exception already carries the remedy - "exa_py is not
+installed. `pip install -r requirements-exa.txt`" - and that is the one sentence
+that would let someone fix it. The browser is exactly where a server log cannot
+be read. Now surfaced verbatim.
+
+**The preflight had a fourth blind spot.** `demo_preflight.py` names three ways
+the demo can look like it is working - no key, no voice, empty cache. Research
+is now a fourth: Exa is the default, it needs an optional package and a second
+key, and without them a time-sensitive question *fails* rather than answering
+from memory. That is deliberate, but discovering it by asking about today's news
+is not. It now reports the backend, and the per-tab summary says search will
+fail on a time-sensitive question.
+
+**`dev.sh` never built the demo it ships.** There are two preview builders -
+`build_preview.py` (fixtures) and `build_live_preview.py` (the app beside a real
+database). Only the first was in "the whole loop in one command", and the second
+is the one that gets published. That is how the wrong file nearly got published
+today. Both are now built, and both are smoke-tested.
+
+**A stale comment said the opposite of the code.** `requirements-exa.txt` still
+claimed "The default backend is `claude`". It also now states the consequence
+plainly rather than leaving it to be discovered: a fresh
+`pip install -r requirements.txt` produces a deployment whose *default* research
+backend cannot run. Nothing about that is silent - health reports it and a
+researched episode fails rather than quietly searching another way - but a
+researched episode does fail.
+
+**What was checked and found sound.** End-to-end through a running server: 60.0s
+of audio for a one-minute request in 0.26s. `stall_probe`: first audio 0.66s,
+longest main-thread stall 0.16s, no stall. The app primes before it responds, so
+a failure before the first byte becomes a proper 502 rather than a silent empty
+episode. `answer_first` correctly follows the backend - off for Exa because
+there is no wait to cover, on for `claude` where the model's own search costs
+10-25s. The vector cache reports honestly that at the safe operating point the
+embedding adds nothing the token-overlap guard did not already find.
+
+989 passing, 3 skipped, both previews green in a browser.

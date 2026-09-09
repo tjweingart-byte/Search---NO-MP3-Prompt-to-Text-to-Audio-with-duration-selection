@@ -40,12 +40,21 @@ fi
 
 step "Phone preview"
 $PY preview/build_preview.py
+# The demo that actually gets published is the live one - the app driven by a
+# real database, beside it. Leaving it out of "the whole loop in one command"
+# is how a stale build gets shipped, and how the wrong file gets published.
+$PY preview/build_live_preview.py
 $PY tools/build_loading_demo.py
 # Skipping the browser test silently is the failure this project has paid for
 # twice: the run still ends "all checks passed" having never opened a browser.
 # Every skip announces itself.
 if command -v node >/dev/null 2>&1 && $PY -c "import playwright" 2>/dev/null; then
   $PY tools/smoke_preview.py || echo "  (smoke test failed - the preview still built)"
+  # Both previews are shipped, so both are driven. They are built from the
+  # same interface but not by the same script, and only one of them is what
+  # anyone is given a link to.
+  $PY tools/smoke_preview.py preview/fam-live.html \
+    || echo "  (live-preview smoke test failed - the preview still built)"
 else
   printf '  \033[1mSKIPPED: the browser smoke test did not run.\033[0m\n'
   printf '  Nothing below was checked in a browser. To fix:\n'

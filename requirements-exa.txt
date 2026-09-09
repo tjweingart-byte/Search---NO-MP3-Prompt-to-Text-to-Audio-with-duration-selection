@@ -2,11 +2,18 @@
 #
 #   pip install -r requirements-exa.txt
 #
-# Needed only when RESEARCH_BACKEND=exa. The default backend is `claude`, which
-# uses Anthropic's server-side web_search tool and needs nothing here - so a
-# laptop, a CI runner and the preview build all install FAM and run its tests
-# without this file, and `research.diagnose()` reports "exa_py is not
-# installed" rather than failing an import.
+# Needed when RESEARCH_BACKEND=exa, which is now the DEFAULT. This file is
+# still kept out of requirements.txt on purpose, so a laptop, a CI runner and
+# the preview build all install FAM and run its tests without it - and
+# `research.diagnose()` reports "exa_py is not installed" rather than failing
+# an import.
+#
+# The consequence, stated plainly rather than discovered: a fresh
+# `pip install -r requirements.txt` gives a deployment whose default research
+# backend cannot run. Nothing is silent about it - /api/health reports
+# `unavailable: true` with the reason, and a researched episode fails rather
+# than quietly searching another way - but a researched episode does fail.
+# Install this file, or set RESEARCH_BACKEND=claude.
 #
 # Kept out of requirements.txt for the same reason requirements-chatterbox.txt
 # is: an optional backend must not become a fresh-install requirement.

@@ -26,6 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import research
 from cache import build_cache
 from config import describe_key, key_source, settings
 
@@ -105,6 +106,30 @@ def main() -> int:
             f"See RUNPOD_PRODUCTION.md.{RESET}")
         worst = max(worst, 2)
 
+    # Research is the fourth way this can look like it is working. The default
+    # backend is Exa, which needs an optional package and a second key; without
+    # them a question the heuristic marks time-sensitive fails outright rather
+    # than quietly answering from memory. That is deliberate, but it is not
+    # something to discover by asking about today's news.
+    research_ok, research_detail = research.diagnose()
+    backend = settings.research_backend
+    if backend == "claude":
+        say(f"  research   {BOLD}claude{RESET} - the model searches during the call "
+            f"(costs 10-25s before the first word)")
+    elif research_ok:
+        say(f"  research   {BOLD}exa{RESET} - retrieves first, then Claude writes "
+            f"from the packet")
+    else:
+        say(f"  research   {BOLD}UNAVAILABLE{RESET} - backend is \"exa\" but "
+            f"{research_detail}.")
+        say(f"{DIM}             A time-sensitive question ('latest', 'today', a score) "
+            f"will FAIL,")
+        say(f"             not fall back. Everything else is unaffected.")
+        say(f"             Fix: pip install -r requirements-exa.txt and set "
+            f"EXA_API_KEY,")
+        say(f"             or set RESEARCH_BACKEND=claude.{RESET}")
+        worst = max(worst, 1)
+
     if episodes < 0:
         say(f"  cache      {BOLD}off{RESET} (CACHE_ENABLED=0) - Explore reads from it "
             f"and will stay empty")
@@ -119,7 +144,9 @@ def main() -> int:
 
     say(f"\n{BOLD}What each tab will do{RESET}")
     fresh = "writes a real episode" if live else "plays the canned sample"
-    say(f"  search     type anything, pick a length  ->  {fresh}")
+    researched = ("  ·  a time-sensitive question will FAIL (research unavailable)"
+                  if settings.research_backend == "exa" and not research_ok else "")
+    say(f"  search     type anything, pick a length  ->  {fresh}{researched}")
     say(f"  myFAM      tap a tile  ->  {fresh}; rails rank the shared bank")
     say(f"  DailyFAM   starter mixes work cold; tap a mix to play it through")
     say(f"  explore    replays {'cached episodes' if episodes > 0 else 'nothing yet'} "

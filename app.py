@@ -29,7 +29,7 @@ from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_wo
 import embeddings
 from demo_script import DemoGenerator
 from config import DEFAULT_PIPELINE, describe_key, settings
-from research import report as research_report
+from research import ResearchUnavailable, report as research_report
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import attachments as attachments_mod
@@ -197,6 +197,13 @@ def friendly_error(exc: Exception) -> str:
         return "Claude is rate limiting this key. Wait a moment and try again."
     if isinstance(exc, anthropic.APIConnectionError):
         return "Could not reach the Claude API. Check the server's network access."
+    if isinstance(exc, ResearchUnavailable):
+        # This one already carries the remedy - "exa_py is not installed,
+        # `pip install -r requirements-exa.txt`", or which key is missing.
+        # Replacing that with "see the server log" throws away the one
+        # sentence that would let the person fix it, which is the whole job
+        # of this function. Every other component names what is wrong.
+        return f"This question needed research and the backend could not run. {exc}"
     return f"Generation failed: {type(exc).__name__}. See the server log for details."
 
 # One cache shared by every request this worker serves - and, with the SQLite

@@ -447,13 +447,81 @@ def test_the_startup_warning_is_not_fatal():
     assert app._announce_research() is None
 
 
-def test_health_flags_a_deployment_that_asked_for_exa_and_cannot_run_it(monkeypatch):
+def _exa_backend(monkeypatch):
     monkeypatch.setattr(research, "settings",
                         dataclasses.replace(settings, research_backend="exa"))
+
+
+def _exa_py(monkeypatch, installed: bool):
+    """Decide whether `import exa_py` succeeds, whatever this machine has.
+
+    `diagnose()` reports the *first* missing prerequisite, so on a machine
+    without the package the key branch is unreachable and a test that asserts
+    on it fails for a reason that has nothing to do with the behaviour. A None
+    entry in sys.modules makes the import raise; a bare module makes it
+    succeed. Both are deterministic, which matters because the suite must pass
+    with exa_py absent - see test_exa_is_not_a_fresh_install_requirement.
+    """
+    monkeypatch.setitem(sys.modules, "exa_py",
+                        types.ModuleType("exa_py") if installed else None)
+
+
+def test_health_names_the_missing_package_when_exa_py_is_absent(monkeypatch):
+    _exa_backend(monkeypatch)
+    _exa_py(monkeypatch, installed=False)
+    report = research.report()
+    assert report["unavailable"] is True
+    assert "exa_py" in report["exa_detail"]
+
+
+def test_health_names_the_missing_key_once_the_package_is_there(monkeypatch):
+    """The prerequisite a deployment hits second must be reported too.
+
+    This is the case that used to be untestable on a machine without the
+    package: it reported "exa_py is not installed" and never reached the key.
+    """
+    _exa_backend(monkeypatch)
+    _exa_py(monkeypatch, installed=True)
     monkeypatch.delenv("EXA_API_KEY", raising=False)
     report = research.report()
     assert report["unavailable"] is True
     assert "EXA_API_KEY" in report["exa_detail"]
+
+
+def test_health_is_clear_when_exa_can_actually_run(monkeypatch):
+    _exa_backend(monkeypatch)
+    _exa_py(monkeypatch, installed=True)
+    monkeypatch.setenv("EXA_API_KEY", "exa-test-key")
+    report = research.report()
+    assert report["exa_configured"] is True
+    assert report["unavailable"] is False
+
+
+def test_the_claude_backend_never_reports_unavailable_for_a_missing_exa_key(monkeypatch):
+    """Exa's prerequisites are not the Claude backend's problem."""
+    monkeypatch.setattr(research, "settings",
+                        dataclasses.replace(settings, research_backend="claude"))
+    _exa_py(monkeypatch, installed=False)
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    assert research.report()["unavailable"] is False
+
+
+def test_a_listener_is_told_why_research_failed_not_to_read_a_log():
+    """The remedy is already in the exception; throwing it away wastes it.
+
+    ResearchUnavailable says "exa_py is not installed, pip install -r
+    requirements-exa.txt" or which key is missing. friendly_error used to
+    reduce that to "Generation failed: ResearchUnavailable. See the server log
+    for details." - which is the one thing a person in a browser cannot do.
+    """
+    from app import friendly_error
+
+    message = friendly_error(
+        research.ResearchUnavailable(
+            "exa_py is not installed. `pip install -r requirements-exa.txt`"))
+    assert "exa_py is not installed" in message
+    assert "requirements-exa.txt" in message
+    assert "server log" not in message
 
 
 def test_exa_is_not_a_fresh_install_requirement():
