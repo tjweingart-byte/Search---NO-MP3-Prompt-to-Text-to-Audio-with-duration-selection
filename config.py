@@ -127,17 +127,26 @@ def _env_float(name: str, default: float) -> float:
 #: byte-for-byte as the manual benchmark measured them, so the numbers already
 #: taken by hand stay comparable.
 #:
-#: `claude` is the default because it needs no EXA_API_KEY: a deployment that
-#: has never heard of this setting keeps working exactly as it does today. A
-#: value outside this tuple is refused - at import by `Settings.__post_init__`,
-#: and again at retrieval time by `research.retrieve` - rather than falling
-#: back to either. A deployment that asked for Exa and silently got the model's
-#: own search would be measuring one thing while believing another.
+#: `exa` is the default. That is a real cost: it needs a second credential, and
+#: a deployment without EXA_API_KEY cannot research at all - a researched
+#: episode will fail rather than quietly search another way. The app says so at
+#: startup and on every /api/health, because a missing credential discovered on
+#: a listener's first researched question is the shape of failure this project
+#: has paid for most.
+#:
+#: `claude` remains one variable away and needs nothing installed, so a
+#: deployment without an Exa key has a working configuration to move to rather
+#: than a broken one to endure.
+#:
+#: A value outside this tuple is refused - at import by
+#: `Settings.__post_init__`, and again at retrieval time by `research.retrieve`
+#: - rather than falling back to either. A deployment that asked for one and
+#: silently got the other would be measuring one thing while believing another.
 RESEARCH_BACKENDS = ("claude", "exa")
 
 #: What a deployment gets when it says nothing. Named rather than repeated as a
 #: literal, for the same reason as DEFAULT_PIPELINE.
-DEFAULT_RESEARCH_BACKEND = "claude"
+DEFAULT_RESEARCH_BACKEND = "exa"
 
 #: Which generation pipeline a request runs through.
 #:

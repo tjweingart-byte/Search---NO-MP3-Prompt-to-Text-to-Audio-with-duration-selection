@@ -349,11 +349,42 @@ def test_what_retrieval_cost_is_recorded_for_a_person_to_read(exa, monkeypatch):
 # --------------------------------------------------------------------------
 # configuration
 # --------------------------------------------------------------------------
-def test_the_default_backend_needs_no_second_credential():
-    """A fresh deployment must keep working with no EXA_API_KEY."""
-    assert config.DEFAULT_RESEARCH_BACKEND == "claude"
-    assert settings.research_backend == "claude"
+def test_a_fresh_deployment_researches_with_exa():
+    """The production default. Reversed from `claude`, deliberately, and with
+    a real cost attached: it needs a second credential."""
+    assert config.DEFAULT_RESEARCH_BACKEND == "exa"
+    assert settings.research_backend == "exa"
     assert "claude" in RESEARCH_BACKENDS and "exa" in RESEARCH_BACKENDS
+
+
+def test_the_default_is_one_fact_in_one_place():
+    """The constant and the setting cannot disagree, because the setting is
+    built from the constant rather than repeating the literal."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent / "config.py").read_text()
+    assert '"RESEARCH_BACKEND", DEFAULT_RESEARCH_BACKEND' in source
+    assert settings.research_backend == config.DEFAULT_RESEARCH_BACKEND
+
+
+def test_rollback_to_claude_is_still_one_variable(monkeypatch):
+    """A deployment with no Exa key must have a working configuration to move
+    to, not a broken one to endure."""
+    patched = dataclasses.replace(settings, research_backend="claude")
+    monkeypatch.setattr(research, "settings", patched)
+    assert patched.research_backend == "claude"
+    assert not asyncio.run(research.retrieve("q")), (
+        "the fallback configuration must need no key and no package")
+
+
+def test_the_env_example_ships_the_default_it_documents():
+    """Following the documented setup must not configure the product against
+    itself - PROBLEMS.md 54."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    lines = [line.strip() for line in (root / ".env.example").read_text().splitlines()]
+    assert f"RESEARCH_BACKEND={config.DEFAULT_RESEARCH_BACKEND}" in lines
 
 
 @pytest.mark.parametrize("value", ["exaa", "web", "", "google"])
@@ -378,11 +409,42 @@ def test_the_packet_cannot_ask_for_more_sources_than_were_fetched():
 
 def test_health_says_which_backend_and_whether_it_can_run():
     report = research.report()
-    assert report["backend"] == "claude"
-    assert report["unavailable"] is False, (
-        "the default backend needs nothing installed and must never report "
-        "unavailable")
+    assert report["backend"] == "exa"
     assert "exa_detail" in report
+    # In this container there is no EXA_API_KEY, and the default is now exa -
+    # so `unavailable` is true, and that is the honest answer rather than a
+    # test failure. What must never happen is it reading false while research
+    # cannot run.
+    ok, _ = research.diagnose()
+    assert report["unavailable"] is (not ok)
+
+
+def test_a_deployment_that_cannot_research_says_so_at_startup(caplog):
+    """Not on a listener's first researched question. `exa` is the default and
+    needs a credential; a missing one discovered mid-episode is the shape of
+    failure this project has paid for most."""
+    import logging
+
+    import app
+
+    with caplog.at_level(logging.WARNING, logger="app"):
+        app._announce_research()
+
+    if research.available():  # pragma: no cover - not in this container
+        pytest.skip("this machine can research; nothing to announce")
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("RESEARCH UNAVAILABLE" in m for m in messages), messages
+    assert any("will FAIL rather than search another way" in m for m in messages)
+    assert any("RESEARCH_BACKEND=claude" in m for m in messages), (
+        "the warning must name the working configuration to move to")
+
+
+def test_the_startup_warning_is_not_fatal():
+    """Most questions are not researched. An app that refuses to start because
+    one path is unconfigured is worse than one that starts and says which."""
+    import app
+
+    assert app._announce_research() is None
 
 
 def test_health_flags_a_deployment_that_asked_for_exa_and_cannot_run_it(monkeypatch):
