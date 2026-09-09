@@ -155,6 +155,9 @@ def test_echoing_over_http_and_seeing_it_on_the_profile(client):
 
 
 def test_only_public_mixes_reach_the_profile(client):
+    # Mixes need an account now; the profile that shows them does not.
+    client.post("/api/auth/signup",
+                json={"email": "public@fam.test", "password": "a-long-enough-password"})
     made = client.post("/api/mixes", json={"user": "u1", "name": "Morning",
                                             "topic_ids": ["ai-agents"]}).json()
     assert client.get("/api/profile?user=u1").json()["mixes"] == []

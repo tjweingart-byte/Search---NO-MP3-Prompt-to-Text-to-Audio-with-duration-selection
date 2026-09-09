@@ -63,7 +63,7 @@ COPY . .
 #   /state/voices  reference_3.wav and its .rights.json. The engine refuses to
 #                  speak without both, which is why a fresh pod that "has the
 #                  code" still cannot talk.
-#   /state/data    the six SQLite stores. Without this every redeploy silently
+#   /state/data    the eight SQLite stores. Without this every redeploy silently
 #                  discards every listener's history, name and echoes.
 ENV FAM_STATE=/state \
     HF_HOME=/state/hf \
@@ -74,6 +74,7 @@ ENV FAM_STATE=/state \
     SOCIAL_DB=/state/data/social.db \
     ATTACHMENTS_PATH=/state/data/attachments.db \
     ACCOUNTS_DB=/state/data/accounts.db \
+    PREFS_DB=/state/data/preferences.db \
     METERING_DB=/state/data/metering.db \
     PORT=8000
 

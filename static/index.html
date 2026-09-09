@@ -265,9 +265,19 @@
   .reel-sub{ margin-top:16px; font-size:11px; line-height:1.5; color:var(--text-muted); }
   .reel-stage.turning .reel-body{ opacity:0; transform:translateY(18px); }
   .reel-body{ transition:opacity 220ms ease, transform 220ms ease; }
-  .reel-progress{ flex:none; height:3px; border-radius:2px; background:var(--border-strong);
-    overflow:hidden; margin-bottom:16px; }
-  .reel-fill{ height:100%; width:0%; background:var(--copper); transition:width 200ms linear; }
+  .reel-progress{ flex:none; position:relative; height:3px; border-radius:2px;
+    background:var(--border-strong); margin-bottom:16px;
+    touch-action:none; cursor:pointer; }
+  /* Same hit area as the player's bar, and for the same reason. It reaches
+     outside the bar, so the bar cannot be overflow:hidden any more - the fill
+     carries the rounded end itself instead. */
+  .reel-progress::before{ content:""; position:absolute; left:0; right:0; top:-14px; bottom:-14px; }
+  .reel-fill{ height:100%; width:0%; background:var(--copper); border-radius:2px;
+    transition:width 200ms linear; }
+  /* No knob on this one - it is a story bar, not a transport - so the drag
+     announces itself by the bar thickening under the finger instead. */
+  .reel-progress.scrubbing{ height:7px; border-radius:4px; }
+  .reel-progress.scrubbing .reel-fill{ transition:none; }
   .reel-controls{ flex:none; display:flex; align-items:center; justify-content:center; gap:26px;
     margin-bottom:14px; }
   .reel-btn{ position:relative; width:42px; height:42px; border-radius:50%; display:flex;
@@ -480,10 +490,27 @@
   .captions-panel.on .cc-text mark{ background:var(--copper); color:var(--ink); border-radius:3px; padding:0 3px; }
 
   .progress-wrap{ flex:none; padding:12px 20px 4px; }
-  .progress-bar{ height:4px; border-radius:4px; background:rgba(244,239,228,0.12); position:relative; margin-bottom:6px; }
+  .progress-bar{ height:4px; border-radius:4px; background:rgba(244,239,228,0.12); position:relative; margin-bottom:6px;
+    /* Draggable. touch-action:none so the browser does not claim the gesture
+       as a scroll halfway through a scrub, which is what makes a bar this
+       thin feel broken on a phone. */
+    touch-action:none; cursor:pointer; }
+  /* The thing a thumb actually hits. A 4px bar is about a third of the
+     smallest reliable touch target, so the hit area is grown here rather than
+     the bar being drawn thicker - the line stays a line. */
+  .progress-bar::before{ content:""; position:absolute; left:0; right:0; top:-14px; bottom:-14px; }
   .progress-bar .buffered{ position:absolute; left:0; top:0; bottom:0; width:0; background:rgba(224,181,99,0.22); border-radius:4px; }
   .progress-bar .fill{ position:absolute; left:0; top:0; bottom:0; width:44%; background:var(--copper); border-radius:4px; }
-  .progress-bar .knob{ position:absolute; left:44%; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; border-radius:50%; background:var(--copper); box-shadow:0 0 0 3px rgba(224,181,99,0.25); }
+  .progress-bar .knob{ position:absolute; left:44%; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; border-radius:50%; background:var(--copper); box-shadow:0 0 0 3px rgba(224,181,99,0.25);
+    transition:width 120ms ease, height 120ms ease, box-shadow 120ms ease; }
+  /* Under the finger the knob grows and its ring widens: the drag needs to
+     say it has been picked up, or a scrub that lands somewhere unexpected
+     reads as the app having ignored you. */
+  .progress-bar.scrubbing .knob{ width:16px; height:16px;
+    box-shadow:0 0 0 6px rgba(224,181,99,0.22); }
+  @media (prefers-reduced-motion: reduce){
+    .progress-bar .knob{ transition:none; }
+  }
   .time-row{ display:flex; justify-content:space-between; font-family:'JetBrains Mono', monospace; font-size:9.5px; color:var(--text-muted); }.ctrl-btn{ display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; }
   .ctrl-btn .cc{ width:44px; height:44px; border-radius:50%; background:var(--ink); color:var(--paper); display:flex; align-items:center; justify-content:center; }
   .ctrl-btn.mid .cc{ width:52px; height:52px; background:var(--copper); color:var(--ink); }
@@ -802,6 +829,167 @@
   }
 
   .footnote{ max-width:340px; margin-top:22px; text-align:center; font-family:'JetBrains Mono', monospace; font-size:10px; color:var(--muted); line-height:1.6; }
+
+  /* ============ ENTRY: welcome, auth, intro ============
+     Three screens that exist once. They are deliberately the plainest
+     surfaces in the app: the one-sentence spec is that a question becomes
+     audio in about a second, so anything standing in front of that has to
+     be crossable in two taps and has to offer a way past it. */
+  .entry-wrap{ padding:34px 22px 24px; display:flex; flex-direction:column;
+    min-height:100%; }
+  .entry-lede{ font-size:13px; line-height:1.55; color:var(--text-muted);
+    margin:14px 0 26px; }
+  .entry-h{ font-family:'Fraunces', serif; font-weight:600; font-size:20px;
+    color:var(--text); line-height:1.2; }
+  .entry-acts{ display:flex; flex-direction:column; gap:11px; margin-top:auto; }
+  .entry-btn{ width:100%; height:46px; border-radius:23px; border:1px solid var(--border-strong);
+    background:none; color:var(--text); font-family:'Space Grotesk',sans-serif;
+    font-size:13.5px; font-weight:600; cursor:pointer; display:flex;
+    align-items:center; justify-content:center; gap:9px; }
+  .entry-btn:active{ transform:scale(0.99); }
+  .entry-btn.primary{ background:var(--copper); border-color:var(--copper);
+    color:var(--ink); font-weight:700; }
+  .entry-skip{ text-align:center; padding:14px 0 2px; color:var(--text-muted);
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; letter-spacing:0.06em;
+    text-transform:uppercase; cursor:pointer; }
+  .entry-skip:active{ opacity:0.6; }
+  .entry-note{ font-size:11.5px; line-height:1.5; color:var(--text-faint);
+    margin-top:16px; }
+
+  /* The three sign-in methods. Google and Apple are drawn because they are
+     the design; they are not connected, and they say so rather than failing
+     silently when tapped. */
+  .auth-method{ display:flex; align-items:center; gap:11px; width:100%;
+    padding:13px 14px; margin-bottom:10px; border-radius:14px;
+    background:var(--surface); border:1px solid var(--border);
+    color:var(--text); font-family:'Space Grotesk',sans-serif; font-size:13px;
+    font-weight:600; cursor:pointer; text-align:left; }
+  .auth-method:active{ transform:scale(0.99); }
+  .auth-method .am-icon{ flex:0 0 26px; height:26px; border-radius:8px;
+    background:var(--paper); color:var(--ink); display:flex; align-items:center;
+    justify-content:center; font-weight:700; font-size:12px; }
+  .auth-method .am-body{ flex:1; min-width:0; }
+  .auth-method .am-sub{ display:block; font-family:'JetBrains Mono', monospace;
+    font-size:8.5px; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--text-faint); font-weight:400; margin-top:3px; }
+  .auth-method.soon{ opacity:0.72; }
+  .auth-field{ margin-bottom:13px; }
+  .auth-label{ font-family:'JetBrains Mono', monospace; font-size:9px;
+    letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint);
+    margin-bottom:6px; }
+  .auth-optional{ color:var(--text-faint); }
+
+  /* ============ INTRO: interests, then language ============ */
+  .intro-count{ font-family:'JetBrains Mono', monospace; font-size:10px;
+    letter-spacing:0.06em; text-transform:uppercase; color:var(--copper);
+    margin:2px 0 14px; }
+  .intro-grid{ display:flex; flex-wrap:wrap; gap:9px; }
+  .intro-chip{ padding:10px 15px; border-radius:999px; background:var(--surface);
+    border:1px solid var(--border-strong); color:var(--text); font-size:12.5px;
+    font-weight:600; cursor:pointer; }
+  .intro-chip.on{ background:var(--copper); border-color:var(--copper);
+    color:var(--ink); }
+  /* The cap is enforced by disabling the rest, not by a message afterwards. */
+  .intro-chip.full{ opacity:0.34; cursor:default; }
+  .intro-lang{ display:flex; align-items:center; justify-content:space-between;
+    padding:12px 14px; margin-bottom:8px; border-radius:12px;
+    background:var(--surface); border:1px solid var(--border); cursor:pointer; }
+  .intro-lang.on{ border-color:var(--copper); }
+  .intro-lang-name{ font-size:13px; color:var(--text); font-weight:600; }
+  .intro-lang-endonym{ font-size:12px; color:var(--text-faint); }
+
+  /* ============ WHAT'S NEXT (post-episode) ============
+     Four recommendations in a 2x2 grid; the first starts itself in five
+     seconds unless something else is tapped. It is the feed's own ranking,
+     one tap earlier - see topics.rank_next_up. */
+  .nextup-card{ background:var(--surface); border-radius:20px; padding:18px;
+    width:86%; border:1px solid var(--border-strong);
+    box-shadow:0 30px 60px -20px rgba(0,0,0,0.6); }
+  .nextup-h{ font-family:'Fraunces', serif; font-weight:600; font-size:16px;
+    color:var(--text); margin-bottom:3px; }
+  .nextup-sub{ font-family:'JetBrains Mono', monospace; font-size:9px;
+    letter-spacing:0.07em; text-transform:uppercase; color:var(--text-faint);
+    margin-bottom:14px; }
+  .nextup-grid{ display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  .nextup-tile{ position:relative; overflow:hidden; padding:12px 12px 13px;
+    border-radius:14px; background:var(--bg); border:1px solid var(--border);
+    cursor:pointer; min-height:82px; display:flex; flex-direction:column; }
+  .nextup-tile:active{ transform:scale(0.98); }
+  .nextup-tile.lead{ border-color:var(--copper); }
+  .nextup-tile-title{ font-family:'Fraunces', serif; font-weight:600;
+    font-size:12.5px; line-height:1.28; color:var(--text);
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+    overflow:hidden; }
+  .nextup-tile-sub{ margin-top:auto; padding-top:7px;
+    font-family:'JetBrains Mono', monospace; font-size:8px; letter-spacing:0.06em;
+    text-transform:uppercase; color:var(--text-faint);
+    /* Two lines. A bank subtitle can run to four in uppercase mono, which
+       turns a tile into a paragraph and buries the title above it. */
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; }
+  .nextup-tile.lead .nextup-tile-sub{ color:var(--copper); }
+  /* The countdown, drawn rather than described: a bar that empties. */
+  .nextup-timer{ position:absolute; left:0; top:0; height:3px; width:100%;
+    background:var(--copper); transform-origin:left center; }
+  .nextup-back{ display:block; width:100%; margin-top:14px; padding:11px;
+    border:none; background:none; color:var(--text-muted);
+    font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:0.07em;
+    text-transform:uppercase; cursor:pointer; }
+  .nextup-back:active{ opacity:0.6; }
+
+  /* ============ WEEKLY RECAP ============ */
+  .recap-card{ background:var(--surface); border-radius:20px; padding:18px;
+    width:84%; border:1px solid var(--border-strong);
+    box-shadow:0 30px 60px -20px rgba(0,0,0,0.6); }
+  .recap-top{ display:flex; align-items:flex-start; justify-content:space-between;
+    gap:10px; margin-bottom:14px; }
+  .recap-h{ font-family:'Fraunces', serif; font-weight:600; font-size:17px;
+    color:var(--text); line-height:1.25; }
+  .recap-tile{ padding:14px; border-radius:15px; background:var(--bg);
+    border:1px solid var(--border); cursor:pointer; }
+  .recap-tile:active{ transform:scale(0.99); }
+  .recap-tile-title{ font-family:'Fraunces', serif; font-weight:600; font-size:14px;
+    color:var(--text); line-height:1.3; margin-bottom:6px; }
+  .recap-figs{ font-family:'JetBrains Mono', monospace; font-size:9px;
+    letter-spacing:0.06em; text-transform:uppercase; color:var(--text-faint); }
+  .recap-empty{ font-size:12.5px; line-height:1.55; color:var(--text-muted); }
+  .recap-off{ display:block; width:100%; margin-top:13px; padding:10px;
+    border:none; background:none; color:var(--text-faint);
+    font-family:'JetBrains Mono', monospace; font-size:9.5px; letter-spacing:0.06em;
+    text-transform:uppercase; cursor:pointer; }
+  .recap-off:active{ opacity:0.6; }
+
+  /* ============ YOUR FAM: two tiles above the threads ============ */
+  .yf-tiles{ display:grid; grid-template-columns:1fr 1fr; gap:10px;
+    margin:2px 0 18px; }
+  .yf-tile{ padding:14px 13px 15px; border-radius:15px; background:var(--surface);
+    border:1px solid var(--border); cursor:pointer; }
+  .yf-tile:active{ transform:scale(0.98); }
+  .yf-tile-icon{ width:30px; height:30px; border-radius:9px; background:var(--paper);
+    color:var(--ink); display:flex; align-items:center; justify-content:center;
+    margin-bottom:10px; }
+  .yf-tile-name{ font-family:'Fraunces', serif; font-weight:600; font-size:13px;
+    color:var(--text); margin-bottom:4px; }
+  .yf-tile-sub{ font-family:'JetBrains Mono', monospace; font-size:8px;
+    letter-spacing:0.06em; text-transform:uppercase; color:var(--text-faint);
+    line-height:1.5; }
+
+  /* ============ EXPLORE NEW ============ */
+  .xn-reason{ font-size:12.5px; line-height:1.55; color:var(--text-muted);
+    margin:2px 0 16px; }
+  .xn-grid{ display:grid; grid-template-columns:1fr 1fr; gap:11px; }
+  .xn-card{ padding:13px; border-radius:14px; background:var(--surface);
+    border:1px solid var(--border); cursor:pointer; }
+  .xn-card:active{ transform:scale(0.98); }
+  .xn-card-title{ font-family:'Fraunces', serif; font-weight:600; font-size:12.5px;
+    line-height:1.3; color:var(--text); margin-bottom:5px; }
+  .xn-card-sub{ font-size:11px; line-height:1.4; color:var(--text-faint); }
+
+  /* An account gate has to read as a choice, not as a broken screen. */
+  .locked-note{ padding:16px; border-radius:14px; background:var(--surface);
+    border:1px dashed var(--border-strong); font-size:12.5px; line-height:1.55;
+    color:var(--text-muted); }
+  .locked-acts{ display:flex; gap:9px; margin-top:13px; }
 </style>
 </head>
 <body>
@@ -811,6 +999,7 @@
     <p>Everything below is live — tap the search arrow, a topic, a branch tile, or the tab bar. Episodes are written and spoken in real time; audio starts before the script is finished.</p>
     <p id="audioMode" style="font-family:'JetBrains Mono',monospace;font-size:10.5px;margin-top:8px;"></p>
     <button class="restart" onclick="showSplash(); openMyFamTab();">↺ Restart demo</button>
+    <button class="restart" onclick="restartFirstRun()">↺ Replay first run</button>
   </div>
 
   <div class="phone">
@@ -852,6 +1041,130 @@
              mistake in a nicer font. -->
         <div class="gen-text" id="famLoadingStatus">Writing your episode…</div>
       </div>
+
+      <!-- ============ ENTRY ============
+           Shown once, on the first open. "Skip for now" is a first-class
+           path rather than a link in small type: an account gates what the
+           server stores for you, never what you can hear, so refusing one
+           has to cost nothing to reach. -->
+      <section class="screen" id="screen-welcome">
+        <div class="scroll">
+          <div class="entry-wrap">
+            <div class="fam-logo" aria-label="FAM" style="padding:0 0 18px;">
+              <span class="wm-glyph f" aria-hidden="true"><svg viewBox="4.55 4.55 12.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V9.2A3.2 3.2 0 0 1 9.2 6H16"/><path d="M6 13h8"/></svg></span><span class="wm-a" aria-hidden="true"><svg viewBox="3.55 4.55 16.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l7-7 7 7"/><path d="M5 20l7-7 7 7"/></svg></span><span class="wm-glyph m" aria-hidden="true"><svg viewBox="4.55 4.55 14.9 16.9" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V6l6 9 6-9v14"/></svg></span>
+            </div>
+            <div class="entry-h">Ask anything. Hear the answer.</div>
+            <p class="entry-lede">An account keeps your mixes, your interests
+              and your weekly recap — on any device you sign in on. Listening
+              works without one.</p>
+            <div class="entry-acts">
+              <button class="entry-btn primary" onclick="openAuth('signup')">Sign Up</button>
+              <button class="entry-btn" onclick="openAuth('login')">Log In</button>
+              <div class="entry-skip" onclick="skipAccount()">Skip for now</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-auth">
+        <div class="back-row">
+          <span class="back" onclick="backToWelcome()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <h2 id="authTitle">Sign up</h2>
+        </div>
+        <div class="scroll">
+          <div class="entry-wrap" style="padding-top:6px;">
+            <button class="auth-method soon" onclick="authNotConnected('Google')">
+              <span class="am-icon">G</span>
+              <span class="am-body">Sign in with Google
+                <span class="am-sub">not connected yet</span></span>
+            </button>
+            <button class="auth-method soon" onclick="authNotConnected('Apple')">
+              <!-- A letter, not the Apple glyph: U+F8FF is a private-use
+                   codepoint that only resolves on Apple platforms and renders
+                   as an empty box everywhere else, including the preview. -->
+              <span class="am-icon">A</span>
+              <span class="am-body">Sign in with Apple
+                <span class="am-sub">not connected yet</span></span>
+            </button>
+            <button class="auth-method" onclick="showAuthForm()">
+              <span class="am-icon">@</span>
+              <span class="am-body">Continue with email
+                <span class="am-sub">email, password, phone optional</span></span>
+            </button>
+            <div id="authForm" hidden>
+              <div class="auth-field">
+                <div class="auth-label">Email</div>
+                <input class="modal-input" id="authEmail" type="email"
+                       autocomplete="email" placeholder="you@example.com"
+                       style="margin-bottom:0;">
+              </div>
+              <div class="auth-field">
+                <div class="auth-label">Password</div>
+                <input class="modal-input" id="authPassword" type="password"
+                       placeholder="at least 10 characters" style="margin-bottom:0;">
+              </div>
+              <div class="auth-field" id="authPhoneField">
+                <div class="auth-label">Phone <span class="auth-optional">— optional</span></div>
+                <input class="modal-input" id="authPhone" type="tel"
+                       autocomplete="tel" placeholder="+1 555 0100" style="margin-bottom:0;">
+              </div>
+              <button class="entry-btn primary" id="authSubmit"
+                      onclick="submitAuthForm()">Create account</button>
+              <p class="entry-note" id="authNote">Your password is what signs you
+                in. A phone number is kept as a contact detail only — there is no
+                SMS delivery behind it, so it cannot sign you in or recover an
+                account.</p>
+            </div>
+            <p class="entry-note">There is no password reset yet: it needs email
+              delivery this app has no route to. A forgotten password today is a
+              lost account.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-intro">
+        <div class="scroll">
+          <div class="entry-wrap">
+            <div id="introPageInterests">
+              <div class="entry-h">Your interests</div>
+              <p class="entry-lede">Pick up to six. They decide what your feed
+                opens on — and they stop mattering as soon as you have actually
+                listened to something.</p>
+              <div class="intro-count" id="introCount">Nothing chosen yet</div>
+              <div class="intro-grid" id="introGrid"></div>
+              <p class="entry-note" id="introSaveNote"></p>
+              <div class="entry-acts">
+                <button class="entry-btn primary" onclick="introNext()">Next</button>
+              </div>
+            </div>
+            <div id="introPageLanguage" hidden>
+              <div class="entry-h">Your language</div>
+              <p class="entry-lede">What you would rather listen in.</p>
+              <div id="introLangs"></div>
+              <p class="entry-note" id="introLangNote"></p>
+              <div class="entry-acts">
+                <button class="entry-btn primary" onclick="finishIntro()">Start listening</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ EXPLORE NEW ============
+           Reached from Your FAM. This is `rank_might_like`, the one ranking
+           in the app that offers something outside an established taste; it
+           has existed and been tested since myFAM was built and has been
+           shown nowhere since its shelf came off that page. -->
+      <section class="screen" id="screen-explorenew">
+        <div class="back-row">
+          <span class="back" onclick="goBack()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <h2>Explore New</h2>
+        </div>
+        <div class="scroll" style="padding:0 18px 20px;">
+          <p class="xn-reason" id="xnReason">Loading…</p>
+          <div class="xn-grid" id="xnGrid"></div>
+        </div>
+      </section>
 
       <!-- ============ HOME ============ -->
       <section class="screen" id="screen-home">
@@ -1122,12 +1435,27 @@
       <section class="screen sheet" id="screen-messages">
         <div class="scroll">
           <div class="myfam-header">
-            <h2>Messages</h2>
+            <h2>Your FAM</h2>
             <div style="display:flex; align-items:center; gap:4px;">
               <button class="myfam-add-btn" onclick="openNewChatModal()">+</button>
-              <button class="sheet-close" onclick="closeMessages()" aria-label="Close messages">
+              <button class="sheet-close" onclick="closeMessages()" aria-label="Close Your FAM">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
               </button>
+            </div>
+          </div>
+          <!-- Two destinations above the threads. The recap is the same
+               content the Sunday popup shows, reachable on demand rather than
+               only when it fires; Explore New is its own surface. -->
+          <div class="yf-tiles">
+            <div class="yf-tile" onclick="openRecapFromTile()">
+              <div class="yf-tile-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M3 12h18M3 19h11"/></svg></div>
+              <div class="yf-tile-name">Weekly Recap</div>
+              <div class="yf-tile-sub" id="yfRecapSub">Your week, in one episode</div>
+            </div>
+            <div class="yf-tile" onclick="openExploreNew()">
+              <div class="yf-tile-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg></div>
+              <div class="yf-tile-name">Explore New</div>
+              <div class="yf-tile-sub">Next to your taste, not more of it</div>
             </div>
           </div>
           <div class="search-bar" onclick="toast('Search messages (demo only)')">
@@ -1162,6 +1490,32 @@
             <button class="modal-btn ghost" onclick="closeModal()">Cancel</button>
             <button class="modal-btn primary" id="modalConfirmBtn">Save</button>
           </div>
+        </div>
+      </div>
+
+      <!-- What plays next, offered when an episode ends. Deliberately NOT
+           shown on Explore or Explore New: both are already continuous
+           exploration, and a popup between cards there interrupts rather
+           than helps. -->
+      <div class="modal-overlay" id="nextUpOverlay">
+        <div class="nextup-card">
+          <div class="nextup-h">What&rsquo;s next</div>
+          <div class="nextup-sub" id="nextUpSub">First one starts in 5</div>
+          <div class="nextup-grid" id="nextUpGrid"></div>
+          <button class="nextup-back" id="nextUpBack" onclick="dismissNextUp()">Back to myFAM</button>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="recapOverlay">
+        <div class="recap-card">
+          <div class="recap-top">
+            <div class="recap-h">Here it is! my Weekly Recap</div>
+            <button class="sheet-close" onclick="closeRecap()" aria-label="Close the recap">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </div>
+          <div id="recapBody"></div>
+          <button class="recap-off" onclick="disableWeeklyRecap()">Disable Weekly Notifications</button>
         </div>
       </div>
 
@@ -1773,6 +2127,11 @@
   // Drives the player's own progress bar and timer off real playback position.
   var progressTotal = 0;
   function refreshProgressNow(){
+    // A drag owns the bar for as long as it lasts. Repainting from the true
+    // playback position underneath the finger is exactly what makes a
+    // scrubber feel broken - the knob crawls back to where the audio is
+    // while you are still holding it somewhere else.
+    if(scrubbingBar) return;
     var wrap = document.querySelector("#screen-player .progress-bar");
     var fill = wrap ? wrap.querySelector(".fill") : null;
     var knob = wrap ? wrap.querySelector(".knob") : null;
@@ -1794,6 +2153,21 @@
     }
     if(cur) cur.textContent = formatTime(seconds);
     if(tot) tot.textContent = formatTime(total);
+
+    // The segmented player runs on the same FamAudio, so one ticker serves
+    // both. Its bar used to be a placeholder - a fixed 44% fill in the CSS and
+    // a time set to a fifth of the length, neither of which moved - which is
+    // the kind of thing that survives because it looks right in a screenshot.
+    var paWrap = document.querySelector("#screen-playall .progress-bar");
+    if(paWrap){
+      var paFill = paWrap.querySelector(".fill"), paKnob = paWrap.querySelector(".knob");
+      if(paFill) paFill.style.width = pct + "%";
+      if(paKnob) paKnob.style.left = pct + "%";
+      var paCur = document.getElementById("pa-curtime");
+      var paTot = document.getElementById("pa-totaltime");
+      if(paCur) paCur.textContent = formatTime(seconds);
+      if(paTot) paTot.textContent = formatTime(total);
+    }
   }
 
   function startProgress(totalSeconds){
@@ -1823,6 +2197,121 @@
     }
     refreshProgressNow();
   }
+
+  // ---- Scrubbing -----------------------------------------------------
+  // Dragging the bar seeks. The 15-second buttons stay exactly as they were,
+  // because the two gestures are not the same one: a button is the precise
+  // move - go back to the sentence that was missed - and a drag is the coarse
+  // one, get to roughly the middle. Neither replaces the other.
+  //
+  // The seek lands on release rather than on every pointermove. A seek
+  // rebuilds the whole scheduling queue (FamAudio.rescheduleFrom stops every
+  // queued source and starts again), so seeking continuously through a drag
+  // would stutter the audio for the length of the gesture and do it a hundred
+  // times over to arrive at one position.
+  var scrubbingBar = null;
+
+  // The same authority refreshProgressNow uses: the real length once the whole
+  // episode has arrived, the requested length while it is still being written.
+  // One value serves both bars because FamAudio plays one episode at a time.
+  function scrubTotal(){
+    return FamAudio.isComplete() ? FamAudio.duration() : progressTotal;
+  }
+
+  function makeScrubbable(bar, paint){
+    if(!bar) return;
+    var wanted = 0;
+
+    function show(e){
+      var rect = bar.getBoundingClientRect();
+      if(!rect.width) return;
+      var frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      var total = scrubTotal();
+      wanted = frac * total;
+      // Never past what has been written. The knob stopping at the buffered
+      // edge is legible, because that edge is drawn on the bar; a knob that
+      // followed the finger and then sprang back on release would not be.
+      var seconds = Math.min(wanted, FamAudio.seekLimit());
+      paint(total ? Math.min(100, (seconds / total) * 100) : 0, seconds);
+    }
+
+    bar.addEventListener("pointerdown", function(e){
+      if(!FamAudio.isActive() && !FamAudio.isComplete()){
+        toast("Nothing playing yet");
+        return;
+      }
+      e.preventDefault();
+      scrubbingBar = bar;
+      bar.classList.add("scrubbing");
+      // Capture, so a finger that slides off the bar - or off the phone -
+      // keeps scrubbing instead of silently dropping the gesture.
+      try { bar.setPointerCapture(e.pointerId); } catch(err){}
+      show(e);
+    });
+
+    bar.addEventListener("pointermove", function(e){
+      if(scrubbingBar !== bar) return;
+      show(e);
+    });
+
+    function release(e){
+      if(scrubbingBar !== bar) return;
+      scrubbingBar = null;
+      bar.classList.remove("scrubbing");
+      try { bar.releasePointerCapture(e.pointerId); } catch(err){}
+      var landed = FamAudio.seek(wanted);
+      // The same sentence the forward button gives, for the same reason: a
+      // drag that stops short of where the finger went is a limit rather than
+      // a stall, and saying so is the whole difference between the two.
+      if(wanted - landed > 1 && !FamAudio.isComplete()){
+        toast("Caught up with the writing — it will keep going");
+      }
+      refreshProgressNow();
+      refreshReelProgress();
+    }
+    bar.addEventListener("pointerup", release);
+    bar.addEventListener("pointercancel", release);
+
+    // Explore listens for swipes on an ancestor of its bar. A drag along the
+    // bar is not a swipe to the next episode, and without this it is both.
+    ["touchstart", "touchmove", "touchend"].forEach(function(type){
+      bar.addEventListener(type, function(e){ e.stopPropagation(); }, { passive: true });
+    });
+  }
+
+  function paintPlayerScrub(pct, seconds){
+    var wrap = document.querySelector("#screen-player .progress-bar");
+    if(!wrap) return;
+    var fill = wrap.querySelector(".fill"), knob = wrap.querySelector(".knob");
+    if(fill) fill.style.width = pct + "%";
+    if(knob) knob.style.left = pct + "%";
+    // The time reads the target, not the playback position: aiming at a time
+    // is the entire point of dragging rather than pressing a button.
+    var cur = document.getElementById("curTime");
+    if(cur) cur.textContent = formatTime(seconds);
+  }
+
+  function paintReelScrub(pct){
+    var fill = document.getElementById("reelFill");
+    if(fill) fill.style.width = pct + "%";
+  }
+
+  function paintPlayAllScrub(pct, seconds){
+    var wrap = document.querySelector("#screen-playall .progress-bar");
+    if(!wrap) return;
+    var fill = wrap.querySelector(".fill"), knob = wrap.querySelector(".knob");
+    if(fill) fill.style.width = pct + "%";
+    if(knob) knob.style.left = pct + "%";
+    var cur = document.getElementById("pa-curtime");
+    if(cur) cur.textContent = formatTime(seconds);
+  }
+
+  // All three listening surfaces, because all three are listening to the same
+  // episode. A bar that is draggable on one screen and decorative on the next
+  // is worse than one that is decorative everywhere.
+  makeScrubbable(document.querySelector("#screen-player .progress-bar"), paintPlayerScrub);
+  makeScrubbable(document.querySelector("#screen-playall .progress-bar"), paintPlayAllScrub);
+  makeScrubbable(document.querySelector("#screen-explore .reel-progress"), paintReelScrub);
 
   function applyPlaybackSpeed(){
     FamAudio.setRate(parseSpeed(selectedSpeed));
@@ -2037,6 +2526,9 @@
         noteResume(title, minutes, 0);   // finished: nothing left to resume
         hideNowBar();
         if(onEnd) onEnd();
+        // Offered after the episode's own bookkeeping, and only where it
+        // belongs - maybeOfferNextUp checks the surface for itself.
+        if(opts.nextUp !== false) maybeOfferNextUp(title, episodeTopicId);
       },
       onError: function(err){
         stopProgress();
@@ -2082,6 +2574,9 @@
     document.getElementById("cc-text").innerHTML = t.caption;
     var isFromSearch = pendingFromSearch;
     pendingFromSearch = false;
+    // Decides where the popup's "Back to ..." goes, so it names the place the
+    // listener actually came from.
+    nextUpFromSearch = isFromSearch;
     playerSpeechToken++;
     var myToken = playerSpeechToken;
     // `prompt` is set by Go Deeper and carries what the listener actually
@@ -2090,15 +2585,12 @@
     var context = t.parentTopic || "";
     var playOpts = { cachedOnly: !!t.cachedOnly, minutes: t.exploreMinutes || 0,
                      attach: t.attach || "" };
-    if(isFromSearch){
-      speakText(query, t.caption, null, context, t.bankTopicId, playOpts);
-    } else {
-      speakText(query, t.caption, function(){
-        if(myToken === playerSpeechToken && document.querySelector(".screen.active") && document.querySelector(".screen.active").id === "screen-player"){
-          playerTapAdvance();
-        }
-      }, context, t.bankTopicId, playOpts);
-    }
+    // Both paths end the same way now: the "what's next" popup. It used to
+    // jump straight into a random myFAM topic when the episode had not come
+    // from search, which is a recommendation nobody made and nobody could
+    // decline. Album continuity is not lost - the popup's countdown tile is
+    // the next episode in the album whenever there is one.
+    speakText(query, t.caption, null, context, t.bankTopicId, playOpts);
     // reset CC to off each time
     var panel = document.getElementById("ccPanel");
     panel.classList.remove("on"); panel.classList.add("off");
@@ -2755,6 +3247,10 @@
     if(!el) return;
     Promise.all([
       fetch("/api/mixes").then(function(r){
+        // 401 is not a failure: mixes are kept for you, and that is what an
+        // account is for here. Saying "could not load" would be a lie about
+        // a working server.
+        if(r.status === 401) return { locked: true };
         if(!r.ok) throw new Error("mixes unavailable"); return r.json();
       }),
       topicBank.length ? Promise.resolve({topics: topicBank})
@@ -2766,6 +3262,7 @@
                            return r.json();
                          })
     ]).then(function(res){
+      if(res[0].locked){ renderMixesLocked(); return; }
       mixes = res[0].mixes;
       mixStarters = res[0].starters || [];
       topicBank = res[1].topics;
@@ -2776,6 +3273,20 @@
       el.innerHTML = '<div class="mix-empty">Could not load your mixes. '
         + 'They are safe on the server — this will fill in when it is back.</div>';
     });
+  }
+
+  // What DailyFAM shows to a listener who skipped the account step. It offers
+  // the way out rather than describing the wall, and it does not pretend they
+  // have no mixes - they may well have some waiting under this same id.
+  function renderMixesLocked(){
+    document.getElementById("mixList").innerHTML =
+      '<div class="locked-note">A mix is a standing list of topics the server '
+      + 'keeps for you, so it needs an account. Signing up keeps the listening '
+      + 'you have already done \u2014 it does not start you over.'
+      + '<div class="locked-acts">'
+      + '<button class="pf-btn primary" onclick="openAuth(\'signup\')">Create account</button>'
+      + '<button class="pf-btn" onclick="openAuth(\'login\')">Log in</button>'
+      + '</div></div>';
   }
 
   function renderMixList(){
@@ -2790,10 +3301,10 @@
         }).join("") + '</div>';
       }
     }
-    html += '<button class="mix-new" onclick="openNewMix()">'
-      + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-      + 'stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
-      + 'New mix</button>';
+    // No inline "New mix" button here. Creating a mix is the "+" in the
+    // header, top right, and one control in one place is the whole of item 6:
+    // this screen carried both, so the same action sat twice on one page and
+    // the second copy pushed every mix card down.
 
     html += mixes.map(function(m){
       var entries = m.items || m.topics;
@@ -3396,7 +3907,7 @@
         + '<div class="feed-rail"><div class="feed-skeleton"></div>'
         + '<div class="feed-skeleton"></div><div class="feed-skeleton"></div></div></div>';
     }
-    fetch("/api/myfam")
+    fetch(withInterests("/api/myfam"))
       .then(function(r){ if(!r.ok) throw new Error("feed unavailable"); return r.json(); })
       .then(function(data){ renderMyFamFeed(data.sections); loadGoDeeper(); })
       .catch(function(){
@@ -3452,11 +3963,23 @@
     var t = TOPICS[key];
     document.getElementById("pa-title").textContent = t.title;
     document.getElementById("pa-src").textContent = "from " + t.source;
-    speakText(t.prompt || t.title, t.caption);
+    speakText(t.prompt || t.title, t.caption, function(){
+      // Mid-album, a finished segment simply runs on. The popup is for the
+      // end of the run, which is the point at which "what now" is a real
+      // question - and paSkip already renders the segment bar.
+      if(paIndex < b.topics.length - 1){ paSkip(); }
+    }, "", "", { nextUp: paIndex >= b.topics.length - 1 });
     document.getElementById("pa-index").textContent = "Topic " + (paIndex + 1) + " of " + b.topics.length;
     var totalSeconds = selectedLengthMinutes * 60;
     document.getElementById("pa-totaltime").textContent = formatTime(totalSeconds);
-    document.getElementById("pa-curtime").textContent = formatTime(totalSeconds * 0.2);
+    document.getElementById("pa-curtime").textContent = formatTime(0);
+    (function(){
+      var wrap = document.querySelector("#screen-playall .progress-bar");
+      if(!wrap) return;
+      var fill = wrap.querySelector(".fill"), knob = wrap.querySelector(".knob");
+      if(fill) fill.style.width = "0%";
+      if(knob) knob.style.left = "0%";
+    })();
     document.getElementById("paSpeedLenPill").textContent = "1.2× · " + selectedLengthMinutes + " min";
     paCcOn = false;
     var panel = document.getElementById("paCcPanel");
@@ -3562,6 +4085,9 @@
   // to navigate home.
   function openMessages(){
     renderThreadList();
+    var sub = document.getElementById("yfRecapSub");
+    if(sub) sub.textContent = AUTH.authenticated
+      ? "Your week, in one episode" : "Needs an account";
     navigate("messages");
     var dot = document.getElementById("msgUnread");
     if(dot) dot.hidden = true;
@@ -4216,12 +4742,19 @@
   }
 
   var reelTimer = null;
+  function refreshReelProgress(){
+    if(scrubbingBar) return;      // the drag owns the bar; see makeScrubbable
+    var fill = document.getElementById("reelFill");
+    var total = scrubTotal();
+    if(!fill || !total) return;
+    fill.style.width = Math.min(100, (FamAudio.position() / total) * 100) + "%";
+  }
   function startReelProgress(totalSeconds){
     stopReelProgress();
-    reelTimer = setInterval(function(){
-      var pct = Math.min(100, (FamAudio.position() / totalSeconds) * 100);
-      document.getElementById("reelFill").style.width = pct + "%";
-    }, 200);
+    // Explore drives the same FamAudio as the player, so it publishes the
+    // length the same way - which is what lets one scrubber serve both bars.
+    progressTotal = totalSeconds;
+    reelTimer = setInterval(refreshReelProgress, 200);
   }
   function stopReelProgress(){
     if(reelTimer){ clearInterval(reelTimer); reelTimer = null; }
@@ -4262,6 +4795,522 @@
   })();
 
 
+  // ---------------- Preferences, entry and the first-run intro ----------------
+  // Two stores, deliberately. What the server keeps needs an account (see
+  // ACCOUNT_REQUIRED in app.py); what an anonymous listener chooses stays in
+  // their own browser and is passed to the ranker as a hint on the request,
+  // never written down. The interface says which of the two happened rather
+  // than letting "Saved" mean two different things.
+  var PREF_CHOICES = { interests_available: [], languages: [], max_interests: 6,
+                       language_active: false };
+  var introSelection = [];
+  var introLanguage = "en";
+  var authMode = "signup";
+
+  function localPrefs(){
+    try { return JSON.parse(localStorage.getItem("fam.prefs") || "{}"); }
+    catch(e){ return {}; }
+  }
+  function saveLocalPrefs(patch){
+    var current = localPrefs();
+    for(var k in patch){ if(patch.hasOwnProperty(k)) current[k] = patch[k]; }
+    try { localStorage.setItem("fam.prefs", JSON.stringify(current)); } catch(e){}
+    return current;
+  }
+
+  // The ranking hint for a listener with no account. Empty for everyone else,
+  // because the server reads their stored interests itself and a value here
+  // would be the client asserting something the server already knows.
+  function interestsParam(){
+    if(AUTH.authenticated) return "";
+    var chosen = localPrefs().interests || [];
+    return chosen.length ? "interests=" + encodeURIComponent(chosen.join(",")) : "";
+  }
+  function withInterests(path){
+    var hint = interestsParam();
+    if(!hint) return path;
+    return path + (path.indexOf("?") === -1 ? "?" : "&") + hint;
+  }
+
+  function loadPrefChoices(){
+    return fetch("/api/preferences")
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        PREF_CHOICES = d;
+        if(d.saved){
+          introSelection = (d.interests || []).slice();
+          introLanguage = d.language || "en";
+        } else {
+          var local = localPrefs();
+          introSelection = (local.interests || []).slice();
+          introLanguage = local.language || "en";
+        }
+        return d;
+      })
+      .catch(function(){ return PREF_CHOICES; });
+  }
+
+  // --- entry ---------------------------------------------------------------
+  function entryComplete(){ return localPrefs().entry === "done"; }
+
+  // The first run is shown once by design, which makes it the hardest screen
+  // in the app to look at twice. This is how.
+  function restartFirstRun(){
+    try { localStorage.removeItem("fam.prefs"); } catch(e){}
+    introSelection = [];
+    introLanguage = "en";
+    showSplash();
+    startEntry();
+  }
+
+  function startEntry(){
+    // Everything an account would change is decided here, so the choices have
+    // to be loaded before the intro can draw them.
+    loadPrefChoices();
+    showScreen("welcome");
+  }
+
+  var authReturn = "";
+
+  function openAuth(mode){
+    authMode = mode;
+    // Opened from a gated screen (DailyFAM, say) rather than from the welcome
+    // screen, this is a detour: it has to come back to where it started.
+    var active = document.querySelector(".screen.active");
+    var here = active ? active.id.replace("screen-", "") : "";
+    authReturn = (here && here !== "welcome" && here !== "auth") ? here : "";
+    document.getElementById("authTitle").textContent =
+      mode === "login" ? "Log in" : "Sign up";
+    document.getElementById("authSubmit").textContent =
+      mode === "login" ? "Log in" : "Create account";
+    // Logging in identifies an account that exists; a phone number would be
+    // asking for something it cannot use.
+    document.getElementById("authPhoneField").hidden = (mode === "login");
+    document.getElementById("authForm").hidden = true;
+    showScreen("auth");
+  }
+  function backToWelcome(){
+    if(authReturn){ showScreen(authReturn); return; }
+    showScreen("welcome");
+  }
+  function showAuthForm(){
+    document.getElementById("authForm").hidden = false;
+    document.getElementById("authEmail").focus();
+  }
+
+  // Drawn because they are the design; not connected because there is no OAuth
+  // here and no client credentials for one. Saying so is the whole point: a
+  // button that silently does nothing is the failure this project has lost the
+  // most time to.
+  function authNotConnected(provider){
+    toast("Sign in with " + provider + " is not connected yet — use email");
+    showAuthForm();
+  }
+
+  function submitAuthForm(){
+    var email = document.getElementById("authEmail").value.trim();
+    var password = document.getElementById("authPassword").value;
+    var phone = (document.getElementById("authPhone").value || "").trim();
+    if(!email || !password){ toast("Email and password, please"); return; }
+    var path = authMode === "login" ? "/api/auth/login" : "/api/auth/signup";
+    var body = { email: email, password: password };
+    if(authMode === "signup" && phone) body.phone = phone;
+    postAuth(path, body, authMode === "login"
+      ? "Signed in" : "Account created — everything here is yours")
+      .then(function(){
+        if(!AUTH.authenticated) return;    // postAuth toasts its own failure
+        document.getElementById("authPassword").value = "";
+        // Anything chosen before signing up is theirs now, so it is written
+        // through rather than left stranded in this browser.
+        var local = localPrefs();
+        if((local.interests || []).length || local.language){
+          savePreferences({ interests: local.interests || [],
+                            language: local.language || "en" });
+        }
+        if(authReturn){
+          // Came in from a gated screen. Put them back on it, now working.
+          var back = authReturn;
+          authReturn = "";
+          showScreen(back);
+          if(back === "playfam") loadMixes();
+          if(back === "myfam") loadMyFamFeed();
+          checkWeeklyRecap();
+          return;
+        }
+        afterAccount();
+      });
+  }
+
+  function skipAccount(){
+    saveLocalPrefs({ entry: "skipped" });
+    afterAccount();
+  }
+
+  // The intro runs after either path, which is what the packet asks for: the
+  // questions are about what to play, not about who is paying.
+  function afterAccount(){
+    loadPrefChoices().then(function(){
+      if(localPrefs().intro === "done" || PREF_CHOICES.intro_done){
+        finishEntry();
+        return;
+      }
+      renderIntro();
+      showScreen("intro");
+    });
+  }
+
+  // --- intro ---------------------------------------------------------------
+  function renderIntro(){
+    document.getElementById("introPageInterests").hidden = false;
+    document.getElementById("introPageLanguage").hidden = true;
+    renderInterestGrid();
+    renderLanguageList();
+    var note = document.getElementById("introSaveNote");
+    note.textContent = AUTH.authenticated
+      ? "Saved to your account, so they follow you to any device."
+      : "Kept on this device only. Create an account and they follow you.";
+    var langNote = document.getElementById("introLangNote");
+    langNote.textContent = PREF_CHOICES.language_active
+      ? ""
+      : "Stored, but not yet acted on: every episode is still written and "
+        + "spoken in English. This is the setting, not the feature.";
+  }
+
+  function renderInterestGrid(){
+    var cap = PREF_CHOICES.max_interests || 6;
+    var full = introSelection.length >= cap;
+    var html = (PREF_CHOICES.interests_available || []).map(function(item){
+      var on = introSelection.indexOf(item.id) !== -1;
+      // The cap is enforced by the chip itself, not by an error afterwards.
+      var cls = "intro-chip" + (on ? " on" : (full ? " full" : ""));
+      return '<div class="' + cls + '" onclick="toggleInterest(\'' + item.id + '\')">'
+        + escapeHtml(item.label) + '</div>';
+    }).join("");
+    document.getElementById("introGrid").innerHTML = html;
+    var count = document.getElementById("introCount");
+    count.textContent = introSelection.length
+      ? introSelection.length + " of " + cap + " chosen"
+        + (full ? " — that is the limit" : "")
+      : "Nothing chosen yet";
+  }
+
+  function toggleInterest(id){
+    var at = introSelection.indexOf(id);
+    if(at !== -1){ introSelection.splice(at, 1); }
+    else if(introSelection.length >= (PREF_CHOICES.max_interests || 6)){ return; }
+    else { introSelection.push(id); }
+    renderInterestGrid();
+  }
+
+  function renderLanguageList(){
+    document.getElementById("introLangs").innerHTML =
+      (PREF_CHOICES.languages || []).map(function(lang){
+        return '<div class="intro-lang' + (lang.code === introLanguage ? " on" : "")
+          + '" onclick="chooseLanguage(\'' + lang.code + '\')">'
+          + '<span class="intro-lang-name">' + escapeHtml(lang.label) + '</span>'
+          + '<span class="intro-lang-endonym">' + escapeHtml(lang.endonym) + '</span>'
+          + '</div>';
+      }).join("");
+  }
+  function chooseLanguage(code){ introLanguage = code; renderLanguageList(); }
+
+  function introNext(){
+    document.getElementById("introPageInterests").hidden = true;
+    document.getElementById("introPageLanguage").hidden = false;
+  }
+
+  function savePreferences(patch){
+    return fetch("/api/preferences", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(patch)
+    }).then(function(r){ return r.ok ? r.json() : null; })
+      .catch(function(){ return null; });
+  }
+
+  function finishIntro(){
+    saveLocalPrefs({ interests: introSelection.slice(), language: introLanguage,
+                     intro: "done" });
+    if(AUTH.authenticated){
+      savePreferences({ interests: introSelection, language: introLanguage,
+                        intro_done: true });
+    }
+    finishEntry();
+  }
+
+  function finishEntry(){
+    saveLocalPrefs({ entry: "done" });
+    openMyFamTab();
+    loadMyFamFeed();
+    checkWeeklyRecap();
+  }
+
+  // --- weekly recap --------------------------------------------------------
+  var recapData = null;
+
+  function loadRecap(){
+    return fetch("/api/recap").then(function(r){
+      if(r.status === 401) return { locked: true };
+      if(!r.ok) throw new Error("recap unavailable");
+      return r.json();
+    }).then(function(d){ recapData = d; return d; })
+      .catch(function(){ return null; });
+  }
+
+  // "The first time they open the app on or after Sunday" - so a Sunday that
+  // was missed still arrives on the Wednesday. The server answers that from a
+  // stored date; this only asks.
+  function checkWeeklyRecap(){
+    if(!AUTH.authenticated) return;
+    loadRecap().then(function(d){
+      if(!d || d.locked || !d.enabled || !d.due) return;
+      openRecap();
+      // Marked seen on display, not on dismissal: a listener who swipes the
+      // app away has still had their recap, and showing it again on Thursday
+      // would read as a bug.
+      fetch("/api/recap/seen", { method: "POST" }).catch(function(){});
+    });
+  }
+
+  function openRecap(){
+    // Never two overlays deep. They are triggered from different places and
+    // could in principle land together; one covering the other is a screen
+    // nobody designed.
+    closeNextUp();
+    renderRecap();
+    document.getElementById("recapOverlay").classList.add("active");
+  }
+  function closeRecap(){
+    document.getElementById("recapOverlay").classList.remove("active");
+  }
+
+  function openRecapFromTile(){
+    if(!AUTH.authenticated){
+      toast("The weekly recap needs an account");
+      return;
+    }
+    loadRecap().then(function(){ openRecap(); });
+  }
+
+  function renderRecap(){
+    var body = document.getElementById("recapBody");
+    var d = recapData;
+    if(!d || d.locked){
+      body.innerHTML = '<div class="recap-empty">The weekly recap needs an '
+        + 'account — it is built from listening the server keeps for you.</div>';
+      return;
+    }
+    if(d.empty){
+      // Nothing to recap is a sentence, not a tile. Inventing one would be
+      // the whole failure this page could have.
+      body.innerHTML = '<div class="recap-empty">' + escapeHtml(d.reason) + '</div>';
+      return;
+    }
+    body.innerHTML = '<div class="recap-tile" onclick="playRecap()">'
+      + '<div class="recap-tile-title">' + escapeHtml(d.title) + '</div>'
+      + '<div class="recap-figs">' + escapeHtml(d.subtitle || "") + '</div>'
+      + '</div>';
+  }
+
+  function playRecap(){
+    if(!recapData || !recapData.query) return;
+    closeRecap();
+    closeMessages();
+    var key = "recap_" + Date.now();
+    TOPICS[key] = {
+      title: recapData.title,
+      source: "your week",
+      caption: "Live captions will appear here as this plays—",
+      prompt: recapData.query,
+      titleOverridden: true
+    };
+    generate(key);
+  }
+
+  function disableWeeklyRecap(){
+    if(!AUTH.authenticated){ closeRecap(); return; }
+    savePreferences({ weekly_recap: false }).then(function(){
+      toast("Weekly recap turned off");
+      closeRecap();
+    });
+  }
+
+  // --- Explore New ---------------------------------------------------------
+  function openExploreNew(){
+    closeMessages();
+    navigate("explorenew");
+    loadExploreNew();
+  }
+
+  function loadExploreNew(){
+    var grid = document.getElementById("xnGrid");
+    var reason = document.getElementById("xnReason");
+    grid.innerHTML = "";
+    reason.textContent = "Loading…";
+    fetch(withInterests("/api/explorenew"))
+      .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
+      .then(function(d){
+        reason.textContent = d.reason || "";
+        grid.innerHTML = (d.topics || []).map(function(t){
+          return '<div class="xn-card" onclick="playExploreNew(\'' + t.id + '\')">'
+            + '<div class="xn-card-title">' + escapeHtml(t.title) + '</div>'
+            + '<div class="xn-card-sub">' + escapeHtml(t.subtitle || "") + '</div>'
+            + '</div>';
+        }).join("");
+        exploreNewTopics = {};
+        (d.topics || []).forEach(function(t){ exploreNewTopics[t.id] = t; });
+      })
+      .catch(function(){
+        reason.textContent = "Could not reach the feed — search still works, "
+          + "and this fills in when the server is back.";
+      });
+  }
+
+  var exploreNewTopics = {};
+  function playExploreNew(id){
+    var t = exploreNewTopics[id];
+    if(!t) return;
+    var key = "xn_" + id + "_" + Date.now();
+    TOPICS[key] = {
+      title: t.title, source: "Explore New",
+      caption: "Live captions will appear here as this plays—",
+      prompt: t.query, bankTopicId: t.id, titleOverridden: true
+    };
+    generate(key);
+  }
+
+  // ---------------- What's next (post-episode) ----------------
+  // Fires when an episode ends on the search/myFAM player and on the segmented
+  // player. It deliberately does NOT fire on Explore or Explore New: both are
+  // already continuous exploration, and a popup between cards there interrupts
+  // rather than helps.
+  var nextUpTiles = [];
+  var nextUpTimer = null;
+  var nextUpFromSearch = false;
+  var NEXT_UP_SECONDS = 5;
+
+  function nextUpAllowedHere(){
+    var active = document.querySelector(".screen.active");
+    if(!active) return false;
+    return active.id === "screen-player" || active.id === "screen-playall";
+  }
+
+  function maybeOfferNextUp(query, topicId){
+    if(!nextUpAllowedHere()) return;
+    buildNextUpTiles(query, topicId, function(tiles){
+      // One tile is not a grid, and a popup offering nothing is worse than
+      // the silence it replaced. Below two, the player simply stops.
+      if(tiles.length < 2 || !nextUpAllowedHere()) return;
+      showNextUp(tiles);
+    });
+  }
+
+  function buildNextUpTiles(query, topicId, done){
+    var lead = null;
+    var album = currentAlbumForPlayer && BRANCHES[currentAlbumForPlayer];
+    if(album && currentTopicIndexInAlbum > -1
+       && currentTopicIndexInAlbum < album.topics.length - 1){
+      // Still inside an album: "next" already has an answer.
+      var nextKey = album.topics[currentTopicIndexInAlbum + 1];
+      if(TOPICS[nextKey]){
+        lead = { title: TOPICS[nextKey].title, sub: "next in " + album.name,
+                 album: true };
+      }
+    } else if(episodeThread){
+      // The follow-up the model named on this very episode, off the trailing
+      // marker line that was never spoken. It costs nothing and it is a better
+      // answer than any ranking, because it read what was actually covered.
+      lead = { title: episodeThread, sub: "picks up the thread",
+               query: episodeThread, topicId: "" };
+    }
+    fetch(withInterests("/api/nextup?topic_id=" + encodeURIComponent(topicId || "")
+                        + "&q=" + encodeURIComponent(query || "")))
+      .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
+      .then(function(d){
+        var tiles = lead ? [lead] : [];
+        (d.topics || []).forEach(function(t){
+          if(tiles.length >= 4) return;
+          tiles.push({ title: t.title, sub: t.subtitle || "recommended",
+                       query: t.query, topicId: t.id });
+        });
+        done(tiles.slice(0, 4));
+      })
+      .catch(function(){ done([]); });
+  }
+
+  function showNextUp(tiles){
+    nextUpTiles = tiles;
+    document.getElementById("nextUpGrid").innerHTML = tiles.map(function(t, i){
+      return '<div class="nextup-tile' + (i === 0 ? " lead" : "")
+        + '" onclick="playNextUp(' + i + ')">'
+        + (i === 0 ? '<div class="nextup-timer" id="nextUpTimer"></div>' : "")
+        + '<div class="nextup-tile-title">' + escapeHtml(t.title) + '</div>'
+        + '<div class="nextup-tile-sub">' + escapeHtml(t.sub || "") + '</div>'
+        + '</div>';
+    }).join("");
+    document.getElementById("nextUpSub").textContent =
+      "First one starts in " + NEXT_UP_SECONDS;
+    document.getElementById("nextUpBack").textContent =
+      nextUpFromSearch ? "Back to search" : "Back to myFAM";
+    document.getElementById("nextUpOverlay").classList.add("active");
+
+    // The countdown, shown rather than described: the bar empties over the
+    // same five seconds the timer runs for, so what is about to happen is
+    // legible without reading anything.
+    var bar = document.getElementById("nextUpTimer");
+    if(bar){
+      bar.style.transition = "none";
+      bar.style.transform = "scaleX(1)";
+      // Two frames, so the browser does not fold the reset and the animation
+      // into one style recalculation and skip the transition entirely.
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          bar.style.transition = "transform " + NEXT_UP_SECONDS + "s linear";
+          bar.style.transform = "scaleX(0)";
+        });
+      });
+    }
+    var left = NEXT_UP_SECONDS;
+    nextUpTimer = setInterval(function(){
+      left--;
+      var sub = document.getElementById("nextUpSub");
+      if(sub) sub.textContent = left > 0
+        ? "First one starts in " + left : "Starting…";
+      if(left <= 0){ playNextUp(0); }
+    }, 1000);
+  }
+
+  function stopNextUpTimer(){
+    if(nextUpTimer){ clearInterval(nextUpTimer); nextUpTimer = null; }
+  }
+
+  function closeNextUp(){
+    stopNextUpTimer();
+    document.getElementById("nextUpOverlay").classList.remove("active");
+  }
+
+  // Tapping the countdown tile early does exactly what letting it run out
+  // does, and tapping any other one cancels the countdown.
+  function playNextUp(index){
+    var tile = nextUpTiles[index];
+    closeNextUp();
+    if(!tile) return;
+    if(tile.album){ playNextInAlbum(); return; }
+    var key = "next_" + index + "_" + Date.now();
+    TOPICS[key] = {
+      title: tile.title,
+      source: tile.topicId ? "recommended" : "your thread",
+      caption: "Live captions will appear here as this plays—",
+      prompt: tile.query, bankTopicId: tile.topicId || "",
+      titleOverridden: true
+    };
+    generate(key);
+  }
+
+  function dismissNextUp(){
+    closeNextUp();
+    if(nextUpFromSearch){ openSearchFAM(); } else { openMyFamTab(); }
+  }
+
   // ---------------- Splash screen ----------------
   function showSplash(){
     var splash = document.getElementById("splashScreen");
@@ -4271,8 +5320,16 @@
       splash.classList.add("hide");
     }, 1400);
   }
-  loadMyFamFeed();
   showSplash();
+  // The entry screens run once and then never again. Everything after them is
+  // the app as it was, so a returning listener pays nothing for their
+  // existence - not even the fetch, which only the intro needs.
+  refreshAuth().then(function(){
+    if(!entryComplete()){ startEntry(); return; }
+    loadPrefChoices();
+    loadMyFamFeed();
+    checkWeeklyRecap();
+  });
 </script>
 </body>
 </html>

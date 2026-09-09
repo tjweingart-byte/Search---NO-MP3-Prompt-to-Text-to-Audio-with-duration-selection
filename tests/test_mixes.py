@@ -13,6 +13,8 @@ import app as appmod  # noqa: E402
 import mixes as M  # noqa: E402
 import topics as T  # noqa: E402
 
+PASSWORD = "a-long-enough-password"
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -21,9 +23,24 @@ def store(tmp_path):
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
+    """A browser with an account, because mixes now need one.
+
+    Saving a mix is account-gated: it is durable per-listener storage, which is
+    what this app has decided an account is for. Every HTTP test here therefore
+    signs up first; the gate itself is tested in tests/test_gating.py.
+    """
     monkeypatch.setattr(appmod, "_rate_limit", lambda request: None)
+    monkeypatch.setattr(appmod, "_read_limit", lambda request: None)
     monkeypatch.setattr(appmod, "MIXES", M.MixStore(str(tmp_path / "api.db")))
-    return TestClient(appmod.app)
+    return signed_up("mixes@fam.test")
+
+
+def signed_up(email: str) -> TestClient:
+    """A fresh cookie jar with credentials attached - one distinct listener."""
+    client = TestClient(appmod.app)
+    res = client.post("/api/auth/signup", json={"email": email, "password": PASSWORD})
+    assert res.status_code == 200, res.text
+    return client
 
 
 # --- the model ------------------------------------------------------------
@@ -153,7 +170,7 @@ def test_deleting_someone_elses_mix_is_a_404(client):
     """Two TestClients are two cookie jars, which is now the only way to be two
     listeners - the identity is the session, not a string in the request."""
     made = client.post("/api/mixes", json={"name": "M"}).json()
-    somebody_else = TestClient(appmod.app)
+    somebody_else = signed_up("other@fam.test")
     assert somebody_else.delete(f"/api/mixes/{made['id']}").status_code == 404
 
 

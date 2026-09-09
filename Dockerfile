@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# All five databases live on a mounted disk where the host provides one, so
+# All seven databases live on a mounted disk where the host provides one, so
 # they survive a redeploy. Without a disk they are ephemeral and every deploy
 # is a fresh start - which is fine for a preview and not for real listeners.
 #
@@ -33,6 +33,7 @@ ENV CACHE_PATH=/data/scripts.db \
     SOCIAL_DB=/data/social.db \
     ATTACHMENTS_PATH=/data/attachments.db \
     ACCOUNTS_DB=/data/accounts.db \
+    PREFS_DB=/data/preferences.db \
     METERING_DB=/data/metering.db \
     PORT=8000
 RUN mkdir -p /data

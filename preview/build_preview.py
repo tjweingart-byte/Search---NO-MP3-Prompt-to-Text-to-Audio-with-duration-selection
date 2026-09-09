@@ -37,6 +37,7 @@ def load_fixtures() -> dict:
     drifts from the code is worse than no fixture."""
     sys.path.insert(0, str(ROOT))
     import mixes as mixes_mod
+    import preferences as prefs_mod
     import topics as topics_mod
 
     bank = [t.as_dict() for t in topics_mod.TOPIC_BANK]
@@ -185,6 +186,47 @@ def load_fixtures() -> dict:
         },
         "/api/health": {"ok": True, "demo": True, "engine": "preview"},
         "/api/event": {"ok": True},
+        # The intro's two pages. Built from the real vocabulary rather than a
+        # list typed out here: a picker offering a facet the ranker does not
+        # score is the exact drift this module refuses to introduce.
+        "/api/preferences": {
+            "interests_available": [{"id": tag, "label": label}
+                                    for tag, label in topics_mod.TAG_LABELS.items()],
+            "languages": [dict(lang) for lang in prefs_mod.LANGUAGES],
+            "max_interests": prefs_mod.MAX_INTERESTS,
+            "language_active": prefs_mod.LANGUAGE_ACTIVE,
+            "account": True, "saved": True,
+            "account_required": "You need an account for this.",
+            "interests": [], "language": "en", "weekly_recap": True,
+            "recap_week": "", "intro_done": False,
+        },
+        # Due, so opening the preview for the first time shows the Sunday
+        # popup - the whole behaviour, which a `due: false` fixture would
+        # hide. The shim flips it once /api/recap/seen is posted.
+        "/api/recap": {
+            "week": "2026-09-06", "played": 9, "finished": 6, "searched": 4,
+            "subjects": ["tech", "money", "science"],
+            "subject_labels": ["Technology", "Money & markets", "Science"],
+            "minutes": 5, "title": "Your week in FAM",
+            "subtitle": "6 finished · Technology, Money & markets, Science",
+            "query": "what happened this week in technology, money & markets and science",
+            "empty": False, "reason": "", "due": True, "enabled": True,
+        },
+        "/api/nextup": {
+            "topics": [by_id[i] for i in
+                       ["energy-grid", "chip-supply", "space-race", "housing-market"]
+                       if i in by_id],
+            "algo": topics_mod.ALGO_VERSION,
+        },
+        "/api/explorenew": {
+            "topics": [by_id[i] for i in
+                       ["hollywood-comebacks", "food-supply", "anxiety-loop",
+                        "training-load", "pricing-psychology", "space-race"]
+                       if i in by_id],
+            "personalised": True,
+            "reason": "Next to what you already listen to, rather than more of it.",
+            "algo": topics_mod.ALGO_VERSION,
+        },
     }
 
 
@@ -251,6 +293,39 @@ SHIM = """
         chars: sent.kind === "image" ? 0 : stub.chars,
         url: sent.url || "", preview: stub.preview
       });
+    }
+    // Enough of an account for the entry flow to be walked end to end. There
+    // are no credentials here and nothing is checked - the point is the
+    // screens, and a preview that cannot get past its own sign-up form is a
+    // preview of one screen.
+    if (path === "/api/auth/signup" || path === "/api/auth/login") {
+      var creds = JSON.parse((init && init.body) || "{}");
+      var me = FIXTURES["/api/auth/me"];
+      if (creds.email) me.email = creds.email;
+      me.authenticated = true;
+      return json(me);
+    }
+    if (path === "/api/auth/logout") {
+      FIXTURES["/api/auth/me"].authenticated = false;
+      return json({ ok: true });
+    }
+    // The intro's answers, kept for as long as the page is open. The real
+    // server refuses this without an account; the preview fixture is a
+    // signed-in listener, so it accepts.
+    if (path === "/api/preferences" && method === "POST") {
+      var chosen = JSON.parse((init && init.body) || "{}");
+      var stored = FIXTURES["/api/preferences"];
+      ["interests", "language", "weekly_recap", "intro_done"].forEach(function (k) {
+        if (chosen[k] !== undefined && chosen[k] !== null) stored[k] = chosen[k];
+      });
+      if (stored.weekly_recap === false) FIXTURES["/api/recap"].enabled = false;
+      return json(stored);
+    }
+    // Settles the week, the way the stored date does on the server: the popup
+    // must not come back on the next reload of the same preview.
+    if (path === "/api/recap/seen") {
+      FIXTURES["/api/recap"].due = false;
+      return json({ ok: true });
     }
     if (path === "/api/mixes" && method === "GET") return json(mixes);
     if (path === "/api/mixes" && method === "POST") {

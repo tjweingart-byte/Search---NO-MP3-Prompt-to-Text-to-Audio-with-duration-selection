@@ -24,6 +24,7 @@ import metering as ME  # noqa: E402
 import attachments as A  # noqa: E402
 import mixes as M  # noqa: E402
 import paths  # noqa: E402
+import preferences as P  # noqa: E402
 import social as S  # noqa: E402
 import topics as T  # noqa: E402
 
@@ -37,6 +38,7 @@ STORES = [
     ("MIXES_DB", "mixes.db", M.MixStore),
     ("ATTACHMENTS_PATH", "attachments.db", A.AttachmentStore),
     ("ACCOUNTS_DB", "accounts.db", ACC.AccountStore),
+    ("PREFS_DB", "preferences.db", P.PreferenceStore),
     ("METERING_DB", "metering.db", ME.MeterStore),
 ]
 
@@ -239,7 +241,7 @@ def test_health_reports_every_database_with_a_real_read(monkeypatch, tmp_path):
 
     reported = {entry["name"] for entry in body["databases"]}
     assert reported == {"scripts", "events", "social", "mixes", "attachments",
-                        "accounts"}
+                        "accounts", "preferences"}
     for entry in body["databases"]:
         assert entry["readable"] is True, f"{entry['name']} did not open: {entry}"
         assert entry["writable"] is True

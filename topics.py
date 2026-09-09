@@ -109,6 +109,30 @@ TAG_WORDS: dict[str, tuple[str, ...]] = {
               "government", "protest", "strait", "diplomacy", "policy"),
 }
 
+#: The same eight facets, with a word a listener would recognise on a button.
+#: The intro's interest picker is built from this, so a tag added to TAG_WORDS
+#: without a label here would rank episodes it could never be chosen for -
+#: tests/test_preferences.py fails on the mismatch rather than letting the two
+#: drift.
+TAG_LABELS: dict[str, str] = {
+    "sports": "Sport",
+    "business": "Business",
+    "money": "Money & markets",
+    "tech": "Technology",
+    "science": "Science",
+    "health": "Health & mind",
+    "culture": "Culture",
+    "world": "World",
+}
+
+#: What one declared interest is worth next to real behaviour, in `taste`.
+#: Equal to a play and well under a completion (EVENT_WEIGHT), and it does not
+#: decay - so it carries a new listener's first feed and is quietly outvoted
+#: once they have actually listened to anything. Higher and the intro would
+#: pin the feed for weeks; lower and choosing six things would change nothing,
+#: which is worse than not asking.
+INTEREST_WEIGHT = 1.0
+
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -521,14 +545,23 @@ class EventStore:
         return out
 
 
-def taste(events: Iterable[Event], now: Optional[float] = None) -> dict[str, float]:
+def taste(events: Iterable[Event], now: Optional[float] = None,
+          interests: Iterable[str] = ()) -> dict[str, float]:
     """Tag affinity for one listener: recency-weighted, signed, normalised.
 
     Computed on read rather than stored. A stored profile is a cache that can
     disagree with the log it came from; this cannot.
+
+    `interests` are the facets they picked in the intro. They enter as a flat
+    INTEREST_WEIGHT before normalisation - a starting position, not a rule -
+    so a listener who has never played anything still gets a ranked feed, and
+    one who has gets ranked mostly on what they did. A skip against a chosen
+    interest can take it negative, which is correct: choosing "Sport" in an
+    intro is a weaker statement than abandoning three sports episodes.
     """
     now = time.time() if now is None else now
-    scores: dict[str, float] = {}
+    scores: dict[str, float] = {tag: INTEREST_WEIGHT for tag in interests
+                                if tag in TAG_LABELS}
     for event in events:
         weight = EVENT_WEIGHT.get(event.kind, 0.0) * _decay(max(0.0, now - event.at))
         tags = event.tags or (tags_for_text(event.text) if event.text else ())
@@ -676,14 +709,19 @@ def rank_followers(
     return [t for _s, t in scored[:SECTION_SIZE]]
 
 
-def build_feed(store: EventStore, user_id: str, now: Optional[float] = None) -> dict:
+def build_feed(store: EventStore, user_id: str, now: Optional[float] = None,
+               interests: Iterable[str] = ()) -> dict:
     """The whole myFAM page for one listener.
 
     Sections are filled in order and never repeat a topic, so the page looks
     as wide as possible from a deliberately small bank.
+
+    `interests` come from the intro. They matter most on the first open, when
+    "Made for you" would otherwise be empty and the honest empty-state is the
+    only thing a new listener sees.
     """
     events = store.for_user(user_id) if user_id else []
-    profile = taste(events, now)
+    profile = taste(events, now, interests)
     mine = _played_ids(events)
     used: set[str] = set()
     picked: dict[str, list[Topic]] = {}
@@ -751,3 +789,183 @@ def _empty_reason(key: str) -> str:
         "followers": "Nobody you overlap with has listened yet.",
         "from_history": "Your first episode starts this one off.",
     }.get(key, "")
+
+
+#: How many tiles the post-episode popup shows. Four, because the design is a
+#: 2x2 grid and the first one starts itself.
+NEXT_UP_SIZE = 4
+
+#: What the episode they *just heard* is worth when choosing the next one.
+#: Above a completion, and deliberately so: "what should follow this" is a
+#: question about this episode first and their history second. It is a seed on
+#: the same profile the shelves are ranked from, not a separate scorer - the
+#: popup is meant to be the feed's opinion, arrived at one tap earlier.
+JUST_HEARD_WEIGHT = 3.0
+
+
+def _seeded(profile: dict[str, float], tags: Iterable[str],
+            weight: float) -> dict[str, float]:
+    """`profile` with `tags` pushed up, renormalised the way `taste` leaves it."""
+    scores = dict(profile)
+    for tag in tags:
+        if tag in TAG_LABELS:
+            scores[tag] = scores.get(tag, 0.0) + weight
+    peak = max((abs(v) for v in scores.values()), default=0.0)
+    return {k: v / peak for k, v in scores.items()} if peak else {}
+
+
+def tags_for_episode(topic_id: str = "", text: str = "") -> tuple[str, ...]:
+    """Facets for an episode, from the bank if it is a tile and the words if not.
+
+    Search episodes have no topic id at all, which is most of what gets played
+    on the search surface - so falling back to the keyword map is not an edge
+    case here, it is the common path.
+    """
+    if topic_id and topic_id in BANK_BY_ID:
+        return BANK_BY_ID[topic_id].tags
+    return tags_for_text(text) if text else ()
+
+
+def rank_next_up(
+    store: EventStore,
+    user_id: str,
+    now: Optional[float] = None,
+    after_id: str = "",
+    after_text: str = "",
+    interests: Iterable[str] = (),
+    size: int = NEXT_UP_SIZE,
+) -> list[Topic]:
+    """The four episodes to offer when one finishes.
+
+    Not a new recommender. It is `build_feed`'s three signals, in the same
+    order of preference, over a profile seeded with what they just heard:
+    closest-to-your-taste first, then what co-listeners went on to play, then
+    the crowd. A second, disconnected implementation of "what next" would drift
+    from the shelves within a release and give a listener two different answers
+    to the same question on two screens.
+
+    Everything they have already played is excluded, along with the episode
+    that just ended. Offering back the thing they are still listening to the
+    end of is the one recommendation guaranteed to be wrong.
+    """
+    events = store.for_user(user_id) if user_id else []
+    profile = _seeded(
+        taste(events, now, interests),
+        tags_for_episode(after_id, after_text),
+        JUST_HEARD_WEIGHT,
+    )
+    mine = _played_ids(events)
+    exclude = set(mine) | ({after_id} if after_id else set())
+
+    picks: list[Topic] = []
+    taken = set(exclude)
+
+    def add(candidates: list[Topic]) -> None:
+        for topic in candidates:
+            if len(picks) >= size:
+                return
+            if topic.id not in taken:
+                picks.append(topic)
+                taken.add(topic.id)
+
+    add(rank_from_history(profile, taken))
+    if len(picks) < size:
+        add(rank_followers(store, user_id, mine, taken))
+    if len(picks) < size:
+        add(rank_trending(store, now, taken))
+    # A listener who has played most of the bank would otherwise get a short
+    # grid. Four tiles is the layout, so the last resort drops the "not already
+    # played" rule rather than the shape - re-hearing something is a far
+    # smaller disappointment than two empty squares. `taken` is rebuilt from
+    # what is actually on the grid, because it still carries the played-ids
+    # exclusion at this point and reusing it would filter out the very topics
+    # this fallback exists to reach.
+    if len(picks) < size:
+        taken = {t.id for t in picks} | ({after_id} if after_id else set())
+        add(list(TOPIC_BANK))
+    return picks[:size]
+
+
+#: How far back the weekly recap looks. A week, because that is what it claims.
+RECAP_WINDOW = 7 * 86400
+
+
+def weekly_recap(store: EventStore, user_id: str, now: Optional[float] = None) -> dict:
+    """What this listener actually did in the last seven days.
+
+    Only what the log holds, for the same reason `summary` is thin: a recap is
+    the second easiest place in an app to invent a number, and an invented one
+    is a promise to keep next week. A listener who heard nothing gets told
+    that, not a recap of nothing.
+
+    `query` is the episode the recap tile generates if tapped - built from the
+    subjects they actually listened to, so it is one shared, cacheable question
+    about the week's news in those areas rather than a personal document. It
+    holds no personal detail for the same reason: it goes through the ordinary
+    generation path and into the shared cache.
+    """
+    now = time.time() if now is None else now
+    events = [e for e in store.for_user(user_id, limit=1000)
+              if e.at >= now - RECAP_WINDOW]
+    profile = taste(events, now)
+    subjects = [tag for tag, weight in
+                sorted(profile.items(), key=lambda kv: -kv[1]) if weight > 0][:3]
+    played = sum(1 for e in events if e.kind in ("play", "complete"))
+    finished = sum(1 for e in events if e.kind == "complete")
+    recap = {
+        "week": time.strftime("%Y-%m-%d", time.gmtime(now)),
+        "played": played,
+        "finished": finished,
+        "searched": sum(1 for e in events if e.kind == "search"),
+        "subjects": subjects,
+        "subject_labels": [TAG_LABELS[t] for t in subjects],
+        "minutes": 5,
+        "title": "Your week in FAM",
+        "subtitle": "",
+        "query": "",
+        "empty": True,
+        "reason": "",
+    }
+    if not played and not recap["searched"]:
+        recap["reason"] = ("Nothing to recap yet — this fills in once you have "
+                           "listened to something this week.")
+        return recap
+    if not subjects:
+        # They listened, but to nothing the keyword map could place. Honest:
+        # a recap needs a subject, and inventing one would be the whole failure.
+        recap["reason"] = ("You listened this week, but not to anything we could "
+                           "group into a subject — so there is nothing to recap.")
+        return recap
+    labels = [TAG_LABELS[t].lower() for t in subjects]
+    joined = labels[0] if len(labels) == 1 else \
+        ", ".join(labels[:-1]) + " and " + labels[-1]
+    recap["empty"] = False
+    recap["query"] = f"what happened this week in {joined}"
+    recap["subtitle"] = (f"{finished} finished · " if finished else "") + \
+        ", ".join(TAG_LABELS[t] for t in subjects)
+    return recap
+
+
+def build_explore_new(store: EventStore, user_id: str, now: Optional[float] = None,
+                      interests: Iterable[str] = ()) -> dict:
+    """The Explore New surface: adjacent to a taste, deliberately not inside it.
+
+    `rank_might_like` has existed and been tested since myFAM was built, and
+    has been shown nowhere since its shelf came off that page. It is the one
+    ranking here that widens a taste rather than confirming it, so what it
+    needed was a home rather than a rewrite.
+
+    Returned with `reason` rather than bare tiles, because a shelf of things
+    you have not asked for is only a good idea if it says why it is there.
+    """
+    events = store.for_user(user_id) if user_id else []
+    profile = taste(events, now, interests)
+    picks = rank_might_like(profile, _played_ids(events))
+    return {
+        "topics": [t.as_dict() for t in picks],
+        "personalised": bool(profile),
+        "reason": ("Next to what you already listen to, rather than more of it."
+                   if profile else
+                   "A spread across the whole bank, until there is something to "
+                   "be next to."),
+    }

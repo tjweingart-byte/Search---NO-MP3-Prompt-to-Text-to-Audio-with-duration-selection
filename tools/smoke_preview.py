@@ -66,6 +66,55 @@ def main() -> int:
                 failures.append(f"{label}: {exc}")
                 print(f"  FAIL  {label}: {exc}")
 
+        def first_run_asks_before_it_shows_the_app():
+            """The entry flow runs once, and every path through it lands in
+            the app. A first-run screen with no way out is the worst bug this
+            file could miss, because it is the only screen everybody sees."""
+            assert page.eval_on_selector(".screen.active", "e => e.id") == "screen-welcome", \
+                "a first open did not start on the welcome screen"
+            assert page.query_selector("#screen-welcome .entry-skip"), \
+                "there was no way past the account step"
+            # Signed up rather than skipped, because the gated surfaces below
+            # (mixes, the recap) are the ones with something to check, and
+            # skipping is asserted above as reachable.
+            page.evaluate("openAuth('signup')")
+            page.wait_for_timeout(400)
+            page.evaluate("showAuthForm()")
+            page.fill("#authEmail", "smoke@example.com")
+            page.fill("#authPassword", "a-long-enough-password")
+            page.evaluate("submitAuthForm()")
+            page.wait_for_selector("#screen-intro.active .intro-chip",
+                                   timeout=10000, state="attached")
+            chips = page.eval_on_selector_all(".intro-chip", "e => e.length")
+            assert chips >= 6, f"only {chips} interests offered"
+            # The cap is a disabled chip, not a message after the fact.
+            for i in range(7):
+                page.evaluate(f"var c=document.querySelectorAll('.intro-chip')[{i}];"
+                              " if(c) c.click();")
+            chosen = page.eval_on_selector_all(".intro-chip.on", "e => e.length")
+            assert chosen == 6, f"the six-interest cap let {chosen} through"
+            assert page.query_selector(".intro-chip.full"), \
+                "the seventh chip was still selectable"
+            page.evaluate("introNext()")
+            page.wait_for_selector("#introPageLanguage .intro-lang",
+                                   timeout=10000, state="attached")
+            page.evaluate("finishIntro()")
+            page.wait_for_timeout(900)
+            assert page.eval_on_selector(".screen.active", "e => e.id") == "screen-myfam", \
+                "finishing the intro did not land in the app"
+
+        def the_weekly_recap_pops_on_a_new_week():
+            """Fixture says this week's recap is still owed, so it fires on the
+            first open after the intro - and has to be dismissable."""
+            page.wait_for_selector("#recapOverlay.active", timeout=10000)
+            # A tile when there is a week to recap, a sentence saying so when
+            # there is not. Both are correct; an empty card is not.
+            assert page.text_content("#recapBody").strip(), "the recap card was blank"
+            page.evaluate("closeRecap()")
+            page.wait_for_timeout(400)
+            assert not page.query_selector("#recapOverlay.active"), \
+                "the recap could not be dismissed"
+
         def myfam():
             page.evaluate("openMyFamTab()")
             page.wait_for_selector(".feed-rail .seed-card", timeout=10000, state="attached")
@@ -176,7 +225,166 @@ def main() -> int:
             page.reload()
             page.wait_for_timeout(1200)
 
+        def your_fam_offers_the_recap_and_explore_new():
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(500)
+            page.click("#screen-myfam .myfam-msg-btn")
+            page.wait_for_timeout(600)
+            tiles = page.eval_on_selector_all(".yf-tile-name", "e => e.map(x => x.textContent)")
+            assert tiles == ["Weekly Recap", "Explore New"], f"saw {tiles}"
+            page.evaluate("openExploreNew()")
+            page.wait_for_selector("#screen-explorenew.active .xn-card",
+                                   timeout=10000, state="attached")
+            assert page.eval_on_selector_all(".xn-card", "e => e.length") >= 4
+            assert page.text_content("#xnReason").strip(), \
+                "Explore New did not say why it was showing these"
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
+        def whats_next_offers_four_and_counts_down():
+            """The popup, driven the way an ended episode drives it. The
+            countdown tile is checked for existence, not waited out - five
+            seconds of real time in a smoke test buys nothing."""
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+            page.evaluate("showScreen('player')")
+            page.evaluate("maybeOfferNextUp('what the fed did to interest rates', '')")
+            page.wait_for_selector("#nextUpOverlay.active .nextup-tile",
+                                   timeout=10000)
+            tiles = page.eval_on_selector_all(".nextup-tile", "e => e.length")
+            assert tiles == 4, f"expected a 2x2 grid, saw {tiles} tiles"
+            assert page.query_selector(".nextup-tile.lead .nextup-timer"), \
+                "the first tile has no countdown"
+            assert "starts in" in page.text_content("#nextUpSub").lower()
+            # Tapping anything else cancels the countdown rather than racing it.
+            page.evaluate("closeNextUp()")
+            page.wait_for_timeout(300)
+            assert not page.query_selector("#nextUpOverlay.active")
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
+        def ensure_account():
+            """Sign up unless this browser already has an account.
+
+            Needed because one check above clears localStorage on purpose, and
+            on the live preview that is a real logout: the session token lives
+            there. Mixes are account-gated, so anything below that touches them
+            has to put an account back first. The email is unique per call -
+            the store is durable and the same address twice is refused, exactly
+            as the server refuses it.
+            """
+            if page.evaluate("() => AUTH && AUTH.authenticated"):
+                return
+            page.evaluate(
+                """() => {
+                    var who = "smoke-" + Math.random().toString(36).slice(2, 9)
+                              + "@example.com";
+                    return fetch("/api/auth/signup", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({ email: who,
+                                               password: "a-long-enough-password" })
+                    }).then(function(){ return refreshAuth(); });
+                }"""
+            )
+            page.wait_for_timeout(600)
+
+        def the_account_gate_reads_as_a_choice():
+            """Skipping the account step has to look like a decision, not a
+            broken screen - and it has to offer the way out of itself."""
+            page.evaluate("openPlayFAM()")
+            # After the load settles, not with it: loadMixes writes the same
+            # element asynchronously and would paint over this.
+            page.wait_for_timeout(1200)
+            page.evaluate("renderMixesLocked()")
+            page.wait_for_selector("#screen-playfam .locked-note", timeout=10000)
+            assert page.eval_on_selector_all("#screen-playfam .locked-acts .pf-btn",
+                                             "e => e.length") == 2, \
+                "the gate offered no way to sign up or log in"
+            text = page.text_content("#screen-playfam .locked-note").lower()
+            assert "start you over" in text, \
+                "the gate did not say signing up keeps what they already have"
+
+        def the_bar_can_be_dragged_to_seek():
+            """Sliding the bar is a seek, and it has to be a real one.
+
+            Driven with the mouse rather than by calling FamAudio.seek: the
+            thing under test is the gesture - pointer capture, the clamp at the
+            buffered edge, the class that says the bar has been picked up -
+            not the seek underneath it, which the transport already had.
+            """
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(500)
+            page.evaluate("startBankTopic(Object.keys(myFamTopics)[0])")
+            page.wait_for_selector("#screen-player.active", timeout=15000)
+            # Enough audio has to have arrived for there to be anywhere to
+            # seek to: the bar clamps at what has been written.
+            page.wait_for_timeout(4500)
+            before = page.evaluate("() => FamAudio.position()")
+
+            box = page.eval_on_selector(
+                "#screen-player .progress-bar",
+                "e => { var r = e.getBoundingClientRect();"
+                " return {x: r.x, y: r.y, w: r.width}; }")
+            page.mouse.move(box["x"] + 4, box["y"] + 2)
+            page.mouse.down()
+            page.mouse.move(box["x"] + box["w"] * 0.9, box["y"] + 2, steps=8)
+            assert page.query_selector("#screen-player .progress-bar.scrubbing"), \
+                "the bar did not say it had been picked up"
+            page.mouse.up()
+            page.wait_for_timeout(400)
+
+            after = page.evaluate("() => FamAudio.position()")
+            assert after > before + 0.5, \
+                f"dragging the bar did not move playback ({before:.2f} -> {after:.2f})"
+            assert not page.query_selector("#screen-player .progress-bar.scrubbing"), \
+                "the bar stayed picked up after the drag ended"
+            # And the two gestures still coexist: the buttons were the point of
+            # "on top of", not a thing this replaced.
+            page.evaluate("skipAudio(-15)")
+            page.wait_for_timeout(300)
+            assert page.evaluate("() => FamAudio.position()") < after, \
+                "the 15-second button stopped working once the bar could be dragged"
+            page.evaluate("goBack()")
+            page.wait_for_timeout(400)
+
+        def explores_bar_scrubs_without_swiping():
+            """The bar in Explore seeks, and does not deal the next card.
+
+            Explore listens for swipes on an ancestor of its bar, so without
+            the guard in makeScrubbable a drag along the bar is both a seek and
+            a swipe - and the episode you were aiming at is gone.
+            """
+            page.evaluate("openExplore()")
+            page.wait_for_selector("#screen-explore.active", timeout=10000)
+            # Coming back to the tab keeps the listener's place but does not
+            # resume - setTab stops playback - so press play the way they
+            # would, then let enough audio arrive to have somewhere to seek to.
+            page.evaluate("if(!FamAudio.isActive()) reelTogglePlay();")
+            page.wait_for_timeout(4500)
+            was = page.text_content("#reelTitle")
+            before = page.evaluate("() => FamAudio.position()")
+            box = page.eval_on_selector(
+                "#screen-explore .reel-progress",
+                "e => { var r = e.getBoundingClientRect();"
+                " return {x: r.x, y: r.y, w: r.width}; }")
+            page.mouse.move(box["x"] + 3, box["y"] + 1)
+            page.mouse.down()
+            page.mouse.move(box["x"] + box["w"] * 0.9, box["y"] + 1, steps=8)
+            assert page.query_selector("#screen-explore .reel-progress.scrubbing"), \
+                "the reel bar did not say it had been picked up"
+            page.mouse.up()
+            page.wait_for_timeout(500)
+            assert page.text_content("#reelTitle") == was, \
+                "dragging the bar swiped to the next episode"
+            after = page.evaluate("() => FamAudio.position()")
+            assert after > before + 0.5, \
+                f"dragging the reel bar did not move playback ({before:.2f} -> {after:.2f})"
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
         def dailyfam():
+            ensure_account()
             page.evaluate("openPlayFAM()")
             page.wait_for_selector(".mix-card", timeout=10000, state="attached")
             assert page.eval_on_selector_all(".mix-card", "e => e.length") >= 1
@@ -320,15 +528,24 @@ def main() -> int:
             assert page.text_content("#reelTitle") != first, "swipe did not advance"
 
         print(f"smoke test: {target.name}")
+        check("The first run asks, then lets you in", first_run_asks_before_it_shows_the_app)
+        check("The weekly recap pops and closes", the_weekly_recap_pops_on_a_new_week)
         check("myFAM renders three rails", myfam)
         check("Go Deeper titles are not cut off", go_deeper_titles_fit)
         check("Go Deeper fills for a new listener", go_deeper_fills_for_a_new_listener)
         check("A file can be attached to a search", attachments)
         check("Searching shows the loading screen", loading_screen_on_a_search)
         check("One loading screen serves every surface", loading_screen_covers_every_surface)
+        check("Your FAM offers the recap and Explore New",
+              your_fam_offers_the_recap_and_explore_new)
+        check("What's next offers four with a countdown",
+              whats_next_offers_four_and_counts_down)
+        check("The bar can be dragged to seek", the_bar_can_be_dragged_to_seek)
+        check("The account gate reads as a choice", the_account_gate_reads_as_a_choice)
         check("DailyFAM lists mixes", dailyfam)
         check("picker offers a typed topic", picker)
         check("Explore plays and advances", explore)
+        check("Explore's bar scrubs without swiping", explores_bar_scrubs_without_swiping)
         check("Messages opens and closes", messages_sheet)
         check("Profile renders identity, folders and echoes", profile)
         check("Mix visibility can be toggled", mix_visibility)

@@ -60,7 +60,7 @@ volume. One mount, three trees:
 
     /state/hf       Chatterbox weights
     /state/voices   reference_3.wav + reference_3.rights.json
-    /state/data     the six SQLite stores
+    /state/data     the eight SQLite stores
 
 **3. Put the voice on the volume, once.** The engine refuses to speak without
 both files — a cloned voice is somebody's voice:

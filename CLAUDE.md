@@ -155,6 +155,16 @@ next" pull for free. dailyFAM's infinite swipe and myFAM's tiles now have to
 earn the next tap on their own, which is what the predicted follow-up and the
 prefetch plan are for.
 
+**Part of that is now paid back after the episode rather than inside it**
+(PROBLEMS.md §70). When one finishes on the player, four recommendations appear
+in a grid and the first starts itself in five seconds. The countdown tile
+prefers the album's next episode, then the predicted `<<NEXT:>>` follow-up,
+then the ranking - so the pull is there without a word of it being spoken, and
+declining it is one tap. The tiles are the *feed's* ranking
+(`topics.rank_next_up`), not a second one, so the popup and the shelves cannot
+give a listener two different answers to the same question. It deliberately
+does not fire on Explore or Explore New, which are already continuous.
+
 Note this **replaced an earlier rule** that said to open with the answer
 immediately. That was news-writing — the inverted pyramid — and it is the
 opposite of story structure. The opening should be concrete and open a question,
@@ -232,10 +242,12 @@ another rule.
    a *shared* bank of ~28 topics three ways (trending / co-listener / history)
    from an append-only event log. Tags come from keyword matching, not a
    classifier. A fourth ranking, `rank_might_like` (adjacent to your taste),
-   is written and tested but no longer shown - its section was removed from
-   myFAM. Worth knowing what went with it: it was the only signal that offered
-   anything *outside* an established taste, so the feed is now history,
-   co-listeners and the crowd. One line in `SECTIONS` brings it back. The cost design is the load-bearing part: **one bank for
+   is no longer on myFAM but is no longer hidden either: **it is what Explore
+   New serves** (PROBLEMS.md §70). It is the only signal offering anything
+   *outside* an established taste; the myFAM feed itself is still history,
+   co-listeners and the crowd, and one line in `SECTIONS` brings it back there
+   too. The intro's chosen interests now seed `taste`, so "Made for you" is no
+   longer honestly empty on a listener's first open. The cost design is the load-bearing part: **one bank for
    everyone, personalisation in the ordering, not the inventory** - so two
    people tapping a tile share one script through `cache.py`.
 5. **playFAM is built as its own tab.** `mixes.py` stores named daily mixes -
@@ -266,9 +278,12 @@ another rule.
    server-minted session id in an HttpOnly cookie, and an account is *email and
    password attached to the id they already have* - so signing up keeps their
    history rather than starting a second listener beside it, and logging in on
-   a phone reaches the same data. The app still works with no account at all,
-   which was the constraint that stopped this becoming a login screen in front
-   of the product. What is genuinely missing: **password reset**, which needs
+   a phone reaches the same data. **Listening still works with no account at
+   all** - search, myFAM, DailyFAM's episodes, Explore and Go Deeper - which is
+   the constraint that stopped this becoming a login screen in front of the
+   product. What an account now buys is durability: mixes, chosen interests and
+   language, and the weekly recap are gated on having one (PROBLEMS.md §70, and
+   the constraint above). What is genuinely missing: **password reset**, which needs
    email delivery the app has no route to, so a forgotten password today means
    a lost account. Say so before anyone relies on it.
 
@@ -283,6 +298,13 @@ another rule.
   substance now ends early instead of being padded. Enforcing the number in both
   directions is what produced filler: it made the model pad. `ALLOW_TOPUPS=1`
   restores the old behaviour.
+- **Transport: two gestures, and both stay.** *(PROBLEMS.md §71.)* The
+  progress bar is draggable on all three listening surfaces, and the
+  fifteen-second buttons are untouched. They answer different questions - the
+  buttons "say that again", the drag "get me to roughly there" - so neither is
+  a replacement for the other, and removing either would be a regression. The
+  drag clamps at what has actually been written, because the episode is still
+  being generated while it plays.
 - **No filler, ever, and no setting for it.** The cold open was deleted, not
   disabled - a knob left behind is an invitation to turn it back on, and this
   one was turned back on by an example file. Nothing plays until the real
@@ -295,6 +317,15 @@ another rule.
   what the model already knows, immediately. `search=1`/`search=0` on a request
   still wins. Paying 10-25 seconds on every episode bought nothing for "what is
   the NASDAQ", which is most of what people ask.
+- **An account gates what is kept, never what is heard.** *(PROBLEMS.md §70.)*
+  Saved mixes, chosen interests and language, and the weekly recap need an
+  account; search, myFAM, DailyFAM's episodes, Explore, Go Deeper and the whole
+  audio path do not. The interaction log is deliberately outside the gate - it
+  is ambient personalisation rather than something the listener made and can
+  point at, and gating it would mean an anonymous feed could never be ranked.
+  `ACCOUNT_REQUIRED` in `app.py` holds the reasoning beside the code that
+  enforces it. Nothing is lost by signing up late: a mix made before the gate
+  is still under the same id and appears the moment credentials are attached.
 - **A listener id is never accepted from the client.** It arrives from an
   HttpOnly session cookie the server minted, and `?user=` is ignored wherever
   it still appears. This replaced `famUserId()`, which made an id up with
@@ -322,7 +353,7 @@ another rule.
   A key in a project `.env` is lost on every new copy, and the workaround for
   that is pasting it again somewhere it should not go. The key is never written
   into source: a commit keeps it in history after the line is deleted.
-- **What a listener costs is recorded when it is spent** *(§71).* The provider
+- **What a listener costs is recorded when it is spent** *(§73).* The provider
   only ever sees one account, so "which listener produced which request" has to
   be answered at the moment of spend or not at all. `metering.py` appends one
   row per episode, tagged from `_listener(request)`; `python tools/usage_report.py`
@@ -336,7 +367,7 @@ another rule.
   68x the median. `METERING.md` is the whole of it - including what it
   deliberately does not do: no quota, no enforcement, no billing, and no
   automatic block on an abuse signal.
-- **A credential is never something a human types** *(extends the above; §70).*
+- **A credential is never something a human types** *(extends the above; §72).*
   `~/.fam/env` solved this for one machine, and the demo does not run on one
   machine — a pod, a container and a CI runner each arrive with an empty
   `~/.fam`. `FAM_SECRETS` names a place the app fetches its own credentials
@@ -354,10 +385,13 @@ another rule.
 
 - **Where does this deploy?** Bandwidth is 2.65 MB/min uncompressed; that is
   fine on localhost and expensive at scale.
-- ~~**Is there a user account?**~~ *Answered: yes, as of PROBLEMS.md §66.* An
-  identity is a session; an account is credentials attached to one. What is
-  still open is what an account should *entitle* you to - nothing is gated on
-  having one today.
+- ~~**Is there a user account, and what does it entitle you to?**~~ *Answered
+  twice: §66 for the shape, §70 for the boundary.* An identity is a session; an
+  account is credentials attached to one; and what an account buys is
+  **durability** - the things the server keeps for you. The constraint above
+  says exactly which. Still open, and more visible than it was: **password
+  reset**, which needs email delivery, and which the sign-up screen now says
+  out loud rather than letting anyone find out the hard way.
 - **Local or hosted voices?** Changes the cost model more than the model choice
   does.
 - **How much to prefetch?** Every speculative script costs money; every one not
@@ -420,7 +454,7 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-56 are the
+`PROBLEMS.md` for every problem hit and its cause (newest last — §68-73 are the
 most recent), `DEVELOPMENT.md` for the loop, and `CREDENTIALS.md` for how a
 machine gets its API keys without anybody typing one, and `METERING.md` for
 what a listener costs and how the report says so.
@@ -433,7 +467,7 @@ and the second one is not optional:
 
 Then run `./dev.sh check` before changing anything, so you know the baseline is
 green rather than assuming it. A complete run ends with `all checks passed` and
-twelve named smoke behaviours; anything less means something was skipped, and
+twenty-one named smoke behaviours; anything less means something was skipped, and
 `dev.sh` now says so out loud (PROBLEMS.md §49).
 
 What is true but not obvious from the code:
@@ -443,7 +477,7 @@ What is true but not obvious from the code:
   the browser smoke test all run without one. Anything about *how the writing
   sounds* is unverified until someone runs it with a key.
 - The checks answer "does it work", not "does it look right". `tools/shots.py`
-  photographs all nine surfaces so a refactor can be proved neutral;
+  photographs all sixteen surfaces so a refactor can be proved neutral;
   `tools/stall_probe.py` measures browser stalls without a key, and
   `tools/compare_search.py` measures what research actually buys. Each exists
   because a claim was once made without it and was wrong.

@@ -1,6 +1,6 @@
 """What each listener costs, recorded at the moment it is spent.
 
-CLAUDE.md's §70 note ends "per-listener metering still does not exist", and the
+CLAUDE.md's §72 note ends "per-listener metering still does not exist", and the
 reason it has to is structural: **the provider only ever sees one account.**
 Anthropic bills this organisation, Exa bills this key, the GPU bills by the
 hour. None of them can say which listener produced which request, so if that
