@@ -267,3 +267,35 @@ def test_a_pool_only_configuration_still_sends_a_key(monkeypatch):
 def test_prime_invents_nothing_when_there_are_no_keys(monkeypatch):
     credentials.prime()
     assert os.environ.get("ANTHROPIC_API_KEY") is None
+
+
+def test_a_failing_provider_never_republishes_what_it_printed(monkeypatch):
+    """`report()` is served by /api/health, which is unauthenticated.
+
+    Two things must not travel that far: a secrets manager's stderr, which
+    routinely names account ids, role ARNs, Vault paths and internal hosts; and
+    the secret itself, which a wrapper that prints the value and then exits
+    non-zero puts on stdout. The classification is public; the diagnostic is
+    the server log's.
+    """
+    monkeypatch.setenv(credentials.PROVIDER_VAR,
+                       'cmd:echo "sk-ant-should-never-be-published"; '
+                       'echo "arn:aws:iam::123456789012:role/fam" >&2; exit 3')
+    with pytest.raises(credentials.SecretsUnavailable):
+        credentials.load()
+    published = repr(credentials.report())
+    assert "sk-ant-should-never-be-published" not in published, "leaked the secret"
+    assert "123456789012" not in published, "leaked the account id"
+    # Still says which provider failed and how, or it is not actionable.
+    assert "exited 3" in credentials.report()["detail"]
+
+
+def test_the_operator_still_gets_the_diagnostic_in_the_log(monkeypatch, caplog):
+    """Not published is not the same as not reported. An operator who cannot
+    see why the provider failed will paste the key somewhere instead."""
+    monkeypatch.setenv(credentials.PROVIDER_VAR,
+                       'cmd:echo "AccessDeniedException on secret fam" >&2; exit 1')
+    with caplog.at_level("ERROR"):
+        with pytest.raises(credentials.SecretsUnavailable):
+            credentials.load()
+    assert "AccessDeniedException" in caplog.text

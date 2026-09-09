@@ -3401,6 +3401,23 @@ exists — which means rebuilding the pool from the environment afterwards
 rediscovers only the key that was failed over *to*. The list is kept, not
 recomputed.
 
+**A failing provider must not publish what it printed.** Found by the security
+review of this branch, before it merged. The failure detail was built from the
+subprocess's own output - last line of stderr, falling back to *stdout* - and
+that string reaches `report()`, `CREDENTIALS["secrets"]` and therefore
+`GET /api/health`, which is deliberately unauthenticated: the one `/api/` path
+excluded from session handling and the platform's `healthCheckPath`. Two things
+travelled that far. Reliably, a secrets manager's stderr, which names account
+ids, role ARNs, Vault paths and internal hosts. Occasionally, through the
+stdout fallback, the credential itself - a wrapper that echoes the value and
+then fails a post-step puts the secret on stdout and exits non-zero.
+
+It contradicted this module's own rule, stated twice within it: `describe_spec`
+strips command arguments because "arguments have carried tokens before now",
+and `report` says "names and counts only". One line bypassed both, and it
+landed on the single endpoint with no auth in front of it. The classification
+now crosses the HTTP boundary and the diagnostic stays in the log.
+
 **A failed provider must not also be a quiet one.** Returning `{}` from a broken
 fetch is demo mode with no reason given, which is §51's canned script served
 under a real question all over again. It raises; startup, `/api/health` and

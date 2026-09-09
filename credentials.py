@@ -254,10 +254,30 @@ def _read_spec(spec: str) -> dict[str, str]:
         except OSError as exc:
             raise SecretsUnavailable(f"{describe_spec(spec)} could not run: {exc}") from exc
         if done.returncode != 0:
-            detail = (done.stderr or done.stdout or "").strip().splitlines()
-            why = detail[-1][:200] if detail else "no output"
+            # The provider's own output goes to the LOG and nowhere else.
+            #
+            # This message ends up in `_STATE["detail"]`, which `report()`
+            # returns and `/api/health` serves - and health is deliberately
+            # unauthenticated, being the one /api/ path excluded from session
+            # handling and the platform's `healthCheckPath`. Two things would
+            # have travelled that far: a failing secrets manager's stderr,
+            # which routinely names account ids, role ARNs, Vault paths and
+            # internal hosts; and, through a stdout fallback that used to be
+            # here, the secret itself whenever a wrapper printed the value and
+            # then exited non-zero.
+            #
+            # That contradicted this module's own rule, stated two functions
+            # up in `describe_spec` and again in `report`: names and counts
+            # only, never a payload. So the classification crosses the HTTP
+            # boundary and the diagnostic stays server-side, where an operator
+            # reading logs has always been the audience for it.
+            detail = (done.stderr or "").strip().splitlines()
+            if detail:
+                log.error("%s wrote to stderr: %s", describe_spec(spec),
+                          detail[-1][:500])
             raise SecretsUnavailable(
-                f"{describe_spec(spec)} exited {done.returncode}: {why}")
+                f"{describe_spec(spec)} exited {done.returncode} "
+                f"(its output is in the server log, not here)")
         text = done.stdout
     if name:
         value = text.strip()

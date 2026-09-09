@@ -203,6 +203,17 @@ which names it supplied, the pool sizes and the source of each credential. It
 never carries a key — a report that prints a secret is a report nobody can
 paste into a bug, which makes it a report nobody runs.
 
+**It never carries the provider's own output either**, and that is the same
+rule rather than a second one. `/api/health` is deliberately unauthenticated —
+it is the one `/api/` path excluded from session handling and the platform's
+`healthCheckPath` — so a failing provider's stderr would be published to
+anyone who asked, and secrets-manager errors routinely name account ids, role
+ARNs, Vault paths and internal hosts. A wrapper that prints the value and then
+exits non-zero would have published the credential itself. So the failure
+**classification** crosses the HTTP boundary (`cmd: aws exited 3`) and the
+**diagnostic** stays in the server log, where the operator reading it has
+always been the audience.
+
 A provider that is set and broken is said out loud at startup, on `/api/health`
 and in the preflight, and it never quietly falls through to the canned script.
 A configured-and-failing provider is reported even when a key was found some
