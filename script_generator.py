@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass
 from typing import AsyncIterator
 
+import credentials
 from anthropic_client import build_async_client
 from cache import research_reason
 from config import settings
@@ -559,7 +560,11 @@ class ScriptGenerator:
     """Streams a length-controlled script out of Claude."""
 
     def __init__(self, api_key: str | None = None):
-        key = api_key if api_key is not None else settings.anthropic_api_key
+        # The key in force, not the one captured at import. `settings` reads the
+        # environment once when the module loads, so a key that was rotated in
+        # the secrets manager or failed over to after a rejection would never
+        # reach a generator built later in the life of the process.
+        key = api_key if api_key is not None else credentials.active("ANTHROPIC_API_KEY")
         # Built centrally so the HTTP version is pinned in one place; an empty
         # key still lets the SDK fall back to ANTHROPIC_AUTH_TOKEN or a stored
         # `ant auth login` profile.

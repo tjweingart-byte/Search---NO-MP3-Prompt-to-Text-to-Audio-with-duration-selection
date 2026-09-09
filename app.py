@@ -28,7 +28,8 @@ from anthropic_client import build_async_client, describe_http_version, http2_en
 from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_words
 import embeddings
 from demo_script import DemoGenerator
-from config import DEFAULT_PIPELINE, describe_key, settings
+import credentials
+from config import DEFAULT_PIPELINE, describe_key, key_source, settings
 from research import ResearchUnavailable, report as research_report
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
@@ -64,7 +65,7 @@ if VOICE_STORE["adopted"]:
 log.info("voices: %s", voice_store.describe())
 
 #: Filled in at startup by _verify_credentials. "unchecked" until then.
-CREDENTIALS = {"state": "unchecked", "detail": "", "key": ""}
+CREDENTIALS = {"state": "unchecked", "detail": "", "key": "", "source": "", "secrets": {}}
 
 
 async def _verify_credentials() -> None:
@@ -79,24 +80,81 @@ async def _verify_credentials() -> None:
     `models.retrieve` is the cheapest possible question: it bills nothing, and
     it answers both "is this key accepted" and "can this account use this
     model" - which are the two ways this has actually failed.
+
+    A rejection now has two things to try before it is reported, and the order
+    matters. **Re-read the provider first**: the commonest reason a key that
+    worked yesterday is refused today is that it was rotated, and the new one
+    is already sitting in the secrets manager. **Then fail over**, if a pool was
+    configured. Only when both are spent is this a rejection - which is what it
+    always was, said at the same place, in the same words.
     """
+    credentials.prime()
     CREDENTIALS["key"] = describe_key()
+    CREDENTIALS["source"] = key_source()
+    CREDENTIALS["secrets"] = credentials.report()
     if DEMO_MODE:
         CREDENTIALS.update(state="absent", detail="No API key: the canned sample script is standing in.")
         log.warning("NO API KEY - every episode will be the built-in sample script, "
                     "which does not answer what was asked.")
+        _say_where_a_key_could_come_from()
         return
-    try:
-        client = build_async_client()
-        await client.models.retrieve(settings.model)
-    except Exception as exc:  # noqa: BLE001 - the report matters, not the type
-        CREDENTIALS.update(state="rejected", detail=friendly_error(exc))
-        log.error("CREDENTIALS REJECTED - nothing will generate. %s", CREDENTIALS["detail"])
-        log.error("  key in force: %s", CREDENTIALS["key"])
-        log.error("  fix it and restart; the interface says the same thing on every tab.")
+    rotated = False
+    while True:
+        try:
+            client = build_async_client()
+            await client.models.retrieve(settings.model)
+        except Exception as exc:  # noqa: BLE001 - the report matters, not the type
+            detail = friendly_error(exc)
+            if not rotated and credentials.refresh("the key in force was rejected"):
+                # The provider answered. Start again at the top of the pool: the
+                # keys behind the rejected one may have been rotated as well.
+                rotated = True
+                credentials.reset("ANTHROPIC_API_KEY")
+                CREDENTIALS["key"] = describe_key()
+                CREDENTIALS["source"] = key_source()
+                continue
+            if credentials.demote("ANTHROPIC_API_KEY", detail):
+                CREDENTIALS["key"] = describe_key()
+                continue
+            CREDENTIALS.update(state="rejected", detail=detail,
+                               secrets=credentials.report())
+            log.error("CREDENTIALS REJECTED - nothing will generate. %s", CREDENTIALS["detail"])
+            log.error("  key in force: %s", CREDENTIALS["key"])
+            log.error("  it came from: %s", CREDENTIALS["source"])
+            log.error("  fix it and restart; the interface says the same thing on every tab.")
+            return
+        break
+    CREDENTIALS.update(state="ok", detail=f"{settings.model} is reachable with this key.",
+                       key=describe_key(), source=key_source(),
+                       secrets=credentials.report())
+    log.info("credentials OK - %s reachable (%s from %s)", settings.model,
+             CREDENTIALS["key"], CREDENTIALS["source"])
+
+
+def _say_where_a_key_could_come_from() -> None:
+    """With no key, say the thing that stops this happening on the next machine.
+
+    A fresh pod, a fresh container and a colleague's laptop all arrive here, and
+    the answer that has been given four times is "paste it again". It is worth
+    one line at the exact moment somebody is about to.
+    """
+    report = credentials.report()
+    if report["state"] == "failed":
+        log.error("  %s IS set and could not be read: %s",
+                  credentials.PROVIDER_VAR, report["detail"])
+        log.error("  That is why there is no key. Fix the provider, not the app.")
         return
-    CREDENTIALS.update(state="ok", detail=f"{settings.model} is reachable with this key.")
-    log.info("credentials OK - %s reachable (%s)", settings.model, CREDENTIALS["key"])
+    if report["configured"]:
+        log.warning("  %s is set (%s) but supplied no ANTHROPIC_API_KEY.",
+                    credentials.PROVIDER_VAR, ", ".join(report["provider"]))
+        return
+    log.warning("  On this machine:   python setup_key.py")
+    log.warning("  On every machine:  set %s, e.g.", credentials.PROVIDER_VAR)
+    log.warning("    %s='cmd:aws secretsmanager get-secret-value "
+                "--secret-id fam --query SecretString --output text'",
+                credentials.PROVIDER_VAR)
+    log.warning("  See CREDENTIALS.md. A machine that has never run FAM needs "
+                "that one line and nothing typed.")
 
 
 def _announce_research() -> None:
@@ -386,8 +444,11 @@ async def health() -> dict:
         "model": settings.model,
         "web_search_default": settings.enable_web_search,
         "http": {"version": describe_http_version(), "http2_negotiated": http2_enabled()},
-        "api_key_configured": bool(settings.anthropic_api_key),
+        "api_key_configured": bool(credentials.active("ANTHROPIC_API_KEY")
+                                    or settings.anthropic_api_key),
         # Configured is not the same as working, and only one of them matters.
+        # `credentials.secrets` says where the working one came from and whether
+        # the next machine will find it without anybody typing it.
         "credentials": CREDENTIALS,
         "sample_rate": build_engine().sample_rate,
         "min_minutes": settings.min_minutes,

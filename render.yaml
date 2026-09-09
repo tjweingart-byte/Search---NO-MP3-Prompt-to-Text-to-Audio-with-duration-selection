@@ -11,6 +11,15 @@ services:
     autoDeploy: true       # every push to the branch redeploys
     healthCheckPath: /api/health
     envVars:
+      # Two ways to do this, and the second one scales past this service.
+      #
+      # `sync: false` means Render asks for the value once in the dashboard and
+      # keeps it - never in the repo. That is fine here, and it is a snapshot:
+      # rotating the key means editing it here and redeploying.
+      #
+      # FAM_SECRETS instead points the app at a secrets manager it can read for
+      # itself, which is not a secret and so could live in this file. A rotated
+      # key is then picked up by the running server. See CREDENTIALS.md.
       - key: ANTHROPIC_API_KEY
         sync: false        # set once in the dashboard; never in the repo
       - key: DEMO_MODE

@@ -34,6 +34,7 @@ import os
 import stat
 import sys
 
+import credentials
 from config import describe_key, key_source, settings, shared_env_path
 
 VAR = "ANTHROPIC_API_KEY"
@@ -154,10 +155,22 @@ def main() -> int:
         print(f"  stored in : {path}{'' if path.exists() else '  (does not exist yet)'}")
         print(f"  key source: {key_source()}")
         print(f"  key       : {describe_key()}")
-        if not settings.anthropic_api_key:
+        report = credentials.report()
+        if report["configured"]:
+            print(f"  provider  : {', '.join(report['provider'])} - {report['state']}"
+                  f"{': ' + report['detail'] if report['detail'] else ''}")
+        pooled = report["pools"]["ANTHROPIC_API_KEY"]["keys"]
+        if pooled > 1:
+            print(f"  pool      : {pooled} keys, #{report['pools']['ANTHROPIC_API_KEY']['in_use']} "
+                  f"in use. Failover only - Anthropic rate limits are per")
+            print("              organisation, so extra keys buy no extra headroom.")
+        key = credentials.active(VAR) or settings.anthropic_api_key
+        if not key:
             print("\nNo key. Run: python setup_key.py")
+            print(f"To stop every new machine asking, set {credentials.PROVIDER_VAR} "
+                  f"instead - see CREDENTIALS.md.")
             return 1
-        ok, detail = asyncio.run(works(settings.anthropic_api_key))
+        ok, detail = asyncio.run(works(key))
         print(f"  accepted  : {'YES - ' + detail if ok else 'NO - ' + detail}")
         return 0 if ok else 1
 
@@ -197,6 +210,11 @@ def main() -> int:
     print(f"Stored in {path} (readable only by you).")
     print("\nYou will not be asked again on this machine, including by a new copy "
           "of the app.\nCheck it any time with:  python setup_key.py --show")
+    if not credentials.provider_specs():
+        print("\nThis machine is done. Every OTHER machine - a pod, a container, a "
+              "CI runner,\na colleague's laptop - is a fresh ~/.fam and will ask "
+              f"again. One variable\nends that for all of them: set "
+              f"{credentials.PROVIDER_VAR}. See CREDENTIALS.md.")
     return 0
 
 

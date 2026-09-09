@@ -130,3 +130,113 @@ def test_health_carries_the_verdict_so_the_interface_can_say_it(monkeypatch):
     body = TestClient(appmod.app).get("/api/health").json()
     assert body["credentials"]["state"] == "rejected"
     assert body["api_key_configured"] is not None, "configured != working, keep both"
+
+
+# --- a rejection now has two things to try before it is a rejection --------
+#
+# Both of them exist because of the same observation: the commonest reason a
+# key that worked yesterday is refused today is that somebody rotated it, and
+# the replacement is already sitting in the secrets manager. Restarting the
+# server to pick it up is the manual step this whole change is removing.
+
+import credentials as creds_mod  # noqa: E402
+
+
+@pytest.fixture
+def pool(monkeypatch):
+    """A real pool, and the module state that goes with it, cleaned up after."""
+    creds_mod.SOURCES.clear()
+    creds_mod._OWNED.clear()
+    creds_mod._POOL.clear()
+    creds_mod._CURSOR.clear()
+    monkeypatch.delenv(creds_mod.PROVIDER_VAR, raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEYS", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    yield
+    creds_mod.SOURCES.clear()
+    creds_mod._OWNED.clear()
+    creds_mod._POOL.clear()
+    creds_mod._CURSOR.clear()
+
+
+class _KeyAwareClient:
+    """A client that accepts some keys and refuses others.
+
+    It reads the key from the environment for the same reason the real SDK
+    does, which is what makes this a test of the failover rather than of the
+    fake: if `demote` did not publish the new key, this would keep seeing the
+    old one and the test would fail.
+    """
+
+    def __init__(self, good: set[str]):
+        self.good, self.tried = good, []
+        outer = self
+
+        class _Models:
+            async def retrieve(self, model):
+                key = os.environ.get("ANTHROPIC_API_KEY", "")
+                outer.tried.append(key)
+                if key in outer.good:
+                    return {"id": model}
+                exc = anthropic.AuthenticationError.__new__(anthropic.AuthenticationError)
+                Exception.__init__(exc, "invalid x-api-key")
+                raise exc
+
+        self.models = _Models()
+
+
+def test_a_capped_key_fails_over_instead_of_ending_the_demo(monkeypatch, pool):
+    """The failure this is for: a key hits its spend cap halfway through a
+    demo. With a pool the next key takes over; without one this is unchanged."""
+    monkeypatch.setenv("ANTHROPIC_API_KEYS", "sk-ant-dead,sk-ant-live")
+    client = _KeyAwareClient(good={"sk-ant-live"})
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "build_async_client", lambda: client)
+    asyncio.run(appmod._verify_credentials())
+    assert appmod.CREDENTIALS["state"] == "ok"
+    assert client.tried == ["sk-ant-dead", "sk-ant-live"], "did not walk the pool"
+
+
+def test_a_rotated_secret_is_picked_up_without_a_restart(monkeypatch, pool, tmp_path):
+    """A key rejected at startup asks the provider again before giving up,
+    because "it was rotated" is the likeliest reason it stopped working."""
+    blob = tmp_path / "anthropic"
+    blob.write_text("sk-ant-rotated-away")
+    monkeypatch.setenv(creds_mod.PROVIDER_VAR, f"file:ANTHROPIC_API_KEY={blob}")
+    creds_mod.load()
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-rotated-away"
+
+    # The manager now holds the new key; nothing has restarted.
+    blob.write_text("sk-ant-current")
+    client = _KeyAwareClient(good={"sk-ant-current"})
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "build_async_client", lambda: client)
+    asyncio.run(appmod._verify_credentials())
+    assert appmod.CREDENTIALS["state"] == "ok"
+    assert client.tried == ["sk-ant-rotated-away", "sk-ant-current"]
+
+
+def test_every_key_wrong_is_still_one_plain_rejection(monkeypatch, pool):
+    """Failover must not turn one clear message into a loop or a stack trace."""
+    monkeypatch.setenv("ANTHROPIC_API_KEYS", "sk-ant-1,sk-ant-2,sk-ant-3")
+    client = _KeyAwareClient(good=set())
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "build_async_client", lambda: client)
+    asyncio.run(appmod._verify_credentials())
+    assert appmod.CREDENTIALS["state"] == "rejected"
+    assert len(client.tried) == 3, "gave up early, or looped"
+
+
+def test_the_verdict_says_where_the_key_came_from(monkeypatch, pool, tmp_path):
+    """"A key is set" was never the useful half. Which of four sources supplied
+    it is the question actually asked when the wrong one is in force."""
+    blob = tmp_path / "anthropic"
+    blob.write_text("sk-ant-from-the-manager")
+    monkeypatch.setenv(creds_mod.PROVIDER_VAR, f"file:ANTHROPIC_API_KEY={blob}")
+    creds_mod.load()
+    client = _KeyAwareClient(good={"sk-ant-from-the-manager"})
+    monkeypatch.setattr(appmod, "DEMO_MODE", False)
+    monkeypatch.setattr(appmod, "build_async_client", lambda: client)
+    asyncio.run(appmod._verify_credentials())
+    assert creds_mod.PROVIDER_VAR in appmod.CREDENTIALS["source"]
+    assert "sk-ant-from-the-manager" not in repr(appmod.CREDENTIALS), "leaked the key"

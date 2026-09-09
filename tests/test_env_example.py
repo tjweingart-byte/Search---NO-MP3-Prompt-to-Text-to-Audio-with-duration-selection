@@ -102,3 +102,25 @@ def test_no_setting_in_the_example_disagrees_with_the_code(defaults):
         elif isinstance(actual, str) and raw and raw != actual:
             mismatches.append(f"{key}={raw} but default is {actual}")
     assert not mismatches, "the example disagrees with the code: " + "; ".join(mismatches)
+
+
+def test_the_example_does_not_ship_an_enabled_secrets_provider():
+    """§54 again, with a new variable to get wrong.
+
+    A live `FAM_SECRETS=` in the file people are told to copy would point every
+    fresh checkout at a secrets manager that machine does not have, and the app
+    would report a failed provider at every startup. The recipes belong in the
+    example; only commented out.
+    """
+    assert "FAM_SECRETS" not in example_values(), \
+        ".env.example enables a secrets provider; it must only document one"
+    text = (ROOT / ".env.example").read_text()
+    assert "FAM_SECRETS=" in text, "the example no longer documents the provider at all"
+    assert "CREDENTIALS.md" in text, "documented without saying where the recipes are"
+
+
+def test_the_example_does_not_ship_a_key_pool():
+    """Same reason, and one more: a pool of one real key and one placeholder
+    fails over from a working key to a broken one on the first rate limit."""
+    for name in ("ANTHROPIC_API_KEYS", "EXA_API_KEYS"):
+        assert name not in example_values(), f".env.example enables {name}"

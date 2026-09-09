@@ -3338,3 +3338,120 @@ So there are now two configurations on purpose, and the pin says why in the
 Dockerfile and in DEPLOY.md. The reproduction that collapses them back into one
 is `ANSWER_FIRST=1 bash tools/pod_production_test.sh` against the same harness
 without it. Whichever way the numbers go, one of the two lines is deleted.
+
+## 70. The key was set once per machine, and the demo runs on a new machine every time
+
+§53 fixed this, and it kept happening.
+
+That section is right about the cause — "nobody re-enters a credential four
+times because they enjoy it; they do it because the app keeps losing it" — and
+right about the fix: `~/.fam/env`, outside the project, next to the voice store,
+so unpacking a new copy of the app finds the key already there.
+
+**It is scoped to one machine, and the demo is not.** A rented GPU pod, a fresh
+container, a colleague's laptop, a CI runner: every one of those is a machine
+with an empty `~/.fam`, so every one of them asks for the key again. §53 moved
+the store out of the project folder. The same argument moves it out of the
+machine.
+
+### What the resolution order is now
+
+    1. the process environment    a platform dashboard, a CI secret, docker -e
+    2. FAM_SECRETS                fetched at runtime by the app itself
+    3. the project .env           a project pinning its own key
+    4. ~/.fam/env                 the per-machine store from §53
+
+An explicit environment variable still wins, and a refresh will not overwrite
+one: somebody who exported a key by hand did it to test that specific key
+against a specific bug, and having it silently replaced by a secrets manager is
+the version of this feature that costs a day.
+
+### The provider is a shell command, and that is the whole design
+
+Two schemes — `file:` and `cmd:`, each optionally `NAME=` — parsed as a JSON
+object or as dotenv lines. That covers AWS Secrets Manager, Google Secret
+Manager, Vault, Doppler, 1Password and Docker/Kubernetes secret files with **no
+new dependency and no vendor picked on the app's behalf**, because every one of
+them already ships a CLI that authenticates as the machine (an IAM role, a
+service account) rather than as another stored password. The escape hatch for a
+manager nobody has thought of is that it is already a shell command.
+
+`FAM_SECRETS` is not itself a secret. It says *where* the secrets are, which is
+why it can sit in a host template, a Dockerfile, this repository's docs, and
+`render.yaml`.
+
+### Four things that were nearly wrong
+
+**`demo.sh` was asking the wrong question.** It tested `$ANTHROPIC_API_KEY` —
+which is only what *that shell* can see, the project `.env` it had just sourced.
+Three of the four sources are resolved in Python, so a machine that was already
+set up correctly still got asked to paste its key in. It now asks the app
+whether a key will be found, and prints a yes or a no and never the key: a value
+echoed there would reach the scrollback, a screenshot and `bash -x` output.
+
+**A pool-only configuration had keys and sent none.** `ANTHROPIC_API_KEYS`
+(plural) is a form only `credentials.py` reads; the SDK reads the singular. A
+deployment that set the pool and nothing else would have had two perfectly good
+keys in its environment and reported demo mode. `prime()` publishes the head of
+each pool once resolution is finished. Caught by a test, not by a person.
+
+**`reset()` shrank the pool it was restoring.** `demote` writes the key in force
+into the environment so the SDK follows a failover without knowing this module
+exists — which means rebuilding the pool from the environment afterwards
+rediscovers only the key that was failed over *to*. The list is kept, not
+recomputed.
+
+**A failed provider must not also be a quiet one.** Returning `{}` from a broken
+fetch is demo mode with no reason given, which is §51's canned script served
+under a real question all over again. It raises; startup, `/api/health` and
+`tools/demo_preflight.py` all say so, and they say it **even when a key was
+found some other way** — because that means the next machine will find nothing.
+
+### Rotation, which is the part that was actually missing
+
+`refresh()` re-runs the provider in the running process, and a rejection at
+startup now re-reads the manager *before* it reports a bad key. The commonest
+reason a key that worked yesterday is refused today is that somebody rotated it
+and the replacement is already sitting in the manager. So rotating is now
+"change it in the manager" — no redeploy, no restart. A test writes a new value
+under a running server and asserts it is picked up.
+
+`describe_key` and `ScriptGenerator` were both reading `settings.anthropic_api_key`,
+captured once at import. After a rotation or a failover that is a different
+string from the one being sent, and a fingerprint that names the wrong key is
+worse than no fingerprint.
+
+### What this deliberately does not buy, said before somebody assumes it
+
+**A pool of Anthropic keys is failover, not headroom.** Anthropic's rate limits
+are per *organisation*, so a second key from the same org shares one bucket.
+Real headroom is a higher usage tier or separate workspaces. Exa's limits *are*
+per key, so there a pool is genuine. Getting this backwards would have produced
+a "scaling fix" that scales nothing.
+
+**CI never needed a key**, and none was added. The suite is hermetic by
+construction (`FAM_IGNORE_DOTENV`, which now skips the provider too), so the
+tempting move — put `ANTHROPIC_API_KEY` in the repository's GitHub secrets —
+would have bought nothing and added a key to rotate.
+
+**The credential was never the ceiling.** Chatterbox runs in-process, so
+concurrency is bounded by GPU capacity, and bandwidth is 2.65 MB/min per
+listener uncompressed. No number of keys moves either. **Per-listener metering
+still does not exist**: with one key behind everyone the provider sees only this
+account, so per-user limits, billing and abuse detection need a row in our own
+database tagged with the id from `_listener(request)` at the moment each model
+call is made. That is the next piece, and it is not built.
+
+Twenty-five tests in `tests/test_credential_chain.py` and four more in
+`tests/test_credentials.py` pin all of it, none of them touching a network or a
+real secrets manager — `cmd:` is a shell command, so a shell command is exactly
+what a test can supply. `CREDENTIALS.md` is the operator-facing half.
+
+**Still unverified here, and it is the same gap as always:** this container has
+no API key and no secrets manager, so every provider in `CREDENTIALS.md` is
+exercised against a local `echo`, a file and a failing command rather than
+against AWS, Vault or Doppler. The parsing, the ordering, the failover and the
+rotation are tested; *that `aws secretsmanager get-secret-value` prints what
+this expects* is read from its documentation, not observed. The first run on a
+real machine should be `python setup_key.py --show`, which names the provider,
+its state, and whether Claude still accepts what it returned.
