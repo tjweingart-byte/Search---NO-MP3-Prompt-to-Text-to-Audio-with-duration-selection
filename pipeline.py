@@ -27,6 +27,7 @@ import time
 from audio_utils import PaceController, pcm_duration, silence, streaming_wav_header
 from cache import (ScriptCache, build_cache, cache_key, canonical_key, is_shareable,
                    key_bucket, ttl_for)
+import metering
 from episode_marks import EpisodeMarks, TimedClient
 from config import STREAMING_PIPELINES, settings
 from script_buffer import ASSEMBLER_TICK, ScriptBuffer
@@ -196,6 +197,10 @@ class GenerationStats:
     #: would ask for. Drives the one-tap suggestion in Go Deeper; empty when
     #: the model named none.
     thread: str = ""
+    #: What this episode consumed. Copied off ScriptNotes when generation
+    #: finishes, because `stats` is the object that reaches the endpoint and
+    #: the endpoint is the only place that knows *whose* episode this was.
+    usage: metering.Usage = field(default_factory=metering.Usage)
 
     @property
     def drift(self) -> float:
@@ -780,8 +785,14 @@ class PodcastPipeline:
         # Two streams, two completions. "Claude finished" means the half that
         # carries the episode - the researched one - so the cover half marks a
         # name of its own rather than winning the race to a shared one.
+        # A fresh ScriptNotes so the cover's predicted follow-up cannot beat
+        # the researched half's - but carrying the SAME Usage object, because
+        # the cover is a full model call that writes most of what is heard.
+        # Two accumulators here would have reported researched episodes at
+        # roughly half their real cost, on exactly the episodes that cost most.
         instant = self._pump_for(
-            self.generator.stream_sentences(instant_plan, ScriptNotes()),
+            self.generator.stream_sentences(
+                instant_plan, ScriptNotes(usage=notes.usage)),
             stats, pace, completion_mark="instant_complete",
             first_sentence_mark="cover_first_sentence")
         research = self._pump_for(
@@ -1019,6 +1030,11 @@ class PodcastPipeline:
         # Nothing is spoken until the real script arrives. The opener that used
         # to cover this wait is gone: see PROBLEMS.md 55.
         notes = ScriptNotes()
+        # Pointed at the live accumulator *now*, not when generation finishes.
+        # `Usage` is mutable and shared, so this makes `stats.usage` track the
+        # episode as it goes - which is the difference between an episode that
+        # dies after Exa has already billed being recorded and being free.
+        stats.usage = notes.usage
 
         if plan.search and settings.answer_first:
             async for chunk in self._answer_first(plan, pace, stats, notes):
@@ -1046,7 +1062,8 @@ class PodcastPipeline:
             # A top-up is more of the same episode, so it must not re-mark a
             # completion that already happened.
             extra = self._pump_for(
-                self.generator.top_up(plan, " ".join(stats.script), words_needed),
+                self.generator.top_up(plan, " ".join(stats.script), words_needed,
+                                      notes),
                 stats, pace, completion_mark="topup_complete")
             async for chunk in self._speak_pump(extra, pace, stats):
                 yield chunk

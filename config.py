@@ -9,6 +9,7 @@ import os
 import pathlib
 from dataclasses import dataclass, field
 
+import credentials
 import voice_store
 from paths import data_path
 
@@ -29,9 +30,15 @@ def shared_env_path() -> pathlib.Path:
 
 def key_source() -> str:
     """Where the key in force came from. A key that works is not much comfort
-    when you cannot tell which file the app actually read."""
+    when you cannot tell which file the app actually read.
+
+    A secrets provider is asked about first because it is the one source that
+    is not a file you can go and look at, so it is the one worth naming.
+    """
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return "nowhere - no key is set"
+    if "ANTHROPIC_API_KEY" in credentials.SOURCES:
+        return credentials.SOURCES["ANTHROPIC_API_KEY"]
     project = pathlib.Path(__file__).resolve().parent / ".env"
     for path, label in ((project, "the project .env"), (shared_env_path(), str(shared_env_path()))):
         try:
@@ -43,24 +50,26 @@ def key_source() -> str:
     return "the environment"
 
 
-def _load_dotenv() -> None:
-    """Read .env into the environment, if it is not already there.
+def _dotenv_values() -> dict[str, str]:
+    """Read the .env files without applying them.
+
+    Parsed separately from being applied for one reason: `FAM_SECRETS` may
+    itself be set in a .env, and the secrets provider has to run *before* the
+    files are applied so that a real environment variable still outranks it.
+    Reading first and applying after is what lets both be true.
 
     The shell scripts source .env before starting the server, so for a long
     time nothing in Python needed to. Then `python app.py` - which app.py
     itself offers, in its __main__ block - started the server without it, the
     key was invisible, and the app fell back to the canned demo script while
-    .env sat there with a perfectly good key in it. Loading it here means the
+    .env sat there with a perfectly good key in it. Reading it here means the
     key is found however the app is started.
-
-    A real environment variable always wins: this only fills in what is unset,
-    so `MODEL=... python app.py` still overrides the file.
     """
     # Tests must not change result because of what is in a developer's .env -
     # a key there would flip the app out of demo mode mid-suite. conftest.py
     # sets this before anything imports config.
     if os.environ.get("FAM_IGNORE_DOTENV"):
-        return
+        return {}
     lines: list[str] = []
     # ~/.fam/env first, project .env second, so the project can override the
     # machine-wide setting. The shared file exists for the same reason
@@ -73,7 +82,7 @@ def _load_dotenv() -> None:
         except (OSError, UnicodeDecodeError):
             continue
     if not lines:
-        return
+        return {}
     # Last occurrence wins, which is what `source .env` does. A loader that took
     # the first would disagree with the shell scripts about the same file - and
     # a .env that has been appended to twice (an old key, then the corrected
@@ -93,9 +102,47 @@ def _load_dotenv() -> None:
             value = value[1:-1]
         if name:
             found[name] = value
-    for name, value in found.items():
+    return found
+
+
+def _load_dotenv() -> None:
+    """Resolve every credential, in the order that needs no human.
+
+        1. the process environment    a platform dashboard, a CI secret, -e
+        2. FAM_SECRETS               fetched now, so rotation needs no redeploy
+        3. the project .env          a project pinning its own key
+        4. ~/.fam/env                the per-machine store (PROBLEMS.md 53)
+
+    A real environment variable always wins: nothing below it overwrites one,
+    so `MODEL=... python app.py` still overrides every file and every provider.
+    """
+    values = _dotenv_values()
+    # The provider can be named in a .env - that is how a laptop configures it
+    # once - so lift that one variable before asking the provider anything.
+    if credentials.PROVIDER_VAR in values and not os.environ.get(credentials.PROVIDER_VAR):
+        os.environ[credentials.PROVIDER_VAR] = values[credentials.PROVIDER_VAR]
+    # `FAM_IGNORE_DOTENV` silences the provider as well as the files. The name
+    # says dotenv, but what conftest.py sets it for is "no ambient credentials
+    # in this process", and a suite that shelled out to a developer's secrets
+    # manager would be neither hermetic nor fast.
+    #
+    # A provider that is configured and cannot be read is loud and not fatal.
+    # Not fatal, because the .env files below may still hold a usable key and
+    # an app that refuses to start has answered a question nobody asked. Loud,
+    # because the alternative is falling through to the canned script with no
+    # reason given - the silent success this project has lost the most time to.
+    if not os.environ.get("FAM_IGNORE_DOTENV"):
+        try:
+            credentials.load()
+        except credentials.SecretsUnavailable:
+            pass  # already logged, and reported by health and preflight
+    for name, value in values.items():
         if name not in os.environ:
             os.environ[name] = value
+    # Everything is now resolved, so the pool has its final contents. Publish
+    # its head: `ANTHROPIC_API_KEYS` is a form only `credentials` reads, and a
+    # deployment that set only that would otherwise have keys and send none.
+    credentials.prime()
 
 
 _load_dotenv()
@@ -512,7 +559,10 @@ def describe_key(key: str = "") -> str:
     first question is always whether the one being sent is the one you think.
     Never prints enough to be a secret: a prefix, a length and the last four.
     """
-    key = key or settings.anthropic_api_key
+    # The key in force outranks the one `settings` captured at import: after a
+    # rotation or a failover they are different strings, and the whole point of
+    # a fingerprint is to say which one was actually sent.
+    key = key or credentials.active("ANTHROPIC_API_KEY") or settings.anthropic_api_key
     if not key:
         return "no key configured"
     shape = "looks like an API key" if key.startswith("sk-ant-") else (

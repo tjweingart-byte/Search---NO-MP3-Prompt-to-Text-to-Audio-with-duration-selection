@@ -45,7 +45,7 @@ class Opening:
             await asyncio.sleep(0)
             yield sized(20)
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         async for sentence in self.stream_sentences(plan):
             yield sentence
 

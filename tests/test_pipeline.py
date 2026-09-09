@@ -59,7 +59,7 @@ class FakeGenerator:
     async def cold_open(self, plan):
         yield "Here is what happened, and why it mattered."
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         async for s in self._emit(words_needed):
             yield s
 
@@ -196,7 +196,7 @@ def test_generator_errors_propagate_instead_of_producing_silence():
             raise RuntimeError("upstream is down")
             yield ""  # pragma: no cover
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             yield ""  # pragma: no cover
 
     plan = plan_episode("a question", 1)
@@ -450,7 +450,7 @@ class SlowResearchGenerator:
         for i in range(60):
             yield f"Body sentence {i} of the real briefing."
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         for i in range(30):
             yield f"Extra sentence {i}."
 
@@ -538,7 +538,7 @@ class ShortOpenerSlowBody:
         for i in range(80):
             yield f"Body sentence {i} of the researched briefing."
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         for i in range(40):
             yield f"Extra {i}."
 
@@ -576,7 +576,7 @@ def test_a_short_script_is_not_padded_back_to_length():
             for i in range(6):
                 yield f"A genuinely substantive sentence number {i}."
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             raise AssertionError("top-up must not run when padding is disabled")
             yield ""  # pragma: no cover
 

@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass
 from typing import AsyncIterator
 
+import credentials
+import metering
 from anthropic_client import build_async_client
 from cache import research_reason
 from config import settings
@@ -260,6 +262,13 @@ class ScriptNotes:
     #: surfaced so a researched episode can be costed and its sources judged.
     #: Empty dict on the `claude` backend, where nothing was retrieved.
     research: dict = dataclasses.field(default_factory=dict)
+    #: What this episode consumed, accumulated across every model call it
+    #: makes. Mutable and shared deliberately: a researched episode runs two
+    #: calls at once and both must land in the same total, so `_answer_first`
+    #: hands the cover half a ScriptNotes carrying *this* Usage object. A
+    #: per-call copy would report the cover as free, which is the half that
+    #: does most of the writing.
+    usage: metering.Usage = dataclasses.field(default_factory=metering.Usage)
 
 
 def extract_thread(text: str) -> str:
@@ -559,7 +568,11 @@ class ScriptGenerator:
     """Streams a length-controlled script out of Claude."""
 
     def __init__(self, api_key: str | None = None):
-        key = api_key if api_key is not None else settings.anthropic_api_key
+        # The key in force, not the one captured at import. `settings` reads the
+        # environment once when the module loads, so a key that was rotated in
+        # the secrets manager or failed over to after a rejection would never
+        # reach a generator built later in the life of the process.
+        key = api_key if api_key is not None else credentials.active("ANTHROPIC_API_KEY")
         # Built centrally so the HTTP version is pinned in one place; an empty
         # key still lets the SDK fall back to ANTHROPIC_AUTH_TOKEN or a stored
         # `ant auth login` profile.
@@ -623,6 +636,9 @@ class ScriptGenerator:
         packet = await research_mod.retrieve(plan.query)
         if notes is not None:
             notes.research = packet.as_dict()
+            # Exa's own reported cost where it gave one, its published rate
+            # otherwise - `research.retrieve` has already made that choice.
+            notes.usage.add_research(packet.searches, packet.cost)
         if not packet:
             # Nothing usable came back. The episode is still answerable, and
             # without an evidence block the tool stays attached - so the model
@@ -679,13 +695,20 @@ class ScriptGenerator:
                 notes.thread = extract_thread(buffer)
 
             final = await stream.get_final_message()
+            # The provider bills this organisation, not this listener, so if
+            # the tokens are not attributed here they cannot be attributed
+            # anywhere. Read from the final message rather than estimated from
+            # the text: cache reads and writes are invisible in the output.
+            if notes is not None:
+                notes.usage.add_model_call(settings.model, getattr(final, "usage", None))
             if final.stop_reason == "refusal":
                 detail = getattr(final, "stop_details", None)
                 reason = getattr(detail, "explanation", None) or "the request was declined"
                 yield clean_for_speech(f"I can't put together a briefing on that. {reason}")
 
     async def top_up(
-        self, plan: EpisodePlan, spoken_so_far: str, words_needed: int
+        self, plan: EpisodePlan, spoken_so_far: str, words_needed: int,
+        notes: ScriptNotes | None = None,
     ) -> AsyncIterator[str]:
         """Ask for a short continuation when the episode is running short.
 
@@ -727,6 +750,12 @@ class ScriptGenerator:
             tail_sentence = clean_for_speech(buffer)
             if tail_sentence:
                 yield tail_sentence
+            # Small, but not free, and it happens on the episodes that already
+            # cost the most - an under-written long one. Counting it is the
+            # difference between "a 10-minute episode costs X" and a guess.
+            if notes is not None:
+                final = await stream.get_final_message()
+                notes.usage.add_model_call(settings.model, getattr(final, "usage", None))
 
 async def _demo() -> None:  # pragma: no cover - manual check
     plan = plan_episode("what is a heat pump", 2)

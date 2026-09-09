@@ -353,6 +353,33 @@ another rule.
   A key in a project `.env` is lost on every new copy, and the workaround for
   that is pasting it again somewhere it should not go. The key is never written
   into source: a commit keeps it in history after the line is deleted.
+- **What a listener costs is recorded when it is spent** *(§73).* The provider
+  only ever sees one account, so "which listener produced which request" has to
+  be answered at the moment of spend or not at all. `metering.py` appends one
+  row per episode, tagged from `_listener(request)`; `python tools/usage_report.py`
+  and the admin-gated `/api/usage` read it back. The load-bearing part is that
+  it never reports one blended cost per user: Claude and Exa are **marginal**,
+  the GPU is a **fixed floor** that exists before the first listener, and the
+  shared cache is a **discount that grows with listeners** - averaged together
+  they describe how many listeners there are rather than what one costs. Every
+  number says whether it is billed, priced or assumed, and the median is printed
+  next to the p99 and the max because on a measured run the worst listener cost
+  68x the median. `METERING.md` is the whole of it - including what it
+  deliberately does not do: no quota, no enforcement, no billing, and no
+  automatic block on an abuse signal.
+- **A credential is never something a human types** *(extends the above; §72).*
+  `~/.fam/env` solved this for one machine, and the demo does not run on one
+  machine — a pod, a container and a CI runner each arrive with an empty
+  `~/.fam`. `FAM_SECRETS` names a place the app fetches its own credentials
+  from (`file:` or `cmd:`, so every secrets manager works and none becomes a
+  dependency), and it is the one *non-secret* line a new machine needs. The
+  order is process env > `FAM_SECRETS` > project `.env` > `~/.fam/env`, an
+  explicit variable always wins, and a provider that is set and broken says so
+  at startup, on `/api/health` and in the preflight rather than falling through
+  to the canned script. `CREDENTIALS.md` is the whole of it — including what it
+  deliberately does *not* buy: Anthropic's rate limits are per organisation, so
+  a pool of keys is failover and not headroom, and the real ceiling on
+  concurrency is the GPU, not the credential.
 
 ## Decisions that will shape the next phase
 
@@ -427,8 +454,10 @@ Everything is in the repo; nothing of consequence lives in a chat log. Branch:
 not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
-`PROBLEMS.md` for every problem hit and its cause (newest last — §46-56 are the
-most recent), `DEVELOPMENT.md` for the loop.
+`PROBLEMS.md` for every problem hit and its cause (newest last — §68-73 are the
+most recent), `DEVELOPMENT.md` for the loop, and `CREDENTIALS.md` for how a
+machine gets its API keys without anybody typing one, and `METERING.md` for
+what a listener costs and how the report says so.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
 and the second one is not optional:

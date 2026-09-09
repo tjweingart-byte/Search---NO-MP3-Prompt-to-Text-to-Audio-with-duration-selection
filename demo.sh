@@ -80,20 +80,35 @@ for cls in PRODUCTION_ENGINES:
   printf '  See RUNPOD_PRODUCTION.md. Do not judge the writing from a tone.\n'
 fi
 
-# Without a key every episode is the same canned sample, which is the one thing
-# a demo of the writing cannot be. setup_key.py stores it once per machine in
-# ~/.fam/env - outside the project, so the next copy of the app finds it - and
-# refuses to store one Claude does not accept.
-if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -t 0 ] && [ "$ANYWAY" -eq 0 ]; then
+# Whether a key will be found, asked of the thing that does the finding.
+#
+# This used to test $ANTHROPIC_API_KEY, which is only what *this shell* can
+# see - the project .env, sourced above. The app resolves three more sources in
+# Python (FAM_SECRETS, ~/.fam/env, and the process environment), so a machine
+# that was already set up correctly still got asked to paste its key in. The
+# question is "will the app find one", and only the app can answer it.
+#
+# It prints a yes or a no and never the key: a value echoed here would reach
+# the scrollback, a screenshot, and `bash -x` output.
+have_key() {
+  $PY -c "import sys, os, config; sys.exit(0 if os.environ.get('ANTHROPIC_API_KEY') else 1)" 2>/dev/null
+}
+
+if ! have_key && [ "$ANYWAY" -eq 0 ]; then
   printf '\n\033[1mNo API key, so nothing can be written.\033[0m\n'
-  $PY setup_key.py || printf '  Continuing without one.\n'
-  # setup_key wrote the file; pick it up for the checks below.
-  FAM_ENV="${FAM_ENV_FILE:-$HOME/.fam/env}"
-  if [ -f "$FAM_ENV" ]; then
-    set -a
-    # shellcheck disable=SC1090
-    . "$FAM_ENV"
-    set +a
+  if [ -t 0 ]; then
+    # Interactive and unconfigured: this is the one machine where typing it is
+    # still the fastest answer. setup_key.py verifies before it stores, and
+    # stores in ~/.fam/env so this machine never asks again.
+    $PY setup_key.py || printf '  Continuing without one.\n'
+    printf '  To stop every NEW machine asking too, set FAM_SECRETS once on the\n'
+    printf '  host template or image. See CREDENTIALS.md.\n'
+  else
+    # A pod, a CI runner, a container start: there is nobody to type anything,
+    # and this is exactly the case FAM_SECRETS exists for.
+    printf '  Nothing is attached to this terminal, so nothing can be typed.\n'
+    printf '  Set FAM_SECRETS on this machine and it will fetch its own key:\n'
+    printf "    FAM_SECRETS='cmd:<your secrets manager>'   # see CREDENTIALS.md\n"
   fi
 fi
 
@@ -110,7 +125,7 @@ fi
 
 # Explore is the one tab that cannot fill itself - it replays other people's
 # episodes and refuses to generate - so an unseeded demo has a dead tab in it.
-if [ "$SEED" -eq 1 ] && [ "$READY" -eq 1 ] && [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+if [ "$SEED" -eq 1 ] && [ "$READY" -eq 1 ] && have_key; then
   printf '\033[1mExplore is empty.\033[0m Seeding writes 8 real episodes '
   printf '(8 model calls, no audio).\n'
   if [ -t 0 ]; then

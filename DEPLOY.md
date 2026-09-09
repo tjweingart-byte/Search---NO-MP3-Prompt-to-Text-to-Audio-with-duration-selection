@@ -9,8 +9,13 @@ The split that makes it repeatable:
 
 | baked into the image | set once on the host | never anywhere |
 |---|---|---|
-| CUDA, torch, chatterbox, exa, the app | `ANTHROPIC_API_KEY`, `EXA_API_KEY` | credentials in the image |
+| CUDA, torch, chatterbox, exa, the app | `FAM_SECRETS` (or the two keys) | credentials in the image |
 | the validated settings (phase6, exa, ANSWER_FIRST=1) | the persistent volume | the voice in the repo |
+
+**Prefer `FAM_SECRETS` to the two keys.** It is one *non-secret* variable that
+names where the credentials live, so the host template carries no secret at all,
+a new pod fetches its own, and rotating a key is a change in the manager rather
+than an edit to every template. `CREDENTIALS.md` has the recipes.
 
 ## The one setting the image pins against the code default
 
@@ -55,7 +60,7 @@ volume. One mount, three trees:
 
     /state/hf       Chatterbox weights
     /state/voices   reference_3.wav + reference_3.rights.json
-    /state/data     the six SQLite stores
+    /state/data     the eight SQLite stores
 
 **3. Put the voice on the volume, once.** The engine refuses to speak without
 both files — a cloned voice is somebody's voice:
@@ -67,8 +72,18 @@ The rights record must clear three fields, each `"yes"`:
 
     {"consent": "yes", "commercial_use": "yes", "synthetic_voice_cleared": "yes"}
 
-**4. Set the two keys on the template**, as environment variables. Not typed
-into a shell on the pod — that is the step you are trying to stop repeating.
+**4. Set the credentials on the template**, as environment variables. Not typed
+into a shell on the pod - that is the step you are trying to stop repeating.
+
+One line is enough, and it is not a secret:
+
+    FAM_SECRETS=cmd:aws secretsmanager get-secret-value --secret-id fam --query SecretString --output text
+
+The pod authenticates as itself - an IAM role, a service account - and fetches
+`ANTHROPIC_API_KEY` and `EXA_API_KEY` at startup. Setting the two keys directly
+still works and is one step simpler; what it costs is that rotating either one
+means editing the template and restarting, where the provider is picked up by a
+running server the next time a key is rejected. See `CREDENTIALS.md`.
 
 ## Every deploy after that
 

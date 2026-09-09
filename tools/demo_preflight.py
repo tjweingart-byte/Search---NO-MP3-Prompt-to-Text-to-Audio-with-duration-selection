@@ -26,6 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import credentials
 import research
 from cache import build_cache
 from config import describe_key, key_source, settings
@@ -61,6 +62,25 @@ def voice_report() -> tuple[int, str]:
         return 0, f"unavailable ({exc})"
 
 
+def where_a_key_could_come_from() -> list[str]:
+    """The lines printed instead of "set the key in .env".
+
+    Every machine that reaches this point is a machine somebody is about to
+    paste a key into, and the .env they paste it into is gone the next time the
+    app is unpacked. So the second line is the one that ends the loop rather
+    than repeating it.
+    """
+    report = credentials.report()
+    if report["state"] == "failed":
+        return [f"{credentials.PROVIDER_VAR} is set and failed: {report['detail']}",
+                "Fix the provider - the app is doing what it was told."]
+    if report["configured"]:
+        return [f"{credentials.PROVIDER_VAR} is set ({', '.join(report['provider'])}) "
+                f"but returned no ANTHROPIC_API_KEY."]
+    return ["Once on this machine:   python setup_key.py",
+            "Once for every machine: set FAM_SECRETS. See CREDENTIALS.md."]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quiet", action="store_true")
@@ -92,8 +112,24 @@ def main() -> int:
     else:
         say(f"  writing    {BOLD}CANNED{RESET} - no ANTHROPIC_API_KEY.")
         say(f"{DIM}             Every episode will be the same built-in sample script.")
-        say(f"             You cannot judge the model from this. Set the key in .env.{RESET}")
+        say(f"             You cannot judge the model from this.{RESET}")
+        for line in where_a_key_could_come_from():
+            say(f"{DIM}             {line}{RESET}")
         worst = max(worst, 2)
+
+    # A provider that is set and broken is worth saying even when a key was
+    # found some other way: it means the next machine will not find one.
+    secrets = credentials.report()
+    if secrets["state"] == "failed":
+        say(f"  secrets    {BOLD}{credentials.PROVIDER_VAR} FAILED{RESET} - "
+            f"{secrets['detail']}")
+        say(f"{DIM}             This machine got its key elsewhere or not at all. "
+            f"A machine with only{RESET}")
+        say(f"{DIM}             the provider set would be starting with nothing.{RESET}")
+        worst = max(worst, 1)
+    elif secrets["configured"]:
+        say(f"  secrets    {', '.join(secrets['provider'])} · "
+            f"supplied {', '.join(secrets['supplied']) or 'nothing'}")
 
     if voices:
         say(f"  speech     {voices} voice(s)  ·  engine {engine}")

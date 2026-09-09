@@ -10,6 +10,7 @@ Endpoints
 """
 from __future__ import annotations
 
+import hmac
 import os
 import json
 import logging
@@ -28,7 +29,9 @@ from anthropic_client import build_async_client, describe_http_version, http2_en
 from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_words
 import embeddings
 from demo_script import DemoGenerator
-from config import DEFAULT_PIPELINE, describe_key, settings
+import credentials
+import metering
+from config import DEFAULT_PIPELINE, describe_key, key_source, settings
 from research import ResearchUnavailable, report as research_report
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
@@ -65,7 +68,7 @@ if VOICE_STORE["adopted"]:
 log.info("voices: %s", voice_store.describe())
 
 #: Filled in at startup by _verify_credentials. "unchecked" until then.
-CREDENTIALS = {"state": "unchecked", "detail": "", "key": ""}
+CREDENTIALS = {"state": "unchecked", "detail": "", "key": "", "source": "", "secrets": {}}
 
 
 async def _verify_credentials() -> None:
@@ -80,24 +83,81 @@ async def _verify_credentials() -> None:
     `models.retrieve` is the cheapest possible question: it bills nothing, and
     it answers both "is this key accepted" and "can this account use this
     model" - which are the two ways this has actually failed.
+
+    A rejection now has two things to try before it is reported, and the order
+    matters. **Re-read the provider first**: the commonest reason a key that
+    worked yesterday is refused today is that it was rotated, and the new one
+    is already sitting in the secrets manager. **Then fail over**, if a pool was
+    configured. Only when both are spent is this a rejection - which is what it
+    always was, said at the same place, in the same words.
     """
+    credentials.prime()
     CREDENTIALS["key"] = describe_key()
+    CREDENTIALS["source"] = key_source()
+    CREDENTIALS["secrets"] = credentials.report()
     if DEMO_MODE:
         CREDENTIALS.update(state="absent", detail="No API key: the canned sample script is standing in.")
         log.warning("NO API KEY - every episode will be the built-in sample script, "
                     "which does not answer what was asked.")
+        _say_where_a_key_could_come_from()
         return
-    try:
-        client = build_async_client()
-        await client.models.retrieve(settings.model)
-    except Exception as exc:  # noqa: BLE001 - the report matters, not the type
-        CREDENTIALS.update(state="rejected", detail=friendly_error(exc))
-        log.error("CREDENTIALS REJECTED - nothing will generate. %s", CREDENTIALS["detail"])
-        log.error("  key in force: %s", CREDENTIALS["key"])
-        log.error("  fix it and restart; the interface says the same thing on every tab.")
+    rotated = False
+    while True:
+        try:
+            client = build_async_client()
+            await client.models.retrieve(settings.model)
+        except Exception as exc:  # noqa: BLE001 - the report matters, not the type
+            detail = friendly_error(exc)
+            if not rotated and credentials.refresh("the key in force was rejected"):
+                # The provider answered. Start again at the top of the pool: the
+                # keys behind the rejected one may have been rotated as well.
+                rotated = True
+                credentials.reset("ANTHROPIC_API_KEY")
+                CREDENTIALS["key"] = describe_key()
+                CREDENTIALS["source"] = key_source()
+                continue
+            if credentials.demote("ANTHROPIC_API_KEY", detail):
+                CREDENTIALS["key"] = describe_key()
+                continue
+            CREDENTIALS.update(state="rejected", detail=detail,
+                               secrets=credentials.report())
+            log.error("CREDENTIALS REJECTED - nothing will generate. %s", CREDENTIALS["detail"])
+            log.error("  key in force: %s", CREDENTIALS["key"])
+            log.error("  it came from: %s", CREDENTIALS["source"])
+            log.error("  fix it and restart; the interface says the same thing on every tab.")
+            return
+        break
+    CREDENTIALS.update(state="ok", detail=f"{settings.model} is reachable with this key.",
+                       key=describe_key(), source=key_source(),
+                       secrets=credentials.report())
+    log.info("credentials OK - %s reachable (%s from %s)", settings.model,
+             CREDENTIALS["key"], CREDENTIALS["source"])
+
+
+def _say_where_a_key_could_come_from() -> None:
+    """With no key, say the thing that stops this happening on the next machine.
+
+    A fresh pod, a fresh container and a colleague's laptop all arrive here, and
+    the answer that has been given four times is "paste it again". It is worth
+    one line at the exact moment somebody is about to.
+    """
+    report = credentials.report()
+    if report["state"] == "failed":
+        log.error("  %s IS set and could not be read: %s",
+                  credentials.PROVIDER_VAR, report["detail"])
+        log.error("  That is why there is no key. Fix the provider, not the app.")
         return
-    CREDENTIALS.update(state="ok", detail=f"{settings.model} is reachable with this key.")
-    log.info("credentials OK - %s reachable (%s)", settings.model, CREDENTIALS["key"])
+    if report["configured"]:
+        log.warning("  %s is set (%s) but supplied no ANTHROPIC_API_KEY.",
+                    credentials.PROVIDER_VAR, ", ".join(report["provider"]))
+        return
+    log.warning("  On this machine:   python setup_key.py")
+    log.warning("  On every machine:  set %s, e.g.", credentials.PROVIDER_VAR)
+    log.warning("    %s='cmd:aws secretsmanager get-secret-value "
+                "--secret-id fam --query SecretString --output text'",
+                credentials.PROVIDER_VAR)
+    log.warning("  See CREDENTIALS.md. A machine that has never run FAM needs "
+                "that one line and nothing typed.")
 
 
 def _announce_research() -> None:
@@ -388,8 +448,11 @@ async def health() -> dict:
         "model": settings.model,
         "web_search_default": settings.enable_web_search,
         "http": {"version": describe_http_version(), "http2_negotiated": http2_enabled()},
-        "api_key_configured": bool(settings.anthropic_api_key),
+        "api_key_configured": bool(credentials.active("ANTHROPIC_API_KEY")
+                                    or settings.anthropic_api_key),
         # Configured is not the same as working, and only one of them matters.
+        # `credentials.secrets` says where the working one came from and whether
+        # the next machine will find it without anybody typing it.
         "credentials": CREDENTIALS,
         "sample_rate": build_engine().sample_rate,
         "min_minutes": settings.min_minutes,
@@ -516,6 +579,11 @@ async def script(req: ScriptRequest, request: Request) -> dict:
     generator = DemoGenerator() if DEMO_MODE else ScriptGenerator()
     notes = ScriptNotes()
     text = " ".join([s async for s in generator.stream_sentences(plan, notes)])
+    # No audio, but a full script call - the same money as an episode, minus
+    # the synthesis. Left out, a tool or a probe hammering this endpoint would
+    # be the one kind of spend the ledger could not see.
+    _record_usage(_listener(request), notes.usage, surface="script",
+                  minutes=plan.minutes)
     return {
         "query": plan.query,
         "minutes": plan.minutes,
@@ -534,6 +602,7 @@ MIXES = mixes_mod.MixStore()
 SOCIAL = social_mod.SocialStore()
 ACCOUNTS = accounts_mod.AccountStore()
 PREFS = prefs_mod.PreferenceStore()
+METER = metering.MeterStore()
 
 
 @app.middleware("http")
@@ -599,6 +668,42 @@ def _set_session_cookie(response, request: Request, token: str) -> None:
         secure=request.url.scheme == "https",
         path="/",
     )
+
+
+def _surface(cached_only: bool, topic_id: str, context: str) -> str:
+    """Which part of the app spent this money.
+
+    Derived rather than passed, because the interface already says it in the
+    parameters it sends. It matters for pricing: Explore replays and never
+    writes a script, so an Explore-heavy listener costs a fraction of a
+    search-heavy one, and a single blended per-listener number hides that.
+    """
+    if cached_only:
+        return "explore"
+    if topic_id:
+        return "myfam"
+    if context:
+        return "godeeper"
+    return "search"
+
+
+def _record_usage(user: str, usage: metering.Usage, *, surface: str,
+                  minutes: int = 0, audio_seconds: float = 0.0,
+                  cache_hit: bool = False) -> None:
+    """Append this episode to the ledger. Never fails the request.
+
+    Called after the listener already has their audio. A metering failure that
+    became a failed episode would trade a gap in the billing record - which is
+    recoverable, and which `MeterStore.record` logs loudly - for a broken
+    product, which is not.
+    """
+    usage.audio_seconds = audio_seconds
+    usage.cache_hit = cache_hit
+    try:
+        METER.record(user, usage, plan=ACCOUNTS.plan_for(user),
+                     surface=surface, minutes=minutes)
+    except Exception:  # noqa: BLE001 - the episode already played
+        log.exception("could not meter an episode for %r", user)
 
 
 def _listener(request: Request) -> str:
@@ -1187,6 +1292,14 @@ async def audio(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         log.exception("generation failed before any audio was produced")
+        # A failure is not a refund. Research may already have been billed, and
+        # a retry loop against a broken key would otherwise be the cheapest
+        # thing in the ledger while being the most expensive thing on the
+        # invoice.
+        _record_usage(user, stats.usage,
+                      surface=_surface(cached_only, topic_id, context),
+                      minutes=plan.minutes, audio_seconds=stats.audio_seconds,
+                      cache_hit=stats.cache == "hit")
         raise HTTPException(status_code=502, detail=friendly_error(exc)) from exc
 
     # `stats.sentences` is the honest test: silence is bytes, but it is not an
@@ -1228,6 +1341,23 @@ async def audio(
                 _ms(first_pcm_at), _ms(preroll_at), _ms(first_byte_at),
                 json.dumps(stats.marks.to_dict(), default=str),
             )
+            # The ledger row, written last, when the numbers are final.
+            #
+            # Here and not at the model call because this is the only place
+            # that knows *whose* episode it was - and the id comes from
+            # `_listener(request)`, the session cookie, never a parameter,
+            # which is the settled rule for anything per-listener.
+            #
+            # A disconnect mid-stream still records: the money was spent
+            # whether or not it was listened to, and a ledger that only counts
+            # completed plays under-reports exactly the abusive pattern of
+            # starting many episodes and finishing none.
+            _record_usage(
+                user, stats.usage,
+                surface=_surface(cached_only, topic_id, context),
+                minutes=plan.minutes, audio_seconds=stats.audio_seconds,
+                cache_hit=stats.cache == "hit",
+            )
 
     # Recorded here rather than client-side: audio is being served, so the
     # play is a fact. A dropped event costs one weak signal, never the episode.
@@ -1265,6 +1395,52 @@ async def audio(
             "X-Episode-Marks": json.dumps(stats.marks.summary(), default=str),
         },
     )
+
+
+#: The credential that gates the usage report. Absent by default, and absent
+#: means the endpoint does not exist rather than that it is open: this data is
+#: every listener's spending history, and an endpoint that is protected only
+#: when somebody remembers to protect it is not protected.
+ADMIN_TOKEN = os.environ.get("FAM_ADMIN_TOKEN", "").strip()
+
+
+def _require_admin(request: Request) -> None:
+    """Constant-time check of the admin credential, or a 404.
+
+    404 rather than 401: an unconfigured deployment should not advertise that
+    it has a billing endpoint at all, and a wrong token should not tell the
+    person holding it that they got the path right.
+    """
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=404, detail="Not found")
+    sent = (request.headers.get("x-admin-token")
+            or request.headers.get("authorization", "").removeprefix("Bearer ").strip())
+    if not sent or not hmac.compare_digest(sent, ADMIN_TOKEN):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@app.get("/api/usage")
+async def usage(
+    request: Request,
+    days: float = Query(30.0, gt=0, le=3650, description="Window, ending now"),
+    top: int = Query(10, ge=1, le=100, description="How many top listeners"),
+    flagged: bool = Query(False, description="Also run the abuse thresholds"),
+) -> dict:
+    """The billing and usage report, on demand.
+
+    Everything `tools/usage_report.py` prints, as JSON, so the same numbers are
+    available to a dashboard, a finance spreadsheet and a person at a terminal
+    without three implementations disagreeing about what a month is.
+
+    Not paced by `_rate_limit`: it makes no model call, and an operator pulling
+    a report should not be competing with listeners for the generation budget.
+    """
+    _require_admin(request)
+    now = time.time()
+    report = METER.report(since=now - days * 86400, until=now, top=top)
+    if flagged:
+        report["flagged"] = metering.suspects(METER)
+    return report
 
 
 @app.exception_handler(HTTPException)

@@ -267,7 +267,7 @@ class ScriptedGenerator:
             await asyncio.sleep(0)
             yield sentence
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         for sentence in self.sentences:
             await asyncio.sleep(0)
             yield sentence

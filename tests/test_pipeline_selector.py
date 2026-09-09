@@ -231,7 +231,7 @@ def test_the_first_complete_thought_is_spoken_alone_under_phase6(flag):
                 await asyncio.sleep(0)
                 yield sized(20)
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             async for s in self.stream_sentences(plan):
                 yield s
 
@@ -258,7 +258,7 @@ def test_the_reader_runs_ahead_under_phase6_and_not_under_legacy(flag):
                 read.append(1)
                 yield sized(12)
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             async for s in self.stream_sentences(plan):
                 yield s
 
@@ -298,7 +298,7 @@ class Endless:
             await asyncio.sleep(0)
             yield sized(12)
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         async for s in self.stream_sentences(plan):
             yield s
 
@@ -438,7 +438,7 @@ def test_answer_first_under_phase6_keeps_its_two_streams_apart(flag):
                 await asyncio.sleep(0)
                 yield sized(12, marker)
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             async for s in self.stream_sentences(plan):
                 yield s
 
@@ -527,7 +527,7 @@ def test_the_first_complete_thought_reaches_the_engine_un_batched(flag):
                 await asyncio.sleep(0)
                 yield sized(20)
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             async for s in self.stream_sentences(plan):
                 yield s
 
@@ -557,7 +557,7 @@ def test_the_first_call_is_the_first_thing_the_engine_is_asked_for(flag):
                 await asyncio.sleep(0)
                 yield sized(20)
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             async for s in self.stream_sentences(plan):
                 yield s
 
