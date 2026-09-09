@@ -25,7 +25,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from anthropic_client import build_async_client, describe_http_version, http2_enabled
-from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_words
+from cache import (MemoryScriptCache, SqliteScriptCache, build_cache,
+                   cache_key, canonical_key, research_words)
+import illustration as illustration_mod
 import embeddings
 from demo_script import DemoGenerator
 from config import DEFAULT_PIPELINE, describe_key, settings
@@ -942,6 +944,101 @@ async def next_thread(
     except TTSUnavailable:
         return {"thread": ""}
     return {"thread": await pipeline.thread_for(plan)}
+
+
+async def episode_key(plan, client) -> str:
+    """Where this episode lives in the shared cache.
+
+    Must agree with `PodcastPipeline._cache_key` or a drawing would be
+    filed under a key the episode never looks up - so it is derived the
+    same way, from the same public function, and a test asserts the two
+    agree rather than trusting that they still do.
+
+    An attachment episode has no key at all: it is built on somebody's own
+    document and must not be findable by another listener, which includes
+    not being findable by its picture.
+    """
+    if SCRIPT_CACHE is None or plan.attachments:
+        return ""
+    canonical = None
+    if settings.cache_semantic_key:
+        canonical = await canonical_key(plan.query, client)
+    return cache_key(plan.query, plan.minutes, canonical, plan.context,
+                     plan.search)
+
+
+@app.get("/api/illustration")
+async def episode_illustration(
+    request: Request,
+    q: str = Query(..., description="What the listener asked"),
+    minutes: int = Query(3, ge=1, le=10),
+    context: str = Query("", description="Topic the listener just heard"),
+    # Same reason as /api/next: this reads and writes a cache entry, and
+    # the entry it looks for has to be keyed the way /api/audio keyed it.
+    search: bool | None = Query(None),
+):
+    """The episode drawing: one continuous stroke, revealed while it plays.
+
+    Deliberately its own endpoint rather than part of /api/audio, and the
+    separation is the design rather than tidiness. Audio is the product
+    and the one-sentence spec puts a ceiling of about a second on it; a
+    few hundred coordinates in front of the first word would break that
+    for a picture nobody is looking at yet. The canvas is *meant* to be
+    blank when the audio starts, so this is allowed to take seconds and
+    still be early - which is the same "start earlier, never fill the
+    gap" reasoning the rest of the product runs on, pointed at a surface
+    that genuinely has slack.
+
+    Nothing here touches the generation path. A client calls it beside
+    /api/audio, and if it fails, is switched off, or is slow, the episode
+    plays exactly as it does today over a canvas that stays blank.
+
+    Cached under the episode key, so a replay - and every other listener
+    who asks the same question - draws the same picture for free. That
+    also makes the completed stroke usable as the tile thumbnail without
+    generating a second thing.
+    """
+    _read_limit(request)
+    plan = _validated_plan(q, minutes, context, search)
+    empty = illustration_mod.Illustration()
+
+    if not settings.illustration_enabled:
+        return {**empty.as_dict(),
+                "detail": "Drawing is switched off (ILLUSTRATION_ENABLED=0)."}
+
+    # A canned script does not answer the question it was asked, so a
+    # drawing of it would be a picture of the wrong thing - and §51 is
+    # about exactly this: demo output that reached the shared cache and
+    # outlived the run. Say so instead, and write nothing.
+    if DEMO_MODE:
+        return {**empty.as_dict(),
+                "detail": "No API key, so there is nothing to draw from."}
+
+    generator = illustration_mod.IllustrationGenerator()
+    key = await episode_key(plan, generator.client)
+    store = SCRIPT_CACHE
+    if store is not None and key:
+        stored = store.illustration(key)
+        if stored:
+            return {**empty.as_dict(), **stored, "source": "cache"}
+
+    try:
+        drawn = await generator.draw(plan.query, plan.minutes)
+    except illustration_mod.IllustrationError as exc:
+        # The model drew something unusable - a cut line, a stray command.
+        # Named rather than swallowed: this is the failure mode worth
+        # seeing, because it is the one that would otherwise show a
+        # broken picture instead of no picture.
+        log.warning("illustration rejected for %r: %s", plan.query, exc)
+        return {**empty.as_dict(), "detail": f"Could not draw this one: {exc}"}
+    except Exception as exc:  # noqa: BLE001 - the sentence matters, not the type
+        log.exception("illustration failed for %r", plan.query)
+        return {**empty.as_dict(), "detail": friendly_error(exc)}
+
+    if store is not None and key:
+        store.put_illustration(key, drawn.path, drawn.subject,
+                               settings.cache_ttl_seconds)
+    return drawn.as_dict()
 
 
 @app.get("/api/audio")

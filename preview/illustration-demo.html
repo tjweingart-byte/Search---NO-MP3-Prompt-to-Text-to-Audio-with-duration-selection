@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>FAM · the line that draws itself</title>
+<style>
+  :root { --ink:#f4efe6; --bg:#12131a; --panel:#1a1c26; --gold:#e3b23c; --dim:#7c8091; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.6 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif;
+         display:flex; flex-direction:column; align-items:center; padding:32px 20px 60px }
+  h1 { font-size:19px; letter-spacing:.14em; text-transform:uppercase; margin:0 0 4px; font-weight:600 }
+  .sub { color:var(--dim); margin:0 0 28px; text-align:center; max-width:52ch }
+  .phone { width:320px; background:var(--panel); border-radius:26px; padding:18px;
+           box-shadow:0 24px 60px #0008 }
+  .canvas { background:#f4efe6; border-radius:10px; aspect-ratio:1; width:100%;
+            display:block; overflow:hidden }
+  .canvas svg { width:100%; height:100%; display:block }
+  path { fill:none; stroke:#2a2a2a; stroke-width:5;
+         stroke-linecap:round; stroke-linejoin:round }
+  .title { text-align:center; font-size:17px; margin:16px 0 2px;
+           font-family:Georgia,serif; line-height:1.35 }
+  .from { text-align:center; color:var(--dim); font-size:10px;
+          letter-spacing:.16em; text-transform:uppercase; margin-bottom:14px }
+  .bar { height:3px; background:#33364a; border-radius:2px; position:relative }
+  .fill { height:100%; background:var(--gold); border-radius:2px; width:0 }
+  .knob { position:absolute; top:50%; width:9px; height:9px; border-radius:50%;
+          background:var(--gold); transform:translate(-50%,-50%) }
+  .times { display:flex; justify-content:space-between; color:var(--dim);
+           font-size:11px; margin-top:7px; font-variant-numeric:tabular-nums }
+  .controls { display:flex; justify-content:center; gap:14px; margin-top:14px }
+  button { background:#262936; color:var(--ink); border:0; border-radius:50%;
+           width:38px; height:38px; cursor:pointer; font-size:14px }
+  button.play { background:var(--gold); color:#12131a; width:46px; height:46px; font-size:17px }
+  input[type=range] { width:320px; margin-top:26px; accent-color:var(--gold) }
+  .note { max-width:60ch; color:var(--dim); margin-top:30px; font-size:13px }
+  .note code { color:var(--ink); background:#00000055; padding:1px 5px; border-radius:4px }
+  .stage { color:var(--gold); font-size:12px; letter-spacing:.1em;
+           text-transform:uppercase; margin-top:14px; height:16px }
+</style>
+
+<h1>The line that draws itself</h1>
+<p class="sub">One continuous stroke, revealed from start to end across the episode.
+Drag the scrubber — the drawing follows the audio position, not a timer.</p>
+
+<div class="phone">
+  <div class="canvas">
+    <svg viewBox="0 0 1000 1000" aria-label="episode illustration">
+      <path id="line" d="
+        M 500 210
+        C 402 210 336 286 342 372 C 346 436 386 476 420 500
+        C 340 528 286 592 268 668 C 252 736 258 800 270 858
+        C 286 884 318 890 344 878 C 372 862 378 828 372 798
+        C 362 742 372 686 404 646 C 430 614 470 598 512 600
+        C 566 602 616 626 646 668 C 678 712 686 768 680 820
+        C 676 856 690 884 720 890 C 748 894 772 872 778 842
+        C 792 772 782 690 744 630 C 708 574 652 534 592 512
+        C 630 484 660 442 662 388 C 666 300 596 212 500 210 Z" />
+    </svg>
+  </div>
+  <div class="title">The Habits That<br>Actually Change Your Life</div>
+  <div class="from">from myFAM</div>
+  <div class="bar"><div class="fill" id="fill"></div><div class="knob" id="knob" style="left:0"></div></div>
+  <div class="times"><span id="now">0:00</span><span>3:00</span></div>
+  <div class="controls"><button>←</button><button class="play">▶</button><button>→</button></div>
+</div>
+
+<div class="stage" id="stage"></div>
+<input type="range" id="scrub" min="0" max="180" step="0.1" value="0">
+
+<p class="note">The whole mechanism: the server sends one <code>d</code> attribute with
+exactly one <code>M</code>. The client measures it with <code>getTotalLength()</code> and
+sets <code>stroke-dashoffset = L × (1 − currentTime / duration)</code>. Because it reads the
+audio's own clock, seeking and buffering stay in sync for free — there is no timer to drift.</p>
+
+<script>
+  const line = document.getElementById('line');
+  const L = line.getTotalLength();
+  line.style.strokeDasharray = L;
+  const DURATION = 180;
+
+  function render(t) {
+    const p = Math.max(0, Math.min(1, t / DURATION));
+    line.style.strokeDashoffset = L * (1 - p);
+    fill.style.width = knob.style.left = (p * 100) + '%';
+    now.textContent = Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+    stage.textContent = p === 0 ? 'blank canvas'
+      : p < 0.25 ? 'the line begins'
+      : p < 0.8 ? 'the idea emerges'
+      : p < 1 ? 'almost there'
+      : 'complete — this frame is the thumbnail';
+  }
+  scrub.addEventListener('input', () => render(+scrub.value));
+  render(0);
+</script>
