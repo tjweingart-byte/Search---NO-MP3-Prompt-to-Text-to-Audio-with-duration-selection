@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# All five databases live on a mounted disk where the host provides one, so
+# All seven databases live on a mounted disk where the host provides one, so
 # they survive a redeploy. Without a disk they are ephemeral and every deploy
 # is a fresh start - which is fine for a preview and not for real listeners.
 #

@@ -278,9 +278,12 @@ another rule.
    server-minted session id in an HttpOnly cookie, and an account is *email and
    password attached to the id they already have* - so signing up keeps their
    history rather than starting a second listener beside it, and logging in on
-   a phone reaches the same data. The app still works with no account at all,
-   which was the constraint that stopped this becoming a login screen in front
-   of the product. What is genuinely missing: **password reset**, which needs
+   a phone reaches the same data. **Listening still works with no account at
+   all** - search, myFAM, DailyFAM's episodes, Explore and Go Deeper - which is
+   the constraint that stopped this becoming a login screen in front of the
+   product. What an account now buys is durability: mixes, chosen interests and
+   language, and the weekly recap are gated on having one (PROBLEMS.md §70, and
+   the constraint above). What is genuinely missing: **password reset**, which needs
    email delivery the app has no route to, so a forgotten password today means
    a lost account. Say so before anyone relies on it.
 
