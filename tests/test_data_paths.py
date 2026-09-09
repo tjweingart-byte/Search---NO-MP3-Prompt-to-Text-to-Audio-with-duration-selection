@@ -19,7 +19,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import accounts as ACC  # noqa: E402
+import accounts as ACC
+import metering as ME  # noqa: E402
 import attachments as A  # noqa: E402
 import mixes as M  # noqa: E402
 import paths  # noqa: E402
@@ -36,6 +37,7 @@ STORES = [
     ("MIXES_DB", "mixes.db", M.MixStore),
     ("ATTACHMENTS_PATH", "attachments.db", A.AttachmentStore),
     ("ACCOUNTS_DB", "accounts.db", ACC.AccountStore),
+    ("METERING_DB", "metering.db", ME.MeterStore),
 ]
 
 ALL_VARS = [v for v, _f, _c in STORES] + ["CACHE_PATH"]

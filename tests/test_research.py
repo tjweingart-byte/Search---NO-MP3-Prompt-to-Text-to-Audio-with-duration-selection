@@ -573,7 +573,7 @@ def test_a_researched_episode_plays_with_claude_reading_the_exa_packet(exa,
             for i in range(30):
                 yield f"Rates were held at four and a quarter percent, point {i}."
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             return
             yield ""  # pragma: no cover
 

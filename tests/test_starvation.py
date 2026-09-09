@@ -135,7 +135,7 @@ class Slow:
             await asyncio.sleep(self.delay)
             yield f"Sentence {i} carrying a few words of real content."
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         return
         yield ""  # pragma: no cover
 

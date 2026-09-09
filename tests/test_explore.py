@@ -36,7 +36,7 @@ class CountingGenerator:
         self.calls += 1
         yield "This should never have been generated."
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         return
         yield ""  # pragma: no cover
 

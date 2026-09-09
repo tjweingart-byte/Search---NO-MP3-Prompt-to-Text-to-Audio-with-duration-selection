@@ -66,7 +66,8 @@ class DemoGenerator:
             await asyncio.sleep(0.02)
             yield sentence
 
-    async def top_up(self, plan, spoken_so_far: str, words_needed: int) -> AsyncIterator[str]:
+    async def top_up(self, plan, spoken_so_far: str, words_needed: int,
+                     notes=None) -> AsyncIterator[str]:
         spoken = 0
         index = 0
         while spoken < words_needed:

@@ -49,7 +49,7 @@ class SilentGenerator:
         return
         yield ""  # pragma: no cover
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         return
         yield ""  # pragma: no cover
 
@@ -61,7 +61,7 @@ class FailingGenerator:
         raise RuntimeError("Could not resolve authentication method")
         yield ""  # pragma: no cover
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         return
         yield ""  # pragma: no cover
 
@@ -185,7 +185,7 @@ def test_the_thread_endpoint_serves_what_the_episode_left_open(client, monkeypat
                 notes.thread = "whether the appeal is heard at all"
             yield "She filed the appeal on Tuesday morning."
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             return
             yield ""  # pragma: no cover
 

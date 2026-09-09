@@ -57,6 +57,9 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+# The plan names live with the report that splits on them, so
+# "which plans exist" is one fact in one place.
+from metering import PLANS
 from paths import data_path
 
 log = logging.getLogger(__name__)
@@ -208,6 +211,20 @@ class AccountStore:
                          " ON sessions(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS sessions_expires"
                          " ON sessions(expires)")
+            # Added after the table shipped, so an existing accounts file is
+            # widened rather than recreated - the same trade topics.py makes.
+            #
+            # Nothing in this app sets it to "paid": there is no payment route
+            # and nothing is gated on having an account (CLAUDE.md's open
+            # question about what an account should entitle you to is still
+            # open). It exists so that the day something does take payment, the
+            # cost split by plan is available from that day forward instead of
+            # being backfilled out of a log that never recorded it.
+            try:
+                conn.execute("ALTER TABLE accounts ADD COLUMN plan TEXT NOT NULL"
+                             " DEFAULT 'free'")
+            except sqlite3.OperationalError:
+                pass  # already there
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -295,7 +312,8 @@ class AccountStore:
     def account(self, user_id: str) -> Optional[dict]:
         try:
             row = self._conn().execute(
-                "SELECT email, created, last_login FROM accounts WHERE user_id = ?",
+                "SELECT email, created, last_login, plan FROM accounts"
+                " WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
         except Exception:
@@ -304,7 +322,30 @@ class AccountStore:
         if not row:
             return None
         return {"user_id": user_id, "email": row[0],
-                "created": row[1], "last_login": row[2]}
+                "created": row[1], "last_login": row[2], "plan": row[3]}
+
+    def plan_for(self, user_id: str) -> str:
+        """Which plan to stamp on this listener's usage rows.
+
+        **An anonymous listener is "free", not "unknown".** They are a real
+        listener costing real money, and a metering report that split them into
+        a third bucket would answer "what does a free user cost" with a number
+        that excluded most of them.
+        """
+        account = self.account(user_id) if user_id else None
+        plan = (account or {}).get("plan") or "free"
+        return plan if plan in PLANS else "free"
+
+    def set_plan(self, user_id: str, plan: str) -> str:
+        """Move an account between plans. Requires an account: a plan is a
+        billing relationship, and there is nobody to bill without one."""
+        if plan not in PLANS:
+            raise AuthError(f"Unknown plan {plan!r}. One of: {', '.join(PLANS)}.")
+        if not self.account(user_id):
+            raise AuthError("That listener has no account, so it has no plan.")
+        self._conn().execute("UPDATE accounts SET plan = ? WHERE user_id = ?",
+                             (plan, user_id))
+        return plan
 
     def sign_up(self, user_id: str, email: str, password: str,
                 at: float = 0.0) -> Listener:

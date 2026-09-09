@@ -74,6 +74,7 @@ ENV FAM_STATE=/state \
     SOCIAL_DB=/state/data/social.db \
     ATTACHMENTS_PATH=/state/data/attachments.db \
     ACCOUNTS_DB=/state/data/accounts.db \
+    METERING_DB=/state/data/metering.db \
     PORT=8000
 
 # Production defaults, named here so the image is self-describing and a host

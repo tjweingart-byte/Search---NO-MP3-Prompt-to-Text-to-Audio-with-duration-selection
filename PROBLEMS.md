@@ -3455,3 +3455,141 @@ rotation are tested; *that `aws secretsmanager get-secret-value` prints what
 this expects* is read from its documentation, not observed. The first run on a
 real machine should be `python setup_key.py --show`, which names the provider,
 its state, and whether Claude still accepts what it returned.
+
+## 71. Per-listener metering, and the three costs that behave differently
+
+§70 ended "per-listener metering still does not exist", and named why it has to:
+**the provider only ever sees one account.** Anthropic bills this organisation,
+Exa bills this key, the GPU bills by the hour, and none of them can say which
+listener produced which request. Every question about pricing, per-user limits
+and abuse is that question wearing a different hat, so if it is not answered at
+the moment of spend it cannot be answered later at all.
+
+`metering.py` is the ledger: one row per episode, appended and never updated,
+written in `app.py` where `_listener(request)` is known - from the session
+cookie, never a parameter, which is the settled rule and which metering is the
+most tempting place in the app to break, because `?user=` is right there and
+the ledger wants an id.
+
+### The distinction the whole design rests on
+
+A single "cost per user" number is the thing everyone asks for and the thing
+most likely to be wrong, because it averages three costs that do not behave
+alike:
+
+* **Claude tokens and Exa searches are marginal.** Nobody listens, nobody is
+  billed. This is what a price per listener has to cover.
+* **The GPU is fixed.** Chatterbox runs in-process on a card that costs the same
+  idle. Its *marginal* cost is almost nothing - synthesis at ~330x realtime
+  makes a three-minute episode about $0.0001 of card, which is the arithmetic
+  the prefetch plan rests on and which now has a number behind it - and its
+  *real* cost is a floor that exists before the first listener arrives.
+* **The shared cache is a discount that grows with listeners.** Two people
+  asking the same thing pay for one script.
+
+So the report gives marginal cost, the fixed floor, and the two combined at a
+stated listener count, and **never folds the floor into a per-listener
+average** - an average that includes it says more about how many listeners there
+are than about what a listener costs. On a synthetic 120-listener month the
+marginal total was $4.25 and the GPU floor $430: reported as one number, the
+product looks a hundred times more expensive than it is, and the conclusion
+("we cannot afford this") would have been drawn from an artefact of arithmetic.
+
+### The mean was the wrong summary, so the shape is reported
+
+Same run: the median listener cost $0.009 and the worst cost $0.64 - **68x**.
+That ratio, not the mean, is what decides whether a flat price needs a usage cap
+behind it, so `report` carries median, p90, p99 and max side by side and the
+tool prints the multiple. A mean alone cannot tell a population where everyone
+costs the same from one where 1% cost a hundred times the rest, and only the
+second breaks a flat price.
+
+`_percentile` is written out rather than reached for in `statistics`, because
+`quantiles(n=100)` raises on a single data point and the first day of a
+deployment is a single data point.
+
+### Billed, priced, assumed - and the row that says so
+
+Every number is one of three things and the report says which: **billed**
+(the provider's own usage figures), **priced** (billed quantities times a
+published rate), **assumed** (the GPU allocation and the cache saving, which
+rest on configuration rather than an invoice). A model with no entry in
+`PRICES` is counted as **unpriced and named**, never costed at zero - a silent
+$0 is the same failure shape as everything else in this log: a number that
+looks like an answer.
+
+Costs are **stored at write time**, not recomputed on read. Prices change, and
+a row that repriced itself would make "what did March cost" depend on when you
+ask. The plan is stamped the same way: someone who upgrades on the 20th did not
+cost paid-plan money on the 5th.
+
+### Four things that were nearly wrong
+
+**The cover half would have been free.** A researched episode runs two model
+calls at once (`_answer_first`), and the instant half was deliberately given a
+throwaway `ScriptNotes()` so its predicted follow-up could not beat the
+researched one's. Give it a throwaway `Usage` as well and every researched
+episode reports at roughly half price - on exactly the episodes that cost most.
+It now gets `ScriptNotes(usage=notes.usage)`: separate thread, shared total.
+
+**Tokens read from the model, not counted from the script.** Output tokens
+could be guessed from the words. Input tokens could not - the prompt, the
+examples and any evidence packet are invisible from the text - and cache reads
+are invisible from both. The estimate would have been wrong in the direction
+that flatters the bill. A test asserts the recorded count is *not* the word
+count.
+
+**`top_up` took a new parameter, and 23 test doubles implement it.** Top-ups are
+off by default (`ALLOW_TOPUPS=1`), so the tempting move was to skip them. A
+deployment that turned them on would then have had a silent under-count on its
+longest, most expensive episodes. The doubles were updated.
+
+**The ledger was not on the mounted disk.** `tests/test_data_paths.py` exists
+because two stores were once written into the image's WORKDIR and discarded on
+every redeploy. A new store must be added to its `STORES` list and to both
+Dockerfiles; this one is the billing record, so losing it loses the answer to
+what anything cost. Caught by adding it to the list, which is the test doing
+its job.
+
+### Abuse reports and does not act
+
+Two thresholds over a window, because the two abuses look different: volume
+catches a script hammering the endpoint (many cheap requests), spend catches
+10-minute researched episodes all afternoon (few requests, a lot of money).
+Either alone misses the other.
+
+`suspects()` returns names and reasons. It never blocks: an automatic block on
+a metering heuristic eventually locks out a real listener who has no way to tell
+anyone, and `_rate_limit` is already the thing that paces requests. A test
+asserts the module never grows a `ban`/`block`/`suspend` verb.
+
+### Reading it back is the sensitive half
+
+`/api/usage` is every listener's history of what they asked for and what it
+cost - the most sensitive thing this app stores after the password hashes, and
+unlike those it is meant to be read. It is gated on `FAM_ADMIN_TOKEN` with a
+constant-time compare, and **unset means the endpoint does not exist**: 404
+rather than 401, so an unconfigured deployment does not advertise that it has a
+billing endpoint and a wrong token does not confirm the path. It is also not
+paced by `_rate_limit` - it spends no model call, and an operator pulling a
+report should not compete with listeners for the generation budget.
+
+### What it deliberately does not do
+
+**No enforcement.** No quota, no per-plan limit, no cutoff. The data to build
+one now exists; the policy does not, and inventing one here would be inventing a
+product decision. **No billing** - `plan` is a label, there is no payment route,
+and `set_plan` is the whole interface. **No bandwidth**, which at 2.65 MB/min
+uncompressed is a real cost at scale and is not in these numbers;
+`audio_seconds` is the quantity to compute it from when there is a CDN bill to
+compare against.
+
+36 tests across `tests/test_metering.py` and `tests/test_usage_endpoint.py`.
+
+**Unverified here, and it is the same gap as always:** no API key and no
+invoice, so every figure quoted above comes from the published rate card and a
+synthetic ledger, and the cost model has never been reconciled against a real
+bill. `PRICES` was checked against the card on 2026-09-09. The first real month
+should be compared line by line against the Anthropic and Exa invoices, and
+`METERING.md` corrected wherever they disagree - a metering system nobody has
+reconciled is a metering system that is confidently wrong.

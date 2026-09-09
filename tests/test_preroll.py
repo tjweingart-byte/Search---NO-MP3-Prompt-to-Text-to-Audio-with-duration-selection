@@ -38,7 +38,7 @@ class Opening:
             await asyncio.sleep(0)
             yield BODY
 
-    async def top_up(self, plan, spoken_so_far, words_needed):
+    async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
         async for sentence in self.stream_sentences(plan):
             yield sentence
 
@@ -165,7 +165,7 @@ def test_a_failed_generation_is_still_an_error_not_a_silent_episode(serve, fmt,
             raise RuntimeError("Could not resolve authentication method")
             yield ""  # pragma: no cover
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             return
             yield ""  # pragma: no cover
 
@@ -187,7 +187,7 @@ def test_an_empty_episode_is_still_an_error_at_a_low_preroll(serve, fmt,
             return
             yield ""  # pragma: no cover
 
-        async def top_up(self, plan, spoken_so_far, words_needed):
+        async def top_up(self, plan, spoken_so_far, words_needed, notes=None):
             return
             yield ""  # pragma: no cover
 
