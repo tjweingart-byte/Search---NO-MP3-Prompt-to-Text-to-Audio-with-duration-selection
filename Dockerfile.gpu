@@ -1,0 +1,91 @@
+# FAM as a deployment, not as a test.
+#
+# The CPU `Dockerfile` cannot speak: production speech is Chatterbox, which
+# needs CUDA and requirements-chatterbox.txt. This image is the one that runs
+# the product for real.
+#
+# What this is FOR, and the thing it replaces: the pod loop was
+# `pack_for_pod.py` -> scp a tarball -> extract -> pip install -> export keys
+# -> run the validation harness. That is the right shape for renting a card
+# for an hour to measure something. It is the wrong shape for a service,
+# because every one of those steps is a chance to set it up differently from
+# last time, and none of them is recorded anywhere.
+#
+# Here, the slow and fragile half - CUDA, torch, chatterbox, exa - is baked
+# once at build time. Nothing is installed on the pod. The three things that
+# must NOT be baked are:
+#
+#   credentials     -> environment variables on the host's template
+#   the voice       -> a persistent volume (it is somebody's voice, and its
+#                      rights record travels with it)
+#   listener data   -> the same volume, so a redeploy is not a fresh start
+#
+# Build and push once:
+#   docker build -f Dockerfile.gpu -t <registry>/fam:<tag> .
+#   docker push <registry>/fam:<tag>
+#
+# See DEPLOY.md for the host side.
+
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3.11 python3-pip python3.11-venv ca-certificates curl \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Requirements first, so a code change does not reinstall CUDA-sized wheels.
+# All three: the base, the voice, and the research backend. Exa is optional in
+# the repo on purpose - a laptop and CI must not need it - but this image is a
+# deployment of the default configuration, and the default backend is Exa.
+COPY requirements.txt requirements-chatterbox.txt requirements-exa.txt ./
+RUN python -m pip install --upgrade pip \
+ && python -m pip install -r requirements.txt \
+ && python -m pip install -r requirements-chatterbox.txt \
+ && python -m pip install -r requirements-exa.txt
+
+COPY . .
+
+# Everything that must outlive the container, in one tree. A single mount
+# point rather than four is deliberate: one thing to attach, and one thing to
+# forget to attach - which then fails loudly rather than half-working.
+#
+#   /state/hf      Chatterbox weights. THIS is the 38-second warm-up in the
+#                  pod logs: from_pretrained downloads on first use. On a
+#                  volume it is paid once, by the first pod, ever.
+#   /state/voices  reference_3.wav and its .rights.json. The engine refuses to
+#                  speak without both, which is why a fresh pod that "has the
+#                  code" still cannot talk.
+#   /state/data    the six SQLite stores. Without this every redeploy silently
+#                  discards every listener's history, name and echoes.
+ENV FAM_STATE=/state \
+    HF_HOME=/state/hf \
+    FAM_VOICES_DIR=/state/voices \
+    CACHE_PATH=/state/data/scripts.db \
+    MYFAM_DB=/state/data/myfam.db \
+    MIXES_DB=/state/data/mixes.db \
+    SOCIAL_DB=/state/data/social.db \
+    ATTACHMENTS_PATH=/state/data/attachments.db \
+    ACCOUNTS_DB=/state/data/accounts.db \
+    PORT=8000
+
+# Production defaults, named here so the image is self-describing and a host
+# that sets nothing still gets the configuration that was validated.
+ENV STREAMING_PIPELINE=phase6 \
+    RESEARCH_BACKEND=exa \
+    CHATTERBOX_DEVICE=auto
+
+RUN mkdir -p /state/hf /state/voices /state/data
+
+EXPOSE 8000
+
+# The server, not the harness. `tools/pod_production_test.sh` measures and
+# exits; this serves and stays up.
+CMD ["sh", "-c", "python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
