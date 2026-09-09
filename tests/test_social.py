@@ -164,16 +164,18 @@ def test_only_public_mixes_reach_the_profile(client):
 
 def test_an_echo_labels_the_explore_card(client):
     appmod.SCRIPT_CACHE.put("k", ["A sentence."], 600, "why volcanoes erupt", "", 3)
-    client.post("/api/me", json={"user": "u2", "name": "Rachel", "handle": "rachel"})
-    client.post("/api/echo", json={"user": "u2", "query": "why volcanoes erupt",
+    rachel = TestClient(appmod.app)
+    rachel.post("/api/me", json={"name": "Rachel", "handle": "rachel"})
+    rachel.post("/api/echo", json={"query": "why volcanoes erupt",
                                    "title": "Why Volcanoes Erupt", "minutes": 3})
-    card = client.get("/api/explore?user=u1").json()["episodes"][0]
+    card = client.get("/api/explore").json()["episodes"][0]
     assert card["echoed_by"] == "Rachel"
     # And it is not labelled back to the person who sent it.
-    assert client.get("/api/explore?user=u2").json()["episodes"][0]["echoed_by"] == ""
+    assert rachel.get("/api/explore").json()["episodes"][0]["echoed_by"] == ""
 
 
 def test_a_taken_handle_is_a_readable_refusal(client):
-    client.post("/api/me", json={"user": "u1", "name": "Ian", "handle": "ian"})
-    res = client.post("/api/me", json={"user": "u2", "name": "Other", "handle": "ian"})
+    client.post("/api/me", json={"name": "Ian", "handle": "ian"})
+    somebody_else = TestClient(appmod.app)
+    res = somebody_else.post("/api/me", json={"name": "Other", "handle": "ian"})
     assert res.status_code == 400 and "taken" in res.json()["error"]

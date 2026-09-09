@@ -41,6 +41,12 @@ text when a prediction is wrong — not audio compute or bandwidth. The existing
 script cache (`cache.py`) is already the right place to put pre-generated
 scripts; it stores scripts, not audio, for exactly this reason.
 
+The same "do it before the listener is waiting" logic is why matching happens
+at write time too: `CACHE_VECTOR` embeds a question once when its script is
+stored and compares locally on the next lookup, instead of `CACHE_SEMANTIC_KEY`'s
+model call in front of every request. Off by default, and PROBLEMS.md §68 says
+plainly what it is and is not currently buying.
+
 Corollary: **latency is answered by starting earlier, never by filling the
 gap.** The cold open tried to fill it and was removed. Prefetch on the browse
 surfaces; on search, keep the work small enough that there is no gap to fill.
@@ -255,8 +261,16 @@ another rule.
    the listener can act on, and an attached episode is **never cached**, so it
    cannot reach another listener or Explore. Only PDF needs a package (pypdf,
    optional); .docx is read with `zipfile`.
-10. **Personalisation needs state the app does not have**: user identity, an
-   interaction log, and a recommender. Everything today is stateless.
+10. ~~**Personalisation needs state the app does not have**~~ - *identity is
+   done; the recommender is still crude.* `accounts.py` gives every listener a
+   server-minted session id in an HttpOnly cookie, and an account is *email and
+   password attached to the id they already have* - so signing up keeps their
+   history rather than starting a second listener beside it, and logging in on
+   a phone reaches the same data. The app still works with no account at all,
+   which was the constraint that stopped this becoming a login screen in front
+   of the product. What is genuinely missing: **password reset**, which needs
+   email delivery the app has no route to, so a forgotten password today means
+   a lost account. Say so before anyone relies on it.
 
 ## Constraints that are settled — do not undo without discussing
 
@@ -281,6 +295,14 @@ another rule.
   what the model already knows, immediately. `search=1`/`search=0` on a request
   still wins. Paying 10-25 seconds on every episode bought nothing for "what is
   the NASDAQ", which is most of what people ask.
+- **A listener id is never accepted from the client.** It arrives from an
+  HttpOnly session cookie the server minted, and `?user=` is ignored wherever
+  it still appears. This replaced `famUserId()`, which made an id up with
+  `Math.random()` and put it in every query string - so anyone who read or
+  guessed one could take over that listener. Anonymous listeners still get a
+  full identity, because requiring a login to hear an episode would break the
+  one-sentence spec. If you add an endpoint that touches per-listener data,
+  take the id from `_listener(request)` and never from a parameter.
 - **Failures must be visible.** Silent success (empty audio, a placeholder tone,
   demo mode mistaken for live) has caused more lost time on this project than
   any real bug. Every fallback must announce itself. *(PROBLEMS.md §51: demo
@@ -305,11 +327,22 @@ another rule.
 
 - **Where does this deploy?** Bandwidth is 2.65 MB/min uncompressed; that is
   fine on localhost and expensive at scale.
-- **Is there a user account?** Personalisation cannot start without identity.
+- ~~**Is there a user account?**~~ *Answered: yes, as of PROBLEMS.md §66.* An
+  identity is a session; an account is credentials attached to one. What is
+  still open is what an account should *entitle* you to - nothing is gated on
+  having one today.
 - **Local or hosted voices?** Changes the cost model more than the model choice
   does.
 - **How much to prefetch?** Every speculative script costs money; every one not
   fetched costs a wait.
+- **Is a local embedding model worth installing?** The near-match cache
+  (PROBLEMS.md §68) is built, measured and off by default. It raises the share
+  of re-phrasings that find an existing episode from 22% to 56% on a measured
+  corpus - but the bench's own control line shows the *vector* earning none of
+  that: a free token-overlap guard finds everything the lexical embedding
+  finds. A real sentence model in `~/.fam/embed` is the only thing that changes
+  that answer, and it is the same trade as the voices - ship a model with the
+  app, or pay a service per call. Nobody has run one yet.
 
 ## How to ship a change (standing instruction)
 
@@ -326,7 +359,16 @@ being asked:
    Publishing to the same file path within one conversation updates it in
    place; **from a new conversation, pass that URL as `url`** or you will
    create a second artifact and the link the phone has bookmarked will go
-   stale. Read it first, then publish `preview/fam-artifact.html` to it.
+   stale. Read it first, then publish to it.
+
+   **What lives at that URL is now `preview/fam-live-artifact.html`**, built by
+   `python preview/build_live_preview.py` - the same interface, but running on
+   a real database rather than fixtures, with the store shown beside it.
+   Publish it with `capabilities: {"db": {}}`; without that declaration
+   `claude.use("db")` resolves null in the viewer, the page falls back to
+   memory, and the whole point of it is quietly gone. The fixture build
+   (`preview/fam-artifact.html`) is still what `./dev.sh check` produces and
+   smoke-tests; it is just no longer what the bookmarked link serves.
 3. Reply with a short summary of what changed and the preview URL. Not a zip,
    not a wall of files.
 4. If something genuinely cannot be automated, say the exact command to run.

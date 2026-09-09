@@ -23,6 +23,15 @@ and one in FILL_ORDER.
 Everything is derived from an append-only event log, so there is no profile to
 keep in sync - a taste profile is a query, not a stored object.
 
+The log holds two different kinds of thing, and the distinction is the reason
+the ranking still works. A **behavioural** event (search, play, complete, skip)
+is something the listener did, and it is what taste is computed from. An
+**impression** is something the app did - one tile, on one shelf, from one
+ranking version - and it exists so "why did we show this?" has an answer.
+Impressions arrive ~18 at a time on every feed load, so they are excluded from
+`for_user`, the capped read that feeds `taste`; letting them in would train the
+feed on its own output. See `record_impressions` and `for_user`.
+
 **"What your followers are listening to" is a label over data this app does
 not have.** There are no accounts and no follow graph. What it actually ranks
 is co-listener overlap: people who played what you played also played this.
@@ -40,6 +49,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
+
+from paths import data_path
 
 log = logging.getLogger(__name__)
 
@@ -224,6 +235,32 @@ SECTIONS = (
 #: direction and must not be treated as a weak play.
 EVENT_WEIGHT = {"search": 1.0, "play": 1.0, "complete": 2.5, "skip": -1.5}
 
+#: An **impression** is one tile put in front of one listener by one version of
+#: the ranking. It is recorded so "why did we show this?" has an answer, and it
+#: deliberately has no entry in EVENT_WEIGHT: being *shown* something says
+#: nothing about whether you liked it, and giving it a weight would let the
+#: feed teach itself its own taste.
+IMPRESSION = "impression"
+
+#: Kinds the log will accept. Taste weights live in EVENT_WEIGHT; this is the
+#: wider set, because an impression is a real event that carries no weight.
+EVENT_KINDS = frozenset(EVENT_WEIGHT) | {IMPRESSION}
+
+#: Bump this whenever the ranking changes in a way that would make two feeds
+#: incomparable - a new signal, a different weight, a changed section. Stamped
+#: on every impression, so a later comparison of algorithms is a GROUP BY
+#: rather than an archaeology project. Date-and-counter rather than a plain
+#: integer, because the useful question is nearly always "what were we running
+#: in September" and not "what was the sixth version".
+ALGO_VERSION = "2026-09-08.1"
+
+#: How long an impression is kept. Behavioural events are low-volume and worth
+#: keeping indefinitely; impressions arrive ~18 at a time on every feed load,
+#: so left alone they would be the whole table inside a week. A month is long
+#: enough to compare two ALGO_VERSIONs against each other and short enough
+#: that the file stays a file.
+IMPRESSION_TTL = 30 * 86400
+
 
 def _decay(age_seconds: float) -> float:
     return 0.5 ** (age_seconds / HALF_LIFE)
@@ -242,14 +279,22 @@ class Event:
     #: because the cache key depends on settings that may have moved on and a
     #: thread the listener was actually offered should not disappear.
     thread: str = ""
+    #: Impressions only. Which shelf the tile appeared on, and the ranking
+    #: version that put it there - the two halves of "why did we show this".
+    #: Empty on every behavioural event, the way `thread` is empty on
+    #: everything but a completion.
+    section: str = ""
+    algo: str = ""
 
 
 class EventStore:
     """Append-only interaction log. SQLite for the same reasons as the cache:
     no new dependency, survives restarts, shared by every worker."""
 
-    def __init__(self, path: str = "myfam.db") -> None:
-        self.path = path
+    def __init__(self, path: str | None = None) -> None:
+        # None means "the app's own database", resolved from the project
+        # root rather than the cwd. See paths.py for why that matters.
+        self.path = data_path("MYFAM_DB", "myfam.db", path)
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(
@@ -265,10 +310,19 @@ class EventStore:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS events_user ON events(user_id, at)")
             conn.execute("CREATE INDEX IF NOT EXISTS events_topic ON events(topic_id, at)")
-            try:
-                conn.execute("ALTER TABLE events ADD COLUMN thread TEXT NOT NULL DEFAULT ''")
-            except sqlite3.OperationalError:
-                pass  # already there
+            # Added after the table shipped, so an existing log is widened
+            # rather than recreated - the same trade cache.py makes, except
+            # that here the data is not regenerable and must not be dropped.
+            for ddl in (
+                "ALTER TABLE events ADD COLUMN thread TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE events ADD COLUMN section TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE events ADD COLUMN algo TEXT NOT NULL DEFAULT ''",
+            ):
+                try:
+                    conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass  # already there
+        self._pruned_at = 0.0
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -279,26 +333,116 @@ class EventStore:
         return conn
 
     def record(self, event: Event) -> None:
-        if event.kind not in EVENT_WEIGHT:
+        if event.kind not in EVENT_KINDS:
             log.warning("ignoring unknown event kind %r", event.kind)
             return
         try:
             self._conn().execute(
-                "INSERT INTO events (user_id, kind, topic_id, text, tags, at, thread)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO events"
+                " (user_id, kind, topic_id, text, tags, at, thread, section, algo)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (event.user_id[:64], event.kind, event.topic_id[:64], event.text[:300],
-                 ",".join(event.tags), event.at, event.thread[:200]),
+                 ",".join(event.tags), event.at, event.thread[:200],
+                 event.section[:40], event.algo[:40]),
             )
         except Exception:
             # A feed is a nicety. Losing an event must never break playback.
             log.exception("could not record interaction; continuing")
 
+    def record_impressions(
+        self,
+        user_id: str,
+        shown: Iterable[tuple[str, str]],
+        algo: str = ALGO_VERSION,
+        at: Optional[float] = None,
+    ) -> int:
+        """Log the tiles one feed actually put in front of one listener.
+
+        `shown` is (section_key, topic_id) in display order. Written in a
+        single statement because a feed is ~18 rows and eighteen round trips
+        on a page load is how a read surface acquires a write bottleneck.
+
+        Separate from `record` on purpose: this is the only kind that arrives
+        in bulk, needs pruning, and must stay out of the ranking read path.
+        """
+        if not user_id:
+            return 0
+        now = time.time() if at is None else at
+        rows = [
+            (user_id[:64], IMPRESSION, topic_id[:64], "",
+             ",".join(BANK_BY_ID[topic_id].tags) if topic_id in BANK_BY_ID else "",
+             now, "", str(section)[:40], str(algo)[:40])
+            for section, topic_id in shown
+        ]
+        if not rows:
+            return 0
+        try:
+            self._conn().executemany(
+                "INSERT INTO events"
+                " (user_id, kind, topic_id, text, tags, at, thread, section, algo)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        except Exception:
+            # Same rule as every other write here: the feed is already built
+            # and on its way to the listener. Losing the audit trail for it is
+            # not a reason to fail the page.
+            log.exception("could not record impressions; continuing")
+            return 0
+        self._maybe_prune(now)
+        return len(rows)
+
+    def _maybe_prune(self, now: float) -> None:
+        """Drop impressions past IMPRESSION_TTL, at most hourly.
+
+        Checked here rather than on a timer because this is the only writer
+        that grows the table quickly, so it is the only one that has to care.
+        """
+        if now - self._pruned_at < 3600:
+            return
+        self._pruned_at = now
+        try:
+            self._conn().execute(
+                "DELETE FROM events WHERE kind = ? AND at < ?",
+                (IMPRESSION, now - IMPRESSION_TTL),
+            )
+        except Exception:
+            log.exception("could not prune impressions; continuing")
+
+    def impressions_for(self, user_id: str, limit: int = 200) -> list[Event]:
+        """What this listener was shown, newest first. Audit, never ranking."""
+        try:
+            rows = self._conn().execute(
+                "SELECT topic_id, tags, at, section, algo FROM events"
+                " WHERE user_id = ? AND kind = ? ORDER BY at DESC LIMIT ?",
+                (user_id, IMPRESSION, int(limit)),
+            ).fetchall()
+        except Exception:
+            log.exception("could not read impressions")
+            return []
+        return [
+            Event(user_id, IMPRESSION, r[0], "",
+                  tuple(t for t in r[1].split(",") if t), r[2],
+                  section=r[3], algo=r[4])
+            for r in rows
+        ]
+
     def for_user(self, user_id: str, limit: int = 400) -> list[Event]:
+        """The behavioural log for one listener. **Impressions are excluded.**
+
+        Not a filter for tidiness. This is the read that feeds `taste`, and it
+        is capped at `limit` rows: a feed load writes ~18 impressions, so
+        letting them in here means roughly twenty visits to myFAM push every
+        play, completion and search out of the window - the taste model would
+        be trained on what the feed showed rather than on what the listener
+        did, and would then rank on it. Impressions are read by
+        `impressions_for`, which nothing in the ranking path calls.
+        """
         try:
             rows = self._conn().execute(
                 "SELECT kind, topic_id, text, tags, at, thread FROM events"
-                " WHERE user_id = ? ORDER BY at DESC LIMIT ?",
-                (user_id, limit),
+                " WHERE user_id = ? AND kind != ? ORDER BY at DESC LIMIT ?",
+                (user_id, IMPRESSION, limit),
             ).fetchall()
         except Exception:
             log.exception("could not read interactions")

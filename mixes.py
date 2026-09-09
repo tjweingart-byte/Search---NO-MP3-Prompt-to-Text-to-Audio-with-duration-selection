@@ -25,6 +25,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
+from paths import data_path
 from topics import BANK_BY_ID, tags_for_text
 
 log = logging.getLogger(__name__)
@@ -164,8 +165,8 @@ def clean_items(raw: Sequence) -> list[MixItem]:
 
 
 class MixStore:
-    def __init__(self, path: str = "mixes.db") -> None:
-        self.path = path
+    def __init__(self, path: str | None = None) -> None:
+        self.path = data_path("MIXES_DB", "mixes.db", path)
         self._local = threading.local()
         with self._conn() as conn:
             conn.execute(

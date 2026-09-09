@@ -1,0 +1,121 @@
+"""Where the databases live.
+
+Every store used to default to a bare filename - `myfam.db`, `social.db` and
+so on. A bare filename is resolved against the **current working directory**,
+which is not a property of the app at all: it is a property of wherever the
+person who started the process happened to be standing.
+
+That failed in the way this project dislikes most - silently, and in the
+direction of looking fine. Starting the server from a different directory did
+not raise anything. SQLite simply created a second, empty set of files, so the
+app came up with a cold script cache (every episode paid ~$0.03 again), an
+empty feed, no echoes and no mixes, and nothing anywhere said so. The same trap
+caught `tools/seed_demo.py`, which writes the history the browse surfaces need:
+seed from one directory, serve from another, and Explore stays empty however
+much you tap it - which reads exactly like a broken feature.
+
+So a path is now resolved in one place, from `__file__` rather than the cwd:
+
+* **No env var** - the file sits beside this module, in the project root. Same
+  location however the process was started.
+* **An absolute env var** - used exactly as given. This is what a deployment
+  does, and it is the only form a deployment should use: the Dockerfile points
+  all five at the mounted `/data` disk so they survive a redeploy.
+* **A relative env var** - resolved against the project root too, never the
+  cwd, and it says so in the log. Reinterpreting someone's input quietly would
+  reintroduce the ambiguity this module exists to remove.
+
+There is no fallback that invents a location, so there is no way to end up
+reading one file and writing another.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+#: The directory this file sits in. Derived from `__file__`, so it names the
+#: same place no matter where the process was started from - which is the
+#: whole point, and the reason this is not `Path.cwd()`.
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+class DataPathError(RuntimeError):
+    """A database path that cannot be used, phrased so it can be acted on."""
+
+
+def _ensure_parent(path: Path, env_var: str) -> None:
+    """Make the directory the file will live in, or say exactly what to fix.
+
+    Without this the failure was `unable to open database file` raised from
+    inside sqlite3 at import time - true, and useless: it names neither the
+    setting that was wrong nor the directory that was missing, and the app is
+    dead before it logs anything of its own. Since `.env.example` now invites
+    people to point these somewhere, that is a foreseeable first experience.
+
+    Creating is the helpful default and matches what the Dockerfile already
+    does by hand (`RUN mkdir -p /data`). It is announced, because a typo in a
+    path would otherwise quietly acquire a directory.
+    """
+    parent = path.parent
+    if parent.is_dir():
+        return
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise DataPathError(
+            f"{env_var} points at {path}, but its directory {parent} could not "
+            f"be created ({exc.strerror}). Set {env_var} to a path the server "
+            f"can write to, or create that directory yourself."
+        ) from exc
+    log.info("created %s for %s", parent, env_var)
+
+
+def data_path(env_var: str, filename: str, override: str | None = None) -> str:
+    """Absolute path for one database: `override`, else `env_var`, else the
+    project root.
+
+    Read at call time rather than at import, so a test that sets the variable
+    and rebuilds a store gets what it set.
+
+    Creates the containing directory as a side effect: every caller is about to
+    open the file, and a missing directory is the one failure sqlite reports in
+    a way nobody can act on. Raises `DataPathError` if it cannot.
+
+    `override` is the path a caller passed directly - a test's tmp_path, mostly.
+    It goes through here rather than straight to the store so that it gets the
+    same directory guarantee as everything else. It did not at first, and the
+    gap showed up immediately: a fixture pointing at a new subdirectory failed
+    with the exact `unable to open database file` this function exists to
+    prevent. Used as given rather than re-anchored - an explicit argument is
+    the caller's decision, not an ambiguity to resolve.
+    """
+    if override:
+        chosen = Path(override).expanduser()
+        _ensure_parent(chosen, env_var or "the path given")
+        return str(chosen)
+
+    raw = os.environ.get(env_var, "").strip()
+    if not raw:
+        resolved = PROJECT_ROOT / filename
+        _ensure_parent(resolved, env_var)
+        return str(resolved)
+
+    given = Path(raw).expanduser()
+    if given.is_absolute():
+        _ensure_parent(given, env_var)
+        return str(given)
+
+    resolved = PROJECT_ROOT / given
+    # Announced rather than silent: a relative override is ambiguous, and the
+    # ambiguity is the bug. Saying which file was opened costs one log line
+    # and saves the afternoon spent wondering why the cache is cold.
+    log.warning(
+        "%s=%r is relative; resolving against the project root -> %s "
+        "(set an absolute path to choose the location yourself)",
+        env_var, raw, resolved,
+    )
+    _ensure_parent(resolved, env_var)
+    return str(resolved)
