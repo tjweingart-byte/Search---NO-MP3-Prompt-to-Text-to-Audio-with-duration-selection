@@ -43,7 +43,8 @@ On macOS the built-in `say` voice is used automatically — nothing to install.
 ```bash
 pip install -r requirements.txt
 
-cp .env.example .env                  # add your ANTHROPIC_API_KEY
+python setup_key.py                   # the Anthropic key, once per machine
+python setup_key.py --exa             # the Exa key, which researches episodes
 ./run.sh                              # http://localhost:8000
 ```
 

@@ -1,8 +1,14 @@
-"""Set the API key once, for this machine, and check that it actually works.
+"""Set an API key once, for this machine, and check that it actually works.
 
-    python setup_key.py            # paste it once; stored in ~/.fam/env
-    python setup_key.py --show     # where the key came from, and whether it works
-    python setup_key.py --remove   # forget it
+    python setup_key.py                  # the Anthropic key, which writes episodes
+    python setup_key.py --exa            # the Exa key, which researches them
+    python setup_key.py --show           # where the key came from, and whether it works
+    python setup_key.py --show --exa
+    python setup_key.py --remove [--exa] # forget it
+
+Two credentials, one file, one habit. `--exa` is needed when
+RESEARCH_BACKEND=exa - which is the default - and a researched episode fails
+without it rather than quietly searching another way.
 
 The key goes in `~/.fam/env`, next to the shared voice store and for the same
 reason: it lives **outside the project folder**, so unpacking a new copy of the
@@ -31,6 +37,42 @@ import sys
 from config import describe_key, key_source, settings, shared_env_path
 
 VAR = "ANTHROPIC_API_KEY"
+EXA_VAR = "EXA_API_KEY"
+
+
+async def exa_works(key: str) -> tuple[bool, str]:
+    """Ask Exa whether it accepts this key, before writing it anywhere.
+
+    A one-result search, which is the cheapest call that proves the credential
+    - about half a cent. Exa has no free "who am I" endpoint, so checking costs
+    something; a key stored without checking costs more. "A key is set" is not
+    "the key works" (PROBLEMS.md 52), and this is the one place where finding
+    out is cheap.
+    """
+    os.environ[EXA_VAR] = key
+    try:
+        from exa_py import Exa
+    except ImportError:
+        return False, ("exa_py is not installed, so the key cannot be checked. "
+                       "`pip install -r requirements-exa.txt`")
+    try:
+        reply = await asyncio.to_thread(
+            lambda: Exa(key).search_and_contents(
+                "test", type="fast", num_results=1, highlights=True))
+    except Exception as exc:  # noqa: BLE001 - the reason matters, not the class
+        detail = getattr(exc, "message", "") or str(exc)
+        return False, f"{type(exc).__name__}: {detail[:200]}"
+    found = len(list(getattr(reply, "results", []) or []))
+    return True, f"Exa accepted it and returned {found} result(s)."
+
+
+def describe_exa_key(key: str = "") -> str:
+    """A safe fingerprint, for the same reason `describe_key` exists: an error
+    about the wrong key looks identical whichever wrong key produced it."""
+    key = key or os.environ.get(EXA_VAR, "")
+    if not key:
+        return "not set"
+    return f"{len(key)} chars, ending {key[-4:]}"
 
 
 async def works(key: str) -> tuple[bool, str]:
@@ -59,20 +101,24 @@ def read_file() -> list[str]:
         return []
 
 
-def write_key(key: str) -> None:
+def without(name: str) -> list:
+    """Every line of the shared file except the one setting `name`."""
+    return [line for line in read_file()
+            if not line.strip().lstrip("export ").startswith(f"{name}=")]
+
+
+def write_key(key: str, name: str = VAR) -> None:
     """Replace the key line, never append one.
 
-    Two ANTHROPIC_API_KEY lines in one file means "which key is actually being
+    Two lines setting the same variable means "which key is actually being
     sent" depends on who reads it, which has already cost this project a
-    session of debugging a perfectly valid key.
+    session of debugging a perfectly valid key. The other variable's line is
+    preserved untouched - storing one credential must never drop the other.
     """
     path = shared_env_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    kept = [
-        line for line in read_file()
-        if not line.strip().lstrip("export ").startswith(f"{VAR}=")
-    ]
-    path.write_text("\n".join(kept + [f"{VAR}={key}", ""]))
+    kept = without(name)
+    path.write_text("\n".join(kept + [f"{name}={key}", ""]))
     try:
         path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 600: nobody else on this machine
     except OSError:
@@ -83,17 +129,26 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--show", action="store_true", help="report the key in force and test it")
     ap.add_argument("--remove", action="store_true", help="delete the stored key")
+    ap.add_argument("--exa", action="store_true",
+                    help="the Exa key, which researches episodes, rather than "
+                         "the Anthropic one, which writes them")
     args = ap.parse_args()
 
     path = shared_env_path()
+    name = EXA_VAR if args.exa else VAR
 
     if args.remove:
-        kept = [line for line in read_file()
-                if not line.strip().lstrip("export ").startswith(f"{VAR}=")]
+        kept = without(name)
         if path.exists():
             path.write_text("\n".join(kept + [""]) if kept else "")
-        print(f"Removed the key from {path}")
+        print(f"Removed {name} from {path}")
+        if args.exa:
+            print("Researched episodes will now fail unless you also set "
+                  "RESEARCH_BACKEND=claude.")
         return 0
+
+    if args.exa:
+        return exa_main(path, args.show)
 
     if args.show:
         print(f"  stored in : {path}{'' if path.exists() else '  (does not exist yet)'}")
@@ -142,6 +197,66 @@ def main() -> int:
     print(f"Stored in {path} (readable only by you).")
     print("\nYou will not be asked again on this machine, including by a new copy "
           "of the app.\nCheck it any time with:  python setup_key.py --show")
+    return 0
+
+
+def exa_main(path, show: bool) -> int:
+    """The Exa half. Deliberately the same shape as the Anthropic half above -
+    verify, then store, and store nothing that does not work."""
+    stored = os.environ.get(EXA_VAR, "")
+
+    if show:
+        print(f"  stored in : {path}{'' if path.exists() else '  (does not exist yet)'}")
+        print(f"  backend   : RESEARCH_BACKEND={settings.research_backend}")
+        print(f"  key       : {describe_exa_key()}")
+        if not stored:
+            print("\nNo Exa key. Run: python setup_key.py --exa")
+            if settings.research_backend == "exa":
+                print("Researched episodes will fail until you do, or until "
+                      "you set RESEARCH_BACKEND=claude.")
+            return 1
+        print("  checking it with Exa (one search, about half a cent)…")
+        ok, detail = asyncio.run(exa_works(stored))
+        print(f"  accepted  : {'YES - ' + detail if ok else 'NO - ' + detail}")
+        return 0 if ok else 1
+
+    print(f"The Exa key is stored once, in {path}, and every copy of the app "
+          "reads it.")
+    print("It is never written into the source, and never committed.\n")
+    print("It is needed because RESEARCH_BACKEND defaults to `exa`: a "
+          "researched episode\nretrieves first and Claude reads the packet. "
+          "Without a key those episodes fail\nrather than quietly searching "
+          "another way.\n")
+    if stored:
+        print(f"There is already an Exa key ({describe_exa_key()}).")
+        print("Entering a new one replaces it.\n")
+
+    try:
+        key = getpass.getpass("Paste your Exa API key (input hidden): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nNothing changed.")
+        return 1
+    if not key:
+        print("Nothing entered; nothing changed.")
+        return 1
+
+    print("Checking it with Exa before storing it (one search, about half a "
+          "cent)…")
+    ok, detail = asyncio.run(exa_works(key))
+    if not ok:
+        print(f"\nREJECTED - {detail}")
+        print(f"  key tried: {describe_exa_key(key)}")
+        print("\nNothing was stored. A key that does not work is worse stored "
+              "than not stored:\n  the server would start, report research as "
+              "configured, and fail on the first\n  researched episode.")
+        return 1
+
+    write_key(key, EXA_VAR)
+    print(f"\nAccepted - {detail}")
+    print(f"Stored in {path} (readable only by you).")
+    print("\nYou will not be asked again on this machine, including by a new "
+          "copy of the app.\nCheck it any time with:  python setup_key.py "
+          "--show --exa")
     return 0
 
 
