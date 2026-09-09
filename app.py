@@ -416,6 +416,31 @@ async def health() -> dict:
     }
 
 
+@app.get("/health")
+async def liveness() -> dict:
+    """Is this process up? Nothing else.
+
+    Separate from `/api/health` on purpose. That one is the *readiness* report
+    and is deliberately expensive: it opens all six SQLite files, builds the
+    speech engine and asks the research backend whether it can run - because
+    §52 says a thing that reports readiness must perform the real action rather
+    than confirm it was configured. That is the right answer for a person
+    looking at a tab, and the wrong one for a platform health check polling
+    every few seconds for the life of the deployment.
+
+    It is also the wrong shape for one. A load balancer restarts a container
+    that fails its check, and `/api/health` returns 200 with `interim: true`
+    when there is no voice - so it would not catch that anyway, while a
+    transiently locked SQLite file could take the service down for a fault
+    that stops no listener.
+
+    So: no imports, no I/O, no credential, no model, no engine. Reaching this
+    line is the entire assertion. Anything worth knowing beyond "the process
+    is answering" is at /api/health, which is unchanged.
+    """
+    return {"status": "ok"}
+
+
 class CredentialsRequest(BaseModel):
     email: str = Field(..., max_length=accounts_mod.MAX_EMAIL)
     password: str = Field(..., max_length=accounts_mod.MAX_PASSWORD)

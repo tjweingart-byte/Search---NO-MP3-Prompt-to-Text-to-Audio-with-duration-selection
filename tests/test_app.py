@@ -232,3 +232,54 @@ def test_the_marker_never_reaches_the_script_endpoint_as_speech(client, monkeypa
     body = client.post("/api/script", json={"query": "the rule", "minutes": 1}).json()
     assert "NEXT" not in body["script"]
     assert body["thread"] == "what replaces the rule"
+
+
+# --------------------------------------------------------------------------
+# /health is the platform's check; /api/health is the person's
+#
+# A host like Render polls its health check path for the life of the
+# deployment. /api/health is the readiness report and is deliberately
+# expensive - six SQLite opens, the speech engine, the research backend - so
+# pointing a poller at it bills that cost forever and, worse, lets a
+# transiently locked database restart a container that is serving fine.
+# --------------------------------------------------------------------------
+
+
+def test_health_is_ok_without_credentials_engine_or_databases(client):
+    """The liveness check must answer on a machine that can do nothing else."""
+    res = client.get("/health")
+    assert res.status_code == 200
+    assert res.json() == {"status": "ok"}
+
+
+def test_health_touches_no_engine_no_credential_and_no_database(client, monkeypatch):
+    """Cheap is the whole feature, so it is asserted rather than assumed.
+
+    Each of these would be a real cost on every poll, and `build_engine` is
+    the one that matters most: on a CPU host it walks the Chatterbox
+    availability check, and on a GPU host it is what holds the loaded model.
+    """
+    def refuse(name):
+        def boom(*_a, **_k):
+            raise AssertionError(f"/health called {name}")
+        return boom
+
+    monkeypatch.setattr(appmod, "build_engine", refuse("build_engine"))
+    monkeypatch.setattr(appmod, "engine_report", refuse("engine_report"))
+    monkeypatch.setattr(appmod, "research_report", refuse("research_report"))
+    monkeypatch.setattr(appmod, "_database_report", refuse("_database_report"))
+    monkeypatch.setattr(appmod, "_cache_report", refuse("_cache_report"))
+
+    assert client.get("/health").status_code == 200
+
+
+def test_health_poll_mints_no_session(client):
+    """Same reason /api/health is exempt: a poll every minute, forever."""
+    for _ in range(3):
+        client.get("/health")
+    assert "set-cookie" not in client.get("/health").headers
+
+
+def test_health_is_not_shadowed_by_the_static_mount(client):
+    """StaticFiles is mounted at "/" and would answer 404 for this path."""
+    assert client.get("/health").json()["status"] == "ok"
