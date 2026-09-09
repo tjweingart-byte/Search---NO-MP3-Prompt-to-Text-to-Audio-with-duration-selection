@@ -40,6 +40,13 @@ DELIBERATELY_OPTIONAL = {
     # near matching degrades rather than breaking. PROBLEMS.md 68.
     "onnxruntime": "optional; embeddings.py falls back and says so",
     "tokenizers": "optional; embeddings.py falls back and says so",
+    # The Exa research backend, installed from requirements-exa.txt and needed
+    # only when RESEARCH_BACKEND=exa. The default backend is `claude`, which
+    # uses Anthropic's server-side search and needs nothing here. Imported
+    # inside research._client, which raises ResearchUnavailable naming the
+    # missing package, and research.diagnose() reports it on /api/health - so
+    # the app starts and says what it cannot do.
+    "exa_py": "requirements-exa.txt",
     # diagnose_api.py reports which HTTP libraries are present. Both imports
     # are inside try/except and their absence IS the diagnostic output.
     "h2": "diagnose_api.py reports its absence rather than needing it",
@@ -87,11 +94,23 @@ def imported() -> dict:
     return out
 
 
+def normalise(name: str) -> str:
+    """One spelling for a package, whichever side of the comparison it is on.
+
+    `exa_py` the module is `exa-py` the package. This used to normalise the
+    import names and not the keys of DELIBERATELY_OPTIONAL, so an entry for a
+    package with an underscore in it never matched - the list looked right and
+    the guard failed anyway. Every existing entry happened to be a single word,
+    which is why nothing caught it until one wasn't.
+    """
+    return name.strip().lower().replace("_", "-")
+
+
 def test_every_import_is_declared_or_a_written_down_decision():
-    known = declared() | {k.lower() for k in DELIBERATELY_OPTIONAL}
+    known = declared() | {normalise(k) for k in DELIBERATELY_OPTIONAL}
     undeclared = {
         name: sorted(where) for name, where in imported().items()
-        if name.lower().replace("_", "-") not in known
+        if normalise(name) not in known
     }
     assert not undeclared, (
         "imported by the shipped code but neither declared in requirements.txt "
@@ -107,8 +126,8 @@ def test_the_optional_list_has_not_gone_stale():
     """The other direction. A name left behind after its import is deleted
     reads as a dependency that exists, and quietly widens what the next person
     thinks they are allowed to leave undeclared."""
-    live = set(imported())
-    stale = sorted(set(DELIBERATELY_OPTIONAL) - live)
+    live = {normalise(name) for name in imported()}
+    stale = sorted(k for k in DELIBERATELY_OPTIONAL if normalise(k) not in live)
     assert not stale, f"no longer imported by anything shipped: {stale}"
 
 

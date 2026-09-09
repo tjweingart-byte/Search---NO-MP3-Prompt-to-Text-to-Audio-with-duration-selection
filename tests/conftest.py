@@ -48,7 +48,8 @@ FAM_ENVIRONMENT = (
     "CANONICAL_KEY_MODEL",
     "CHATTERBOX_DEVICE", "CHATTERBOX_REFERENCE", "DURATION_TOLERANCE",
     "ANSWER_FIRST_MAX_SHARE", "EFFORT", "ENABLE_WEB_SEARCH", "ESPEAK_BIN",
-    "ESPEAK_VOICE",
+    "ESPEAK_VOICE", "EXA_HIGHLIGHTS_PER_SOURCE", "EXA_NUM_RESULTS",
+    "EXA_PACKET_SOURCES", "RESEARCH_BACKEND",
     "FAM_ENV_FILE", "HOST", "MAX_OUTPUT_TOKENS", "MAX_WEB_SEARCHES",
     "MAX_WPM", "MIN_WPM", "MODEL", "PORT", "PREROLL_SECONDS",
     "RATE_LIMIT_SECONDS", "READ_LIMIT_PER_WINDOW", "SAMPLE_RATE", "SAY_BIN",
@@ -70,9 +71,12 @@ DATA_ENVIRONMENT = (
 #: semantic - and therefore what half the cache tests are actually measuring.
 EMBED_ENVIRONMENT = ("FAM_EMBED_BACKEND", "FAM_EMBED_MODEL")
 
-#: Where voices live is per-machine state too, and reaches tts.py rather than
-#: config.py, so it is not in the list above.
-VOICE_ENVIRONMENT = ("FAM_VOICES_DIR", "VOICES_DIR")
+#: Per-machine state that reaches a module other than config.py, so it is not
+#: in the list above and the staleness guard does not expect it there.
+#: EXA_API_KEY is read by research.py, and a developer who has one must not run
+#: a different suite from CI - a real retrieval in a test would cost money and
+#: reach the network.
+VOICE_ENVIRONMENT = ("FAM_VOICES_DIR", "VOICES_DIR", "EXA_API_KEY")
 
 #: Everything the suite clears, in one name so a new group cannot be added to
 #: the list above and forgotten at the two places that use it.

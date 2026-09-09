@@ -29,6 +29,7 @@ from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_wo
 import embeddings
 from demo_script import DemoGenerator
 from config import DEFAULT_PIPELINE, describe_key, settings
+from research import report as research_report
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import attachments as attachments_mod
@@ -98,12 +99,41 @@ async def _verify_credentials() -> None:
     log.info("credentials OK - %s reachable (%s)", settings.model, CREDENTIALS["key"])
 
 
+def _announce_research() -> None:
+    """Say at startup whether the configured research backend can actually run.
+
+    `exa` is the default and needs a second credential. Without it a researched
+    episode fails - it does not quietly search another way - and finding that
+    out on a listener's first researched question is the shape of failure this
+    project has paid for most. So it is said here, once, loudly, and again on
+    every /api/health.
+
+    Not fatal. Most questions are not researched, and an app that refuses to
+    start because one path is unconfigured is worse than one that starts and
+    says which path is unavailable.
+    """
+    report = research_report()
+    if not report["unavailable"]:
+        log.info("research: %s (%s)", report["backend"], report["exa_detail"])
+        return
+    log.warning(
+        "RESEARCH UNAVAILABLE: RESEARCH_BACKEND=%s but %s.", report["backend"],
+        report["exa_detail"])
+    log.warning(
+        "  Researched episodes will FAIL rather than search another way.")
+    log.warning(
+        "  Set EXA_API_KEY, or set RESEARCH_BACKEND=claude to let the model "
+        "search instead.")
+    log.warning("  Every tab says the same thing; /api/health carries it too.")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Pay the voice model's load cost now rather than on the first listener.
     await warm_up()
     # Before a listener finds out the hard way.
     await _verify_credentials()
+    _announce_research()
     # Expired scripts are already filtered out on read, so nothing ever deleted
     # them and the file grew for the life of the deployment. One DELETE at
     # startup is enough: entries expire on a timescale of days, not minutes.
@@ -356,6 +386,11 @@ async def health() -> dict:
         "min_minutes": settings.min_minutes,
         "max_minutes": settings.max_minutes,
         "tts": engine_report(),
+        # Who does the looking on a researched episode, and whether that
+        # backend can actually run. `unavailable: true` means researched
+        # episodes will fail rather than quietly search another way - worth
+        # seeing on a tab rather than discovering in a log.
+        "research": research_report(),
         # Which streaming architecture this process is actually running, and
         # whether that was chosen or inherited. A deployment that has been
         # rolled back to `legacy` by hand looks identical to one that has not

@@ -1,0 +1,14 @@
+# Exa retrieval, installed separately on purpose.
+#
+#   pip install -r requirements-exa.txt
+#
+# Needed only when RESEARCH_BACKEND=exa. The default backend is `claude`, which
+# uses Anthropic's server-side web_search tool and needs nothing here - so a
+# laptop, a CI runner and the preview build all install FAM and run its tests
+# without this file, and `research.diagnose()` reports "exa_py is not
+# installed" rather than failing an import.
+#
+# Kept out of requirements.txt for the same reason requirements-chatterbox.txt
+# is: an optional backend must not become a fresh-install requirement.
+
+exa-py
