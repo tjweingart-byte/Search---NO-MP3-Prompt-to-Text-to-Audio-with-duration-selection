@@ -80,7 +80,28 @@ ENV FAM_STATE=/state \
 # that sets nothing still gets the configuration that was validated.
 ENV STREAMING_PIPELINE=phase6 \
     RESEARCH_BACKEND=exa \
-    CHATTERBOX_DEVICE=auto
+    CHATTERBOX_DEVICE=auto \
+    ANSWER_FIRST=1
+
+# Why ANSWER_FIRST is pinned here and not left to the code default.
+#
+# `config.py` derives it from the research backend: Claude's own search is slow
+# enough to need the from-knowledge cover, Exa is not, so `exa` implies
+# `answer_first=False`. That reasoning is sound and is left alone - the RunPod
+# run behind it measured the cover speaking 85.8 seconds before research took
+# over, which is most of an episode spent on what the model already knew.
+#
+# But the configuration that was *listened to* and judged good - Phase 6,
+# Chatterbox, reference_3, ~4.5s and ~2.992s to first audio, research handing
+# off mid-episode - ran with the cover ON. It predates that derivation
+# (commit 91d9dad), and `tools/pod_production_test.sh` never set the variable,
+# so it inherited a default that has since flipped. Deploying without pinning
+# it would ship a configuration nobody has heard.
+#
+# So the image reproduces what was validated, and the code default keeps its
+# own reasoning for everything else. Remove this line once
+# `ANSWER_FIRST=1 bash tools/pod_production_test.sh` has been run on a card and
+# the numbers say which behaviour belongs in `config.py`.
 
 RUN mkdir -p /state/hf /state/voices /state/data
 

@@ -3291,3 +3291,50 @@ there is no wait to cover, on for `claude` where the model's own search costs
 embedding adds nothing the token-overlap guard did not already find.
 
 989 passing, 3 skipped, both previews green in a browser.
+
+## 65. The validated configuration and the shipping default had diverged
+
+The Phase 6 validation on an RTX 4090 - production `app.py` through
+`tools/pod_production_test.sh`, Chatterbox cloning `reference_3.wav`, warm
+resident model, `CACHE_ENABLED=0` - produced episodes judged good, with first
+audio at roughly 4.5s and 2.992s and research handing off mid-episode. Later,
+the same harness on the same code would not reproduce it. The harness was not
+the variable.
+
+**One commit, one line.** `91d9dad` ("Make the direct research path the default")
+replaced
+
+    default_factory=lambda: os.environ.get("ANSWER_FIRST", "1") not in (...)
+
+with `_answer_first_default()`, which derives the value from the research
+backend via `SLOW_RESEARCH_BACKENDS = ("claude",)`. Evaluated rather than read:
+
+    validation-era (14360d4), ANSWER_FIRST unset -> answer_first True
+    today          (d2089b9), ANSWER_FIRST unset -> answer_first False
+
+The harness never set `ANSWER_FIRST`. It inherited the default, so the default
+changing changed the harness too - which is why re-running it did not reproduce
+the result and why "harness versus production" was the wrong place to look. The
+effective-config diff between the harness and a plain request today is only
+`CACHE_ENABLED` (harness-only and deliberate: a cached script would make the
+comparison void) and `chatterbox_reference` (packaging). Everything else -
+pipeline, backend, model, effort, search mode, share - is identical.
+
+The log line that settles which behaviour ran is
+`"research took over after %.1fs of answering from knowledge"`. It is emitted
+inside `_answer_first()`, called only when `plan.search and settings.answer_first`,
+so its presence in the good run's logs is proof the cover was on.
+
+**What was done about it, deliberately narrow.** `Dockerfile.gpu` pins
+`ANSWER_FIRST=1` so the image reproduces the configuration that was listened
+to. `config.py` is untouched: the derivation has a real measurement behind it -
+the same RunPod run recorded the cover speaking 85.8 seconds before research
+took over, which is most of an episode spent on what the model already knew -
+and overriding that on the strength of a listening impression would be trading
+one unmeasured default for another. A plain `app.py` still resolves
+`answer_first=False`.
+
+So there are now two configurations on purpose, and the pin says why in the
+Dockerfile and in DEPLOY.md. The reproduction that collapses them back into one
+is `ANSWER_FIRST=1 bash tools/pod_production_test.sh` against the same harness
+without it. Whichever way the numbers go, one of the two lines is deleted.

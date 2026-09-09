@@ -10,7 +10,37 @@ The split that makes it repeatable:
 | baked into the image | set once on the host | never anywhere |
 |---|---|---|
 | CUDA, torch, chatterbox, exa, the app | `ANTHROPIC_API_KEY`, `EXA_API_KEY` | credentials in the image |
-| the validated defaults (phase6, exa) | the persistent volume | the voice in the repo |
+| the validated settings (phase6, exa, ANSWER_FIRST=1) | the persistent volume | the voice in the repo |
+
+## The one setting the image pins against the code default
+
+`ANSWER_FIRST=1`, and it is deliberate.
+
+`config.py` derives that value from the research backend — Claude's own search
+is slow enough to need the from-knowledge cover, Exa is not, so `exa` implies
+`answer_first=False`. That reasoning stands, and the image does not change it.
+
+But the configuration that was **listened to and judged good** — Phase 6,
+Chatterbox, `reference_3`, ~4.5s and ~2.992s to first audio, research handing
+off mid-episode — ran with the cover **on**. It predates that derivation
+(commit `91d9dad`), and `tools/pod_production_test.sh` never set the variable,
+so it inherited a default that has since flipped. An image without this line
+would deploy a configuration nobody has heard.
+
+So: the image reproduces what was validated; the code default keeps its own
+reasoning for every other deployment. A container from this image resolves
+
+    answer_first True · answer_first_share 0.5 · phase6 · exa
+
+which is the four settings the good run had.
+
+**This line is provisional.** Run
+
+    ANSWER_FIRST=1 bash tools/pod_production_test.sh
+
+on a card, compare against the same harness without it, and let the numbers
+decide whether the cover belongs in `config.py` — at which point this pin
+becomes redundant and should go.
 
 ## Once, ever
 
