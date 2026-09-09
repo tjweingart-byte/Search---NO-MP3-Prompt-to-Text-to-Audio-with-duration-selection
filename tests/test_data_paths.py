@@ -261,3 +261,52 @@ def test_health_says_a_broken_database_is_broken(monkeypatch, tmp_path):
     events = next(e for e in body["databases"] if e["name"] == "events")
     assert events["readable"] is False
     assert "error" in events, "a broken database must say what went wrong"
+
+
+# --- the two images have to agree about the generation path ----------------
+#
+# The CPU image reached production missing three things the GPU image pins,
+# and the deployment reported it in the only place nobody was looking: a
+# startup warning. `RESEARCH_BACKEND=exa but exa_py is not installed` meant
+# every researched episode would fail, and an unpinned ANSWER_FIRST meant the
+# cover was off in an image whose whole purpose is to reproduce a run that had
+# it on. Neither is visible from outside the container, so both are asserted
+# here instead.
+
+
+VALIDATED_SETTINGS = ("STREAMING_PIPELINE=phase6", "RESEARCH_BACKEND=exa",
+                      "ANSWER_FIRST=1")
+
+
+def test_both_images_install_the_research_dependency():
+    """RESEARCH_BACKEND=exa is the default in both, so exa_py is not optional.
+
+    Without it a researched episode fails rather than searching another way -
+    and it is pure Python, so the CPU image has no excuse for omitting it.
+    """
+    for name in ("Dockerfile", "Dockerfile.gpu"):
+        text = (ROOT / name).read_text()
+        assert "requirements-exa.txt" in text, f"{name} does not install exa_py"
+
+
+def test_both_images_pin_the_validated_generation_settings():
+    """The settings the good run had, in every image that claims to reproduce it."""
+    for name in ("Dockerfile", "Dockerfile.gpu"):
+        text = (ROOT / name).read_text()
+        missing = [s for s in VALIDATED_SETTINGS if s not in text]
+        assert not missing, f"{name} does not pin: {missing}"
+
+
+def test_the_cpu_image_does_not_pretend_it_can_speak():
+    """The counterpart guard, and the more important one.
+
+    Installing chatterbox here would be worse than useless: `diagnose()`
+    refuses a CPU device before it looks for a model, so the tone still plays
+    and the image grows by gigabytes. If this ever needs to change, the thing
+    that changed is the host having a GPU - and then the image to deploy is
+    Dockerfile.gpu, not this one.
+    """
+    text = (ROOT / "Dockerfile").read_text()
+    installed = [ln for ln in text.splitlines()
+                 if "requirements-chatterbox.txt" in ln and not ln.lstrip().startswith("#")]
+    assert not installed, f"CPU image installs chatterbox: {installed}"
