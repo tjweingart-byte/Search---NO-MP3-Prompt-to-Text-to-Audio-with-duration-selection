@@ -27,7 +27,7 @@ import time
 from audio_utils import PaceController, pcm_duration, silence, streaming_wav_header
 from cache import ScriptCache, build_cache, cache_key, canonical_key, is_shareable, ttl_for
 from episode_marks import EpisodeMarks, TimedClient
-from config import settings
+from config import STREAMING_PIPELINES, settings
 from script_buffer import ASSEMBLER_TICK, ScriptBuffer
 from script_generator import EpisodePlan, ScriptGenerator, ScriptNotes, count_words
 from speech_assembly import (AssembledChunk, AssemblyPolicy,
@@ -312,9 +312,9 @@ class PodcastPipeline:
     ) -> "_Pump":
         """`_start`, with the reader decoupled and the sentences assembled.
 
-        **Unreachable in this build.** Nothing calls it; `STREAMING_PIPELINE`
-        does not select it. It exists so the path can be measured against
-        `_start` on fakes before anything is allowed to route to it.
+        **This is the production path.** `STREAMING_PIPELINE` defaults to
+        `phase6`, so an ordinary request arrives here; `_start` is reached only
+        by naming `legacy` deliberately.
 
             Claude stream
               -> reader          its own task, never touches this queue
@@ -442,11 +442,13 @@ class PodcastPipeline:
         stats: GenerationStats,
         fatal: bool = True,
     ) -> AsyncIterator[bytes]:
-        """`_speak` for a pump of assembled chunks. Unreachable in this build.
+        """`_speak` for a pump of assembled chunks. The production path.
 
-        Deliberately a copy of `_speak`'s loop rather than a refactor of it:
-        changing `_speak` would change the shipped path, which this step is
-        not allowed to do. The two converge when Phase 6 is selectable.
+        Deliberately a copy of `_speak`'s loop rather than a refactor of it.
+        That was written when `_speak` was the shipped path and this one could
+        not be allowed to disturb it; the reason has inverted but the shape is
+        still right, because `tests/test_phase6_equivalence.py` compares the
+        two columns and a shared implementation would compare nothing.
         """
         try:
             while True:
@@ -651,17 +653,38 @@ class PodcastPipeline:
     # ---- which streaming architecture this request uses -------------------
     #
     # One decision, read from `settings.streaming_pipeline` at request time
-    # and applied at every point a pump is made or spoken. Default is
-    # `legacy`, so an installation that has never heard of this setting
-    # behaves exactly as it always has, and rolling back is one environment
-    # variable and a restart.
+    # and applied at every point a pump is made or spoken. **The default is
+    # `phase6`**: an installation that has never heard of this setting gets the
+    # validated architecture, and reaching the older one takes naming it.
+    # Rolling back is still one environment variable and a restart.
     #
     # The two architectures are not blended: a pump made by `_start_phase6`
     # carries `AssembledChunk` and must be spoken by `_speak_phase6`, so the
     # three helpers below always agree with each other.
 
     def _phase6(self) -> bool:
-        return settings.streaming_pipeline == "phase6"
+        """True for Phase 6, False for legacy, and an error for anything else.
+
+        Written as a membership test rather than `== "phase6"` on purpose.
+        Equality makes every unrecognised value mean *legacy* - silently, at
+        request time, on the listener's episode. That is the failure mode this
+        project has lost the most time to, and now that phase6 is the default
+        it would turn a typo into a downgrade nobody chose.
+
+        `Settings.__post_init__` already refuses an unknown value at import.
+        This is the second gate, because the first one is bypassable: a test
+        substituting a settings object, or any code path that builds one
+        without validation, would otherwise reach production semantics through
+        a name that means nothing.
+        """
+        choice = settings.streaming_pipeline
+        if choice not in STREAMING_PIPELINES:
+            raise ValueError(
+                f"STREAMING_PIPELINE={choice!r} is not a pipeline. Use one of: "
+                f"{', '.join(STREAMING_PIPELINES)}. Refusing rather than "
+                "falling back - an unrecognised value must never quietly "
+                "select an architecture.")
+        return choice == "phase6"
 
     @staticmethod
     def _headroom_probe(pace: PaceController, stats: GenerationStats):
@@ -922,7 +945,12 @@ class PodcastPipeline:
                 stats.thread = self.cache.thread(key)
                 log.info("cache hit for %r (%d min)", plan.query, plan.minutes)
                 # Replaying the same sentences through the same controller
-                # reproduces the episode exactly - and costs zero API tokens.
+                # reproduces the episode - the same script, in the same order,
+                # for zero API tokens. Not sample-identical under Phase 6: the
+                # assembler batches partly on elapsed time, and a replay feeds
+                # sentences instantly where the original was paced by a model,
+                # so the chunk boundaries differ and with them the number of
+                # inter-chunk gaps. Measured at 0.161s over three minutes.
                 async for chunk in self._speak_pump(
                         self._pump_for(_replay(cached), stats, pace), pace, stats):
                     yield chunk

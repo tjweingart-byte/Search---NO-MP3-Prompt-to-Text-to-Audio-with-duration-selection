@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from anthropic_client import build_async_client, describe_http_version, http2_enabled
 from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_words
 from demo_script import DemoGenerator
-from config import describe_key, settings
+from config import DEFAULT_PIPELINE, describe_key, settings
 from pipeline import GenerationStats, NotCached, PodcastPipeline
 from script_generator import ScriptGenerator, ScriptNotes, plan_episode
 import attachments as attachments_mod
@@ -287,6 +287,13 @@ async def health() -> dict:
         "min_minutes": settings.min_minutes,
         "max_minutes": settings.max_minutes,
         "tts": engine_report(),
+        # Which streaming architecture this process is actually running, and
+        # whether that was chosen or inherited. A deployment that has been
+        # rolled back to `legacy` by hand looks identical to one that has not
+        # from the outside, and that is exactly the thing worth being able to
+        # ask a running server.
+        "streaming_pipeline": settings.streaming_pipeline,
+        "streaming_pipeline_default": settings.streaming_pipeline == DEFAULT_PIPELINE,
         # How the listener is told what is happening while they wait. There is
         # no filler any more, so the interface has to be honest instead.
         "search_mode": settings.search_mode,

@@ -155,7 +155,17 @@ def test_the_harness_reproduces_the_real_stream_pcm_for_legacy(minutes, ratio):
             total += len(chunk)
         return pcm_duration(total, ENGINE.sample_rate), stats
 
-    seconds, stats = asyncio.run(real())
+    # Pinned to legacy, not inherited. This compared the harness's legacy
+    # column against whatever `STREAMING_PIPELINE` defaulted to, which was
+    # legacy when it was written and is `phase6` now - so it quietly became a
+    # comparison between two different architectures asserting they matched.
+    original = pipeline_module.settings
+    pipeline_module.settings = dataclasses.replace(
+        original, streaming_pipeline="legacy")
+    try:
+        seconds, stats = asyncio.run(real())
+    finally:
+        pipeline_module.settings = original
     harness = run("legacy", minutes, ratio)
     assert harness.seconds == pytest.approx(seconds, abs=0.01)
     assert harness.words == stats.words

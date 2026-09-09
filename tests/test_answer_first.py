@@ -235,12 +235,25 @@ def test_the_cover_cannot_eat_the_episode(on):
     *because* it needed today's facts.
     """
     from config import settings as cfg
+    from speech_assembly import AssemblyPolicy
 
     generator = TwoHalves(research_delay=5.0)
     stats = _episode(generator, minutes=1)
-    plan_seconds = stats.plan_seconds
-    assert stats.cover_seconds <= plan_seconds * cfg.answer_first_max_share + 5
+
+    # The cap is checked between items, and under Phase 6 an item is a chunk
+    # rather than a sentence - so the cover can overshoot by at most one chunk,
+    # exactly as the duration ceiling overshoots by at most one sentence plus
+    # OVERRUN_GRACE. Stated as that bound rather than as a round number, so it
+    # tracks the policy instead of a measurement taken once.
+    one_chunk = AssemblyPolicy().max_words / (cfg.target_wpm / 60.0)
+    cap = stats.plan_seconds * cfg.answer_first_max_share
+    assert stats.cover_seconds <= cap + one_chunk, (
+        f"the cover reached {stats.cover_seconds:.1f}s against a {cap:.1f}s "
+        f"cap and a {one_chunk:.1f}s chunk")
     assert stats.handover_reason == "cover cap reached"
+    # The point of the cap: research still got said.
+    assert any("Researched" in sentence for sentence in stats.script), (
+        "the cover ate the episode after all")
 
 
 def _short_cover(sentences: int):

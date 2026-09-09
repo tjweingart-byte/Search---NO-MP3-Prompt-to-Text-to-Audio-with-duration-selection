@@ -68,7 +68,7 @@ def test_settings_hold_their_defaults_whatever_the_machine_has_set():
     suite tests, on every machine."""
     from config import settings
 
-    assert settings.streaming_pipeline == "legacy"
+    assert settings.streaming_pipeline == "phase6"
     assert settings.chatterbox_reference == ""
     assert settings.anthropic_api_key == ""
     assert settings.tts_engine == "auto"
