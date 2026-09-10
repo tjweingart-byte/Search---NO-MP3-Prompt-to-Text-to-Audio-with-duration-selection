@@ -120,9 +120,22 @@ def test_the_plan_is_stamped_at_write_time(store):
     """Someone who upgrades on the 20th did not cost paid-plan money on the
     5th. Joining to today's plan would rewrite what free users cost."""
     store.record("u1", usage(), plan="free", at=100)
-    store.record("u1", usage(), plan="paid", at=200)
+    store.record("u1", usage(), plan="plus", at=200)
     rows = store.rows()
-    assert [r["plan"] for r in rows] == ["free", "paid"]
+    assert [r["plan"] for r in rows] == ["free", "plus"]
+
+
+def test_a_legacy_paid_row_folds_into_the_paid_tier_not_into_free(store):
+    """The column shipped with two values and now names three tiers.
+
+    "paid" is what an account created before `entitlements.py` is stamped with,
+    and the one thing it must not become is "free": that is the direction that
+    silently reports a paying listener as costing nothing, in the exact split
+    the column was added to make possible.
+    """
+    store.record("legacy", usage(), plan="paid")
+    assert store.rows()[0]["plan"] == "plus"
+    assert store.report()["by_plan"]["plus"]["listeners"] == 1
 
 
 def test_an_unknown_plan_falls_back_to_free_rather_than_inventing_a_bucket(store):
@@ -167,11 +180,21 @@ def test_a_single_listener_does_not_break_the_percentiles(store):
 def test_paid_and_unpaid_are_reported_separately(store):
     store.record("free-1", usage(inp=1000, out=1000), plan="free")
     store.record("free-2", usage(inp=1000, out=1000), plan="free")
-    store.record("paid-1", usage(inp=4000, out=4000), plan="paid")
+    store.record("plus-1", usage(inp=4000, out=4000), plan="plus")
     by_plan = store.report()["by_plan"]
     assert by_plan["free"]["listeners"] == 2
-    assert by_plan["paid"]["listeners"] == 1
-    assert by_plan["paid"]["cost_per_listener"] > by_plan["free"]["cost_per_listener"]
+    assert by_plan["plus"]["listeners"] == 1
+    assert by_plan["plus"]["cost_per_listener"] > by_plan["free"]["cost_per_listener"]
+
+
+def test_every_tier_gets_a_bucket_even_with_nobody_in_it(store):
+    """A pricing decision is made by comparing tiers, so a tier that is
+    missing from the report because nobody is on it yet is the one you cannot
+    reason about."""
+    import entitlements
+
+    store.record("free-1", usage(), plan="free")
+    assert set(store.report()["by_plan"]) == set(entitlements.TIERS)
 
 
 def test_the_breakdown_adds_up_to_the_total(store):

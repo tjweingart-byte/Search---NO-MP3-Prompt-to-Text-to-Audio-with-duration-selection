@@ -323,3 +323,25 @@ class AttachmentStore:
             return cur.rowcount or 0
         except Exception:
             return 0
+
+    def forget(self, user_id: str) -> int:
+        """Erase everything this store holds for one listener.
+
+        Part of account deletion, which App Store guideline 5.1.1(v) requires
+        of any app that creates accounts. Each store implements its own rather
+        than a central deleter reaching into six databases by table name: that
+        deleter silently stops covering the seventh, and the failure is
+        invisible until somebody audits it.
+
+        Returns rows removed, so the endpoint can report what it did rather
+        than that it tried.
+        """
+        removed = 0
+        for table in ('attachments',):
+            try:
+                cur = self._conn().execute(
+                    f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+                removed += cur.rowcount or 0
+            except Exception:
+                log.exception("could not erase %s for %r", table, user_id)
+        return removed

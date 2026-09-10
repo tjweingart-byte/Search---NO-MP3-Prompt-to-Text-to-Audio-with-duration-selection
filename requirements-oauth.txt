@@ -1,0 +1,14 @@
+# Sign in with Google and Sign in with Apple.
+#
+# Both hand the app a signed identity token, and this server's whole job is to
+# check that signature against the provider's published keys. That needs real
+# asymmetric crypto, which is why it is a dependency rather than something
+# hand-rolled - and why it is a *separate* file, on the same reasoning as
+# requirements-chatterbox.txt: a laptop, a CI runner and the preview build must
+# all be able to install FAM and run its tests without it.
+#
+# Without this installed, `oauth.available()` is False, `/api/health` reports
+# the reason, and a sign-in attempt is refused with that reason. It never falls
+# back to accepting a token it could not check - an unverified JWT is not a
+# weak credential, it is anybody's credential.
+PyJWT[crypto]>=2.8.0

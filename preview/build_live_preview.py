@@ -360,12 +360,18 @@ LIVE_SHIM = r"""
     // sections choose before the generic ones can claim the bank.
     out.from_history = take(scored.map(function (x) { return x.t; }), 6);
     out.followers = take(byCount, 6);
+    // Exploration, from the same ranking the Explore New screen uses - so the
+    // rail and the surface it opens cannot disagree about what is adjacent to
+    // a taste. Filled here, in FILL_ORDER position, so the personal sections
+    // still choose before it and trending still chooses last.
+    out.might_like = take(exploreNewBody(myPrefs().interests).topics, 6);
     out.trending = take(byCount.concat(BANK), 6);
     return { picked: out, personalised: Object.keys(profile).length > 0 };
   }
 
   var SECTIONS = [
     ["from_history", "Made for you", "Your first episode starts this one off."],
+    ["might_like", "Explore New", "Listen to a few episodes and this fills in."],
     ["followers", "Your circle is on this", "Nobody you overlap with has listened yet."],
     ["trending", "What FAM can't stop playing", "Nothing has been played yet."]
   ];
@@ -679,11 +685,19 @@ LIVE_SHIM = r"""
   }
 
   // --------------------------------------------------------------- the wire
-  function json(body, status) {
-    return new Response(JSON.stringify(body), {
-      status: status || 200, headers: { "Content-Type": "application/json" }
+  function json(body, status, extraHeaders) {
+    var headers = { "Content-Type": "application/json" };
+    Object.keys(extraHeaders || {}).forEach(function (k) {
+      headers[k] = extraHeaders[k];
     });
+    return Promise.resolve(new Response(JSON.stringify(body), {
+      status: status || 200, headers: headers
+    }));
   }
+
+  // The share wording, from sharing.py at build time, so the preview and the
+  // server cannot show different copy for the same button.
+  var SHARE_TEMPLATES = __SHARE_TEMPLATES__;
   function silence(seconds) {
     var total = Math.round(seconds * SAMPLE_RATE), sent = 0;
     return Promise.resolve(new Response(new ReadableStream({
@@ -900,6 +914,89 @@ LIVE_SHIM = r"""
         paint();
         return json(shapeMix(rows("mixes").filter(function (m) { return m.id === mixId; })[0]));
       });
+    }
+
+    // ---- save for later, downloads and sharing ----
+    // Held in the fixture object rather than in the artifact db: the shelf is
+    // per-listener and this build's db is shared by everyone looking at the
+    // link, so persisting it would show one viewer another viewer's saves.
+    // The flow is what this preview is for; the storage has its own tests.
+    if (path === "/api/saved" && method === "POST") {
+      var shelf = FIXTURES["/api/saved"];
+      var already = shelf.items.filter(function (i) {
+        return i.query === body.query && i.minutes === body.minutes; })[0];
+      var item = already || {
+        id: "sav_" + rid(), folder_id: body.folder_id || "",
+        query: body.query, minutes: body.minutes || 3,
+        title: body.title || body.query, source: body.source || "",
+        created: now(), downloaded: false, bytes: 0, downloaded_at: 0,
+        last_played: 0,
+        estimated_bytes: (body.minutes || 3) * 60 * 22050 * 2
+      };
+      if (!already) shelf.items.unshift(item);
+      return json({ ok: true, item: item, downloads: shelf.downloads });
+    }
+    if (path === "/api/saved/folders" && method === "POST") {
+      var folder = { id: "fld_" + rid(), name: body.name, created: now(), items: 0 };
+      FIXTURES["/api/saved"].folders.push(folder);
+      return json({ ok: true, folder: folder });
+    }
+    if (path.indexOf("/api/saved/") === 0) {
+      var bits = path.split("/");
+      var sid = bits[3], verb = bits[4] || "";
+      var shelf2 = FIXTURES["/api/saved"];
+      var found = shelf2.items.filter(function (i) { return i.id === sid; })[0];
+      if (verb === "download" && method === "POST") {
+        if (!found) return json({ error: "No such saved episode." }, 404);
+        if (shelf2.downloads.remaining <= 0) {
+          return json({ error: "You are holding " + shelf2.downloads.used
+            + " downloaded episodes, which is all your plan keeps offline. "
+            + "Remove one to make room." }, 409, {
+              "X-FAM-Downloads": JSON.stringify({
+                candidates: shelf2.items.filter(function (i) { return i.downloaded; }),
+                status: shelf2.downloads })
+            });
+        }
+        found.downloaded = true; found.bytes = found.estimated_bytes;
+        shelf2.downloads.used += 1; shelf2.downloads.remaining -= 1;
+        return json({ ok: true, item: found, downloads: shelf2.downloads,
+                      stream: "/api/audio?q=" + encodeURIComponent(found.query)
+                              + "&minutes=" + found.minutes + "&fmt=pcm" });
+      }
+      if (verb === "download" && method === "DELETE") {
+        if (found && found.downloaded) {
+          found.downloaded = false; found.bytes = 0;
+          shelf2.downloads.used -= 1; shelf2.downloads.remaining += 1;
+        }
+        return json({ ok: true, downloads: shelf2.downloads });
+      }
+      if (verb) return json({ ok: true, item: found || null });
+      if (method === "DELETE") {
+        var at = shelf2.items.indexOf(found);
+        if (at >= 0) {
+          if (found.downloaded) {
+            shelf2.downloads.used -= 1; shelf2.downloads.remaining += 1;
+          }
+          shelf2.items.splice(at, 1);
+        }
+        return json({ ok: true });
+      }
+    }
+    if (path === "/api/share" && method === "POST") {
+      var link = "/s/preview";
+      var made = {};
+      SHARE_TEMPLATES.forEach(function (t) {
+        made[t.key] = {
+          target: t.key, label: t.label, kind: t.kind,
+          needs_image: t.needs_image, url: link, subject: "",
+          text: t.text.replace("{title}", body.title || "A FAM episode")
+                      .replace("{question}", body.query || "")
+                      .replace("{minutes}", body.minutes || 3)
+                      .replace("{url}", link)
+        };
+      });
+      return json({ share: { id: "preview" }, url: link, public: false,
+                    card: "/api/share/card?share=preview", targets: made });
     }
 
     if (FIXTURES[path]) return json(FIXTURES[path]);
@@ -1489,12 +1586,17 @@ def build() -> pathlib.Path:
     sys.path.insert(0, str(HERE.parent))
     import cache  # noqa: E402
     import preferences as prefs_mod  # noqa: E402
+    import sharing  # noqa: E402
     import topics  # noqa: E402
     from config import settings  # noqa: E402
 
     shim = (LIVE_SHIM
             .replace("__FIXTURES__", json.dumps(bp.load_fixtures()))
             .replace("__ALGO__", json.dumps(topics.ALGO_VERSION))
+            .replace("__SHARE_TEMPLATES__", json.dumps([
+                {"key": t.key, "label": t.label, "kind": t.kind,
+                 "needs_image": t.needs_image, "text": t.template}
+                for t in sharing.TARGETS]))
             .replace("__TAG_WORDS__", json.dumps(
                 {k: list(v) for k, v in topics.TAG_WORDS.items()}))
             # The intro's vocabulary, from the modules that own it. Typed out

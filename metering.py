@@ -70,6 +70,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Optional
 
+import entitlements
 from paths import data_path
 
 log = logging.getLogger("metering")
@@ -109,11 +110,16 @@ SYNTHESIS_REALTIME_FACTOR = float(os.environ.get("SYNTHESIS_REALTIME_FACTOR", "3
 #: starts, which is a product decision rather than a metering one.
 GPU_HOURS_PER_DAY = float(os.environ.get("GPU_HOURS_PER_DAY", "24"))
 
-#: Plans a row can be stamped with. "free" is everyone today: nothing in the
-#: app sets "paid", because nothing takes payment yet. The column exists so the
-#: split is available the day something does, rather than being backfilled from
-#: a log that never recorded it.
-PLANS = ("free", "paid")
+#: Plans a row can be stamped with, and `entitlements.py` is the one place they
+#: are defined - what a plan *allows* and what a plan *costs* have to name the
+#: same set, and two lists would disagree on the day one of them was extended.
+#:
+#: The name stays `PLANS` because it is what the report and the column call
+#: them. Rows written before tiers existed are stamped "paid";
+#: `entitlements.normalise` folds that into "plus" on the way in and on the way
+#: out, so an old paying listener is not silently reported as free - which
+#: would corrupt exactly the split this column was added for.
+PLANS = entitlements.TIERS
 
 
 @dataclass
@@ -321,7 +327,7 @@ class MeterStore:
         claude_usd = (cost.claude_input + cost.claude_output
                       + cost.cache_read + cost.cache_write)
         row = (
-            at or time.time(), user_id or "", plan if plan in PLANS else "free",
+            at or time.time(), user_id or "", entitlements.normalise(plan),
             surface, usage.model, int(minutes or 0), usage.model_calls,
             usage.input_tokens, usage.output_tokens, usage.cache_read_tokens,
             usage.cache_write_tokens, usage.exa_searches, round(usage.exa_cost, 6),
@@ -381,8 +387,13 @@ class MeterStore:
 
         per_user: dict[str, dict] = {}
         for r in rows:
+            # Normalised on read as well as on write: a ledger written by an
+            # older version holds "paid", and a report that grouped on the raw
+            # string would drop those rows out of every tier bucket and make a
+            # paying listener vanish from the split.
             u = per_user.setdefault(r["user_id"], {
-                "user_id": r["user_id"], "plan": r["plan"], "episodes": 0,
+                "user_id": r["user_id"], "plan": entitlements.normalise(r["plan"]),
+                "episodes": 0,
                 "cost_usd": 0.0, "audio_seconds": 0.0, "minutes_requested": 0,
                 "cache_hits": 0, "input_tokens": 0, "output_tokens": 0,
                 "first_seen": r["at"], "last_seen": r["at"],
@@ -398,7 +409,7 @@ class MeterStore:
             # A listener who upgrades mid-window has rows under both plans.
             # The later stamp is the one that describes them now.
             if r["at"] >= u["last_seen"]:
-                u["plan"] = r["plan"]
+                u["plan"] = entitlements.normalise(r["plan"])
 
         listeners = list(per_user.values())
         for u in listeners:
@@ -467,6 +478,33 @@ class MeterStore:
             "fixed": fixed_costs(days),
         }
 
+    def anonymise(self, user_id: str, tombstone: str = "deleted") -> int:
+        """Detach a deleted listener from their cost rows, without erasing them.
+
+        The one store that is **not** emptied by account deletion, and the
+        reason is worth stating rather than discovering: these rows are the
+        financial record. What the GPU and the model actually cost in June is a
+        fact about the business, not personal data about a listener, and a
+        ledger with holes in it cannot be reconciled against a provider invoice
+        - which is the entire job it was built for (METERING.md).
+
+        So the *link* to the person is destroyed and the *amount* is kept. The
+        rows join the existing `""` bucket, which already holds every request
+        that arrived without a session, so no new category appears in the
+        report and no per-listener statistic gains a phantom entry.
+
+        This is the ordinary treatment of billing records under a deletion
+        request, but it is a decision rather than an oversight, so: anything
+        that would re-identify these rows must not be added to this table.
+        """
+        try:
+            cur = self._conn().execute(
+                "UPDATE usage SET user_id = ? WHERE user_id = ?",
+                (tombstone, user_id))
+            return cur.rowcount or 0
+        except Exception:
+            log.exception("could not anonymise usage rows for %r", user_id)
+            return 0
 
 def _spread(values: list[float]) -> dict:
     """Mean, median, the tail, and the worst one.

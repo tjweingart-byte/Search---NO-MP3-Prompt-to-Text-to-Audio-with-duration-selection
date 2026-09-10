@@ -13,12 +13,14 @@ three shuffles of one score would be one section wearing three hats:
     trending          what everyone is playing now      (global, not personal)
     followers         what co-listeners played           (social proxy - see below)
     from_history      closest to what you played         (exploitation)
+    might_like        adjacent to your taste             (exploration)
 
-A fourth signal, `rank_might_like` (exploration), is written and tested but no
-longer shown: the section it fed was removed from myFAM. It is the only signal
-that offered anything *outside* an established taste, so what remains is
-history, co-listeners and the crowd. Putting it back is one entry in SECTIONS
-and one in FILL_ORDER.
+Four now. `might_like` was removed from myFAM once and is back, because it is
+the only signal that offers anything *outside* an established taste - without
+it the page is history, co-listeners and the crowd, which is three ways of
+being told what you already like. It also serves the Explore New surface, and
+the two are deliberately the same ranking rather than two that could disagree
+about what is adjacent to somebody's taste.
 
 Everything is derived from an append-only event log, so there is no profile to
 keep in sync - a taste profile is a query, not a stored object.
@@ -241,7 +243,7 @@ BANK_BY_ID = {t.id: t for t in TOPIC_BANK}
 #: Sections are FILLED in this order and DISPLAYED in SECTIONS order. The two
 #: personal sections have the fewest eligible topics, so they choose first;
 #: trending can fall back to the whole bank and therefore chooses last.
-FILL_ORDER = ("from_history", "followers", "trending")
+FILL_ORDER = ("from_history", "followers", "might_like", "trending")
 
 #: Display order: personal first, global last. Someone opening myFAM is more
 #: likely to want what was chosen for them than what is popular, and the page
@@ -250,6 +252,13 @@ FILL_ORDER = ("from_history", "followers", "trending")
 #: choose their topics first.)
 SECTIONS = (
     ("from_history", "Made for you"),
+    # Exploration, immediately after exploitation. Deliberately not first: a
+    # returning listener opening myFAM most wants what was chosen *from* their
+    # taste, and leading with the rail that is deliberately outside it puts the
+    # least-confident shelf at the top of the page. Deliberately not last
+    # either - below the crowd is where a shelf goes to be ignored, and this is
+    # the only one that widens a taste rather than confirming it.
+    ("might_like", "Explore New"),
     ("followers", "Your circle is on this"),
     ("trending", "What FAM can't stop playing"),
 )
@@ -544,6 +553,28 @@ class EventStore:
             out.setdefault(topic_id, set()).add(user_id)
         return out
 
+    def forget(self, user_id: str) -> int:
+        """Erase everything this store holds for one listener.
+
+        Part of account deletion, which App Store guideline 5.1.1(v) requires
+        of any app that creates accounts. Each store implements its own rather
+        than a central deleter reaching into six databases by table name: that
+        deleter silently stops covering the seventh, and the failure is
+        invisible until somebody audits it.
+
+        Returns rows removed, so the endpoint can report what it did rather
+        than that it tried.
+        """
+        removed = 0
+        for table in ('events',):
+            try:
+                cur = self._conn().execute(
+                    f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+                removed += cur.rowcount or 0
+            except Exception:
+                log.exception("could not erase %s for %r", table, user_id)
+        return removed
+
 
 def taste(events: Iterable[Event], now: Optional[float] = None,
           interests: Iterable[str] = ()) -> dict[str, float]:
@@ -615,9 +646,10 @@ def rank_from_history(profile: dict[str, float], exclude: set[str]) -> list[Topi
 def rank_might_like(profile: dict[str, float], exclude: set[str]) -> list[Topic]:
     """Adjacent, not identical. Exploration.
 
-    Not currently shown - the section this filled was removed from myFAM. Kept
-    whole, with its tests, because it is the only signal that widens a taste
-    rather than confirming it; see the module docstring.
+    Serves two surfaces from one ranking: the Explore New rail on myFAM and
+    the Explore New screen behind it. One ranking rather than two, so the rail
+    and the page it opens cannot give a listener different answers to the same
+    question - the same reason the What's next popup reuses the feed's ranking.
 
     Their strongest tag is deliberately suppressed. Ranking purely on affinity
     gives four sections of the same thing and a listener who only ever hears
@@ -740,6 +772,8 @@ def build_feed(store: EventStore, user_id: str, now: Optional[float] = None,
             picks = rank_from_history(profile, seen)
         elif key == "followers":
             picks = rank_followers(store, user_id, mine, seen)
+        elif key == "might_like":
+            picks = rank_might_like(profile, seen)
         else:
             picks = rank_trending(store, now, seen)
         picked[key] = picks
@@ -788,6 +822,10 @@ def _empty_reason(key: str) -> str:
         "trending": "Nothing has been played yet today.",
         "followers": "Nobody you overlap with has listened yet.",
         "from_history": "Your first episode starts this one off.",
+        # Never actually empty in practice - with no profile at all this falls
+        # back to the whole bank - but a reason has to exist for the day the
+        # bank is smaller than the sections that draw from it.
+        "might_like": "Listen to a few episodes and this fills in.",
     }.get(key, "")
 
 

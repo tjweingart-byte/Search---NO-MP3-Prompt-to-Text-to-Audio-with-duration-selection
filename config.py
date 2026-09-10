@@ -494,6 +494,40 @@ class Settings:
     # a pace. Opening a tab fires several at once, so anything that throttles
     # a burst throttles correct use. 0 switches it off.
     read_limit_per_window: int = _env_int("READ_LIMIT_PER_WINDOW", 60)
+    # --- Public API -------------------------------------------------------
+    # Tier quotas. On by default, because the thing this protects is a GPU and
+    # a metered API key reachable by anyone who has the URL, and a ceiling that
+    # has to be switched on is a ceiling that is off on the machine nobody
+    # checked. `demo.sh` turns it off for a local demo and says so on the way
+    # past - judging the writing must not stop after five episodes.
+    enforce_quotas: bool = field(
+        default_factory=lambda: os.environ.get("ENFORCE_QUOTAS", "1")
+        not in ("0", "false", "False", "")
+    )
+    # Browser origins allowed to call this server, comma separated. Empty means
+    # same-origin only, which is what a localhost run and the bundled interface
+    # want. A native app is not a browser and sends no Origin, so it needs
+    # nothing here - this exists for a web client served from somewhere else.
+    #
+    # Deliberately not defaulted to "*": with credentialed requests the browser
+    # refuses that combination anyway, so a wildcard here would be a setting
+    # that looks permissive, is not, and hides the real fix.
+    api_origins: str = field(default_factory=lambda: os.environ.get("API_ORIGINS", ""))
+    # Audiences accepted from a Google or Apple identity token, comma
+    # separated: the iOS bundle id, and any web client id. Empty means that
+    # provider is switched off, and `/api/health` says so rather than the
+    # sign-in button failing at the point somebody presses it.
+    google_client_ids: str = field(
+        default_factory=lambda: os.environ.get("GOOGLE_CLIENT_IDS", ""))
+    apple_client_ids: str = field(
+        default_factory=lambda: os.environ.get("APPLE_CLIENT_IDS", ""))
+    # Where this server is reachable from the internet, for share links.
+    # Unset, a share still works and its link comes back relative - what must
+    # never happen is a link that names `localhost` being posted to LinkedIn,
+    # so nothing here invents a host. `sharing.py` says so, and the interface
+    # shows the share as not-yet-public rather than pretending.
+    public_base_url: str = field(
+        default_factory=lambda: os.environ.get("PUBLIC_BASE_URL", "").rstrip("/"))
     # How much *audio* must exist before the response starts. A quantity, not
     # a delay: at TARGET_WPM this is 3.75 words, so any ordinary opening
     # sentence satisfies it on the first chunk and it costs nothing. It exists

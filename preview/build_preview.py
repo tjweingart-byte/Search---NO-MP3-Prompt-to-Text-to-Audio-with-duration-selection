@@ -39,6 +39,7 @@ def load_fixtures() -> dict:
     import mixes as mixes_mod
     import preferences as prefs_mod
     import topics as topics_mod
+    import sharing
 
     bank = [t.as_dict() for t in topics_mod.TOPIC_BANK]
     by_id = {t["id"]: t for t in bank}
@@ -47,17 +48,29 @@ def load_fixtures() -> dict:
         return {"key": key, "title": title,
                 "topics": [by_id[i] for i in ids if i in by_id], "empty_reason": ""}
 
+    # Keyed by section rather than zipped against SECTIONS in order. The zip
+    # was silently truncating: a fourth section arrived and the fixture kept
+    # producing three, so the preview showed a page the code no longer builds
+    # and the smoke test blamed the interface. A missing key now fails loudly
+    # here, where the fixture is, instead of vanishing.
+    myfam_picks = {
+        "from_history": ["chip-supply", "energy-grid", "founder-motivation", "hormuz"],
+        "might_like": ["hollywood-comebacks", "food-supply", "anxiety-loop",
+                       "training-load", "pricing-psychology"],
+        "followers": ["stadium-money", "sleep-science", "space-race", "longevity-claims"],
+        "trending": ["ai-agents", "fed-next-move", "housing-market", "operator-ceos",
+                     "habits-research", "transfer-window"],
+    }
+    missing = [k for k, _ in topics_mod.SECTIONS if k not in myfam_picks]
+    if missing:
+        raise SystemExit(
+            f"the myFAM fixture has no topics for {', '.join(missing)} - add "
+            f"them to myfam_picks, or the preview shows fewer rails than the "
+            f"app builds")
     myfam = {
         "personalised": True,
-        "sections": [
-            section(key, title, ids)
-            for (key, title), ids in zip(topics_mod.SECTIONS, [
-                ["chip-supply", "energy-grid", "founder-motivation", "hormuz"],
-                ["stadium-money", "sleep-science", "space-race", "longevity-claims"],
-                ["ai-agents", "fed-next-move", "housing-market", "operator-ceos",
-                 "hollywood-comebacks", "habits-research"],
-            ])
-        ],
+        "sections": [section(key, title, myfam_picks[key])
+                     for key, title in topics_mod.SECTIONS],
     }
 
     def mix(mix_id, name, ids, typed=(), public=False):
@@ -227,6 +240,34 @@ def load_fixtures() -> dict:
             "reason": "Next to what you already listen to, rather than more of it.",
             "algo": topics_mod.ALGO_VERSION,
         },
+        # The shelf, with one folder and one episode already on it. Not empty,
+        # because an empty-state preview shows the empty state and nothing
+        # else - and the thing worth looking at on a phone is a row that has
+        # both states of an episode on it at once.
+        "/api/saved": {
+            "folders": [{"id": "fld_commute", "name": "Commute",
+                         "created": 0, "items": 1}],
+            "items": [
+                {"id": "sav_1", "folder_id": "fld_commute",
+                 "query": "why semiconductor manufacturing is concentrated",
+                 "minutes": 3, "title": "Who Actually Makes the World's Chips",
+                 "source": "player", "created": 0, "downloaded": True,
+                 "bytes": 7_900_000, "downloaded_at": 0, "last_played": 0,
+                 "estimated_bytes": 7_938_000},
+                {"id": "sav_2", "folder_id": "",
+                 "query": "how electricity grids handle intermittent renewable power",
+                 "minutes": 5, "title": "What the Grid Does When the Wind Drops",
+                 "source": "explore", "created": 0, "downloaded": False,
+                 "bytes": 0, "downloaded_at": 0, "last_played": 0,
+                 "estimated_bytes": 13_230_000},
+            ],
+            "downloads": {"used": 1, "limit": 3, "unlimited": False,
+                          "remaining": 2, "bytes": 7_900_000, "tier": "free"},
+        },
+        "/api/share/targets": {"targets": [
+            {"key": t.key, "label": t.label, "kind": t.kind,
+             "needs_image": t.needs_image, "max_chars": t.max_chars}
+            for t in sharing.TARGETS]},
     }
 
 
@@ -245,11 +286,19 @@ SHIM = """
   var mixes = JSON.parse(JSON.stringify(FIXTURES["/api/mixes"]));
   var nextMixId = 100;
 
-  function json(body, status) {
+  function json(body, status, extraHeaders) {
+    var headers = { "Content-Type": "application/json" };
+    Object.keys(extraHeaders || {}).forEach(function (k) {
+      headers[k] = extraHeaders[k];
+    });
     return Promise.resolve(new Response(JSON.stringify(body), {
-      status: status || 200, headers: { "Content-Type": "application/json" }
+      status: status || 200, headers: headers
     }));
   }
+
+  // The share wording, taken from sharing.py at build time so the preview and
+  // the server cannot show different copy for the same button.
+  var SHARE_TEMPLATES = __SHARE_TEMPLATES__;
 
   // Silence, streamed in chunks, so the player's buffering logic runs for real.
   function silence(seconds) {
@@ -347,6 +396,102 @@ SHIM = """
         patch.public !== undefined ? patch.public : current.public);
       return json(mixes.mixes[at]);
     }
+    // Save for later, and the download question it asks. Kept in memory for
+    // the life of the page: the point of the preview is the flow - press save,
+    // get asked, say yes, see the row change - and a fixture that never
+    // changed would show the first frame of it and stop.
+    if (path === "/api/saved" && method === "POST") {
+      var wanted = JSON.parse((init && init.body) || "{}");
+      var shelf = FIXTURES["/api/saved"];
+      var already = shelf.items.filter(function (i) {
+        return i.query === wanted.query && i.minutes === wanted.minutes; })[0];
+      var item = already || {
+        id: "sav_" + Math.random().toString(36).slice(2, 8),
+        folder_id: wanted.folder_id || "", query: wanted.query,
+        minutes: wanted.minutes || 3, title: wanted.title || wanted.query,
+        source: wanted.source || "", created: Date.now() / 1000,
+        downloaded: false, bytes: 0, downloaded_at: 0, last_played: 0,
+        estimated_bytes: (wanted.minutes || 3) * 60 * 22050 * 2
+      };
+      if (!already) shelf.items.unshift(item);
+      return json({ ok: true, item: item, downloads: shelf.downloads });
+    }
+    if (path === "/api/saved/folders" && method === "POST") {
+      var named = JSON.parse((init && init.body) || "{}");
+      var folder = { id: "fld_" + Math.random().toString(36).slice(2, 8),
+                     name: named.name, created: Date.now() / 1000, items: 0 };
+      FIXTURES["/api/saved"].folders.push(folder);
+      return json({ ok: true, folder: folder });
+    }
+    if (path.indexOf("/api/saved/") === 0) {
+      var parts = path.split("/");
+      var savedId = parts[3];
+      var verb = parts[4] || "";
+      var shelf2 = FIXTURES["/api/saved"];
+      var found = shelf2.items.filter(function (i) { return i.id === savedId; })[0];
+      if (verb === "download" && method === "POST") {
+        if (!found) return json({ error: "No such saved episode." }, 404);
+        if (shelf2.downloads.remaining <= 0) {
+          // The full shelf, which is the interesting half of this feature and
+          // the one a preview would otherwise never show.
+          return json({ error: "You are holding " + shelf2.downloads.used
+            + " downloaded episodes, which is all your plan keeps offline. "
+            + "Remove one to make room." }, 409, {
+              "X-FAM-Downloads": JSON.stringify({
+                candidates: shelf2.items.filter(function (i) { return i.downloaded; }),
+                status: shelf2.downloads })
+            });
+        }
+        found.downloaded = true;
+        found.bytes = found.estimated_bytes;
+        shelf2.downloads.used += 1;
+        shelf2.downloads.remaining -= 1;
+        return json({ ok: true, item: found, downloads: shelf2.downloads,
+                      stream: "/api/audio?q=" + encodeURIComponent(found.query)
+                              + "&minutes=" + found.minutes + "&fmt=pcm" });
+      }
+      if (verb === "download" && method === "DELETE") {
+        if (found && found.downloaded) {
+          found.downloaded = false; found.bytes = 0;
+          shelf2.downloads.used -= 1;
+          shelf2.downloads.remaining += 1;
+        }
+        return json({ ok: true, downloads: shelf2.downloads });
+      }
+      if (verb === "download" || verb === "played" || verb === "move") {
+        return json({ ok: true, item: found || null });
+      }
+      if (method === "DELETE") {
+        var where = shelf2.items.indexOf(found);
+        if (where >= 0) {
+          if (found.downloaded) {
+            shelf2.downloads.used -= 1; shelf2.downloads.remaining += 1;
+          }
+          shelf2.items.splice(where, 1);
+        }
+        return json({ ok: true });
+      }
+    }
+    // A share link and its per-destination wording. The URL is deliberately a
+    // preview one and `public` is false, so the sheet shows the same "this
+    // link is not public yet" line the real server shows without one set.
+    if (path === "/api/share" && method === "POST") {
+      var ep = JSON.parse((init && init.body) || "{}");
+      var link = "/s/preview";
+      var made = {};
+      SHARE_TEMPLATES.forEach(function (t) {
+        made[t.key] = {
+          target: t.key, label: t.label, kind: t.kind,
+          needs_image: t.needs_image, url: link, subject: "",
+          text: t.text.replace("{title}", ep.title || "A FAM episode")
+                      .replace("{question}", ep.query || "")
+                      .replace("{minutes}", ep.minutes || 3)
+                      .replace("{url}", link)
+        };
+      });
+      return json({ share: { id: "preview" }, url: link, public: false,
+                    card: "/api/share/card?share=preview", targets: made });
+    }
     if (FIXTURES[path]) return json(FIXTURES[path]);
     return json({ error: "Not available in the preview build." }, 404);
   };
@@ -417,7 +562,14 @@ def build() -> pathlib.Path:
     if n != 1:
         raise SystemExit("could not inline fam-audio.js - has the script tag changed?")
 
-    shim = SHIM.replace("__FIXTURES__", json.dumps(load_fixtures()))
+    sys.path.insert(0, str(ROOT))
+    import sharing
+
+    shim = (SHIM.replace("__FIXTURES__", json.dumps(load_fixtures()))
+               .replace("__SHARE_TEMPLATES__", json.dumps([
+                   {"key": t.key, "label": t.label, "kind": t.kind,
+                    "needs_image": t.needs_image, "text": t.template}
+                   for t in sharing.TARGETS])))
     # The shim has to be installed before the first line of app code runs, so
     # it goes immediately before the first inline <script> in the document.
     at = html.index("<script>")

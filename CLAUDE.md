@@ -239,14 +239,15 @@ another rule.
    which existed only to measure it. The interface now shows an honest wait
    that names what it is waiting for and counts the seconds.
 4. **myFAM is built; the taste model is deliberately crude.** `topics.py` ranks
-   a *shared* bank of ~28 topics three ways (trending / co-listener / history)
-   from an append-only event log. Tags come from keyword matching, not a
-   classifier. A fourth ranking, `rank_might_like` (adjacent to your taste),
-   is no longer on myFAM but is no longer hidden either: **it is what Explore
-   New serves** (PROBLEMS.md §70). It is the only signal offering anything
-   *outside* an established taste; the myFAM feed itself is still history,
-   co-listeners and the crowd, and one line in `SECTIONS` brings it back there
-   too. The intro's chosen interests now seed `taste`, so "Made for you" is no
+   a *shared* bank of ~28 topics **four** ways (history / exploration /
+   co-listener / trending) from an append-only event log. Tags come from
+   keyword matching, not a classifier. `rank_might_like` (adjacent to your
+   taste) is **back on myFAM as the Explore New rail**, and serves the Explore
+   New screen behind it from the same ranking - one ranking, two views, so the
+   rail and the surface it opens cannot disagree. It sits second, between
+   "Made for you" and the crowd: it is the only signal offering anything
+   *outside* an established taste, and without it the page is three ways of
+   being told what you already like. The intro's chosen interests now seed `taste`, so "Made for you" is no
    longer honestly empty on a listener's first open. The cost design is the load-bearing part: **one bank for
    everyone, personalisation in the ordering, not the inventory** - so two
    people tapping a tile share one script through `cache.py`.
@@ -254,14 +255,22 @@ another rule.
    a mix holds *topic ids*, never audio, so "At the gym" is the same subjects
    every day and a different set of episodes. Members are validated against the
    same shared bank, which is what keeps the cost design intact.
-6. **"What your followers are listening to" has no follow graph behind it.**
-   It ranks co-listener overlap. The heading promises a social network the app
-   does not have; either build follows or rename it.
-7. **Echoes are the social layer, and they generate nothing.** `social.py`
-   stores an echo as a row pointing at a query whose script already exists, so
-   pushing an episode to other listeners costs nothing. It changes what the
-   Explore card says, not what has to be written. Mixes are private by default
-   and appear on the profile once made public.
+6. ~~**"What your followers are listening to" has no follow graph behind it.**~~
+   - *the graph is built* (`SHARING.md`). Follows are asymmetric, like the copy
+   always said, and a **friend is the mutual case, derived and never stored** -
+   no request, no accept, no pending state to get wrong. What is still true:
+   the myFAM rail itself still ranks co-listener overlap rather than the graph.
+   That is now a one-line change rather than a missing feature, and worth
+   making deliberately - a new listener follows nobody, so a rail backed only
+   by follows would be empty on the day it matters most.
+7. **The social layer generates nothing, and now there is more of it.**
+   `social.py` stores an echo as a row pointing at a query whose script already
+   exists. `messages.py` does the same for a *directed* share - one person, one
+   episode - and `sharing.py` for a link posted outside FAM. All three cost one
+   row: sending an episode to ten people costs ten rows and not ten episodes,
+   because their taps are what synthesise audio, from one cached script,
+   against their own allowances. Mixes are private by default and appear on the
+   profile once made public.
 8. **Profile is a scaffold, deliberately.** `/api/profile` returns only what
    the event log actually holds - started, finished, open threads, subjects -
    because a profile page is the easiest place in an app to invent numbers,
@@ -283,9 +292,15 @@ another rule.
    the constraint that stopped this becoming a login screen in front of the
    product. What an account now buys is durability: mixes, chosen interests and
    language, and the weekly recap are gated on having one (PROBLEMS.md §70, and
-   the constraint above). What is genuinely missing: **password reset**, which needs
-   email delivery the app has no route to, so a forgotten password today means
-   a lost account. Say so before anyone relies on it.
+   the constraint above). Sign-up is now **email or phone**, and **Sign in with
+   Google or Apple** attach the same way - one account, several routes in,
+   keyed on `(provider, subject)` because Apple sends an address on the first
+   authorization only. What is genuinely missing is one capability behind three
+   gaps: **delivery**. Without it there is no **password reset**, no verified
+   address and no verified number - so a phone number is an identifier rather
+   than a second factor, and a forgotten password is still a lost account. Say
+   so before anyone relies on it; the provider sign-ins have no such gap, which
+   is a real argument for making them the prominent buttons in the app.
 
 ## Constraints that are settled — do not undo without discussing
 
@@ -293,6 +308,13 @@ another rule.
   and is played as it arrives. This is the core of the product. Compression
   (Opus over a stream) is compatible with it and is the right answer at scale;
   writing a *file* is not.
+  **Downloads do not break this, and the reason is worth stating** *(SHARING.md).*
+  The server still writes nothing: the episode streams exactly as it always
+  does, and the *client* keeps the bytes it was already sent - IndexedDB in the
+  browser, the app's container on iOS. No file exists server-side, nothing is
+  cached as audio, and no URL serves a stored episode. `saved.py` holds a
+  registry of what a listener claims to hold, never the audio - which is also
+  why that registry can drift, and why releasing a slot is one tap.
 - **Duration is a ceiling, not a quota.** *(Revised.)* The selected length still
   caps the episode and over-runs are trimmed, but a script that runs out of
   substance now ends early instead of being padded. Enforcing the number in both
@@ -326,6 +348,38 @@ another rule.
   `ACCOUNT_REQUIRED` in `app.py` holds the reasoning beside the code that
   enforces it. Nothing is lost by signing up late: a mix made before the gate
   is still under the same id and appears the moment credentials are attached.
+- **A tier is what you may spend, never what you may reach.** *(ACCOUNTS.md.)*
+  Three tiers - `free`, `plus`, `unlimited` - and the free one is a **daily
+  ceiling on episodes**, not a smaller product: `entitlements.FEATURES` gates
+  capabilities and today every tier has every one of them. The mechanism ships
+  on and the policy ships empty, because taking away something every listener
+  has always had is the "quietly worse than intended" failure again, with the
+  twist that here they notice and are right. Moving a feature behind a tier is
+  one line plus the test that fails when you do, which exists to make it a
+  decision somebody wrote down.
+  Two things counted separately, because they cost differently: an **episode**
+  may write a script, an **Explore replay** provably cannot. A cache hit is
+  still an episode - the listener heard one and the GPU made it. And the free
+  quota is **a budget shaped like a limit, not a security control**: an
+  anonymous session can be thrown away and a fresh allowance started, which is
+  the price of not putting a login in front of the first word.
+- **Save for later and download are different things, and stay different.**
+  *(SHARING.md.)* Saving is a **pointer** - question, length, folder - and
+  playing one needs the network like any other episode. Downloading is **the
+  audio on the device** and plays with the network off. A download is an
+  upgrade to a saved item rather than a second list, which is why saving asks
+  the question and why one row carries both states. The limit is per tier and
+  is a **standing capacity, not a rate** - a windowed counter would hand out a
+  fresh download allowance every morning and never require anybody to delete
+  anything. A full shelf is a 409 that **names what to clear**, least recently
+  played first, because a limit without a remedy is a dead end on a phone.
+- **FAM posts nothing to anybody's social account, and holds no token.**
+  *(SHARING.md.)* Every external destination is reached from the phone: the
+  share sheet, or a platform SDK hand-off where their app does the posting with
+  the person watching. The server produces the link, the wording and - for
+  Instagram and Snapchat, which cannot carry a link as text - the story card.
+  This is the correct shape rather than a stage: no OAuth to maintain, no
+  tokens to leak, and nothing that can post while somebody is asleep.
 - **A listener id is never accepted from the client.** It arrives from an
   HttpOnly session cookie the server minted, and `?user=` is ignored wherever
   it still appears. This replaced `famUserId()`, which made an id up with
@@ -334,6 +388,12 @@ another rule.
   full identity, because requiring a login to hear an episode would break the
   one-sentence spec. If you add an endpoint that touches per-listener data,
   take the id from `_listener(request)` and never from a parameter.
+  **Two carriers now, one rule.** A native client cannot rely on a cookie jar
+  iOS clears without asking, so the same server-minted token is also accepted
+  as `Authorization: Bearer` and stored in the Keychain. Nothing about the
+  trust changes - a bearer token is the same unforgeable, revocable string the
+  cookie holds - and a browser must never ask for one, because reading it in
+  script is what HttpOnly exists to prevent.
 - **Failures must be visible.** Silent success (empty audio, a placeholder tone,
   demo mode mistaken for live) has caused more lost time on this project than
   any real bug. Every fallback must announce itself. *(PROBLEMS.md §51: demo
@@ -380,6 +440,50 @@ another rule.
   deliberately does *not* buy: Anthropic's rate limits are per organisation, so
   a pool of keys is failover and not headroom, and the real ceiling on
   concurrency is the GPU, not the credential.
+
+## There is an iOS app coming, and it changes how to write everything else
+
+`IOS_APP.md` is the whole of it. The short version, because it constrains work
+that has nothing to do with the app:
+
+**The app is a native client of this API, not a web view around
+`static/index.html`.** A wrapper is rejected under guideline 4.2, and worse, iOS
+suspends a `WKWebView`'s `AudioContext` when the phone locks - so the episode
+would stop the moment it is most wanted.
+
+Three consequences for ordinary changes, starting now:
+
+- **Every feature is an API before it is a screen.** Behaviour that exists only
+  in the interface is behaviour that has to be written a second time.
+- **Nothing new on the audio path may assume a browser** - not `AudioContext`
+  semantics, not a cookie riding along on its own, not a relative URL.
+  `static/fam-audio.js` is the port's specification: the retained `Int16`
+  buffer, the clock-derived cursor and `TAIL_MARGIN` were all paid for in bugs.
+- **A listener id still never comes from the client, and `_listener` must be
+  satisfiable by a header**, not only by the cookie. A server-minted bearer
+  token in the Keychain keeps that rule exactly; `?user=` never does.
+
+The two settled constraints the app pressures, and how they resolve: **no MP3,
+no audio files still holds** - Opus over a stream is decoded as it arrives and
+writes nothing, so compression was always compatible and is now a prerequisite
+rather than a scale question (26 MB for a ten-minute episode on cellular). And
+**account deletion is missing**, which is a hard rejection for any app that
+creates accounts - and an interesting decision here, because the script cache
+is shared, so a deleted listener's scripts are other listeners' Explore feed.
+
+**The server side of that is now built** - `ACCOUNTS.md` is the whole of it.
+Email-or-phone sign-up, Sign in with Google and Apple, account settings,
+in-app deletion, three tiers with enforced per-window limits, bearer sessions
+beside the cookie, and every endpoint reachable at `/api/v1/...`. What is not
+built, and is not an oversight: **payment** (nothing sets a paid plan yet, and
+the enforcement path is worth trusting before money moves) and **delivery**
+(no email or SMS, so no password reset and no verified address or number).
+
+What has to happen, in order: hear an episode in the production voice (open
+problem #1 - everything else is scaffolding around an unlistened product);
+deploy the API somewhere with a GPU that is up when a phone asks; then a
+throwaway Swift spike that plays one streamed episode with the phone locked,
+which is the go/no-go for all of it.
 
 ## Decisions that will shape the next phase
 
@@ -455,9 +559,12 @@ not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
 `PROBLEMS.md` for every problem hit and its cause (newest last — §68-73 are the
-most recent), `DEVELOPMENT.md` for the loop, and `CREDENTIALS.md` for how a
-machine gets its API keys without anybody typing one, and `METERING.md` for
-what a listener costs and how the report says so.
+most recent), `DEVELOPMENT.md` for the loop, `CREDENTIALS.md` for how a
+machine gets its API keys without anybody typing one, `METERING.md` for
+what a listener costs and how the report says so, `ACCOUNTS.md` for identity,
+tiers, quotas and the public API, `SHARING.md` for friends, sharing, saving
+and downloads, and `IOS_APP.md` for the app version this is now being written
+towards.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
 and the second one is not optional:
@@ -467,7 +574,7 @@ and the second one is not optional:
 
 Then run `./dev.sh check` before changing anything, so you know the baseline is
 green rather than assuming it. A complete run ends with `all checks passed` and
-twenty-one named smoke behaviours; anything less means something was skipped, and
+twenty-four named smoke behaviours; anything less means something was skipped, and
 `dev.sh` now says so out loud (PROBLEMS.md §49).
 
 What is true but not obvious from the code:

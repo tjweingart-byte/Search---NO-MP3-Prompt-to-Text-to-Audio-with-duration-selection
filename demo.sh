@@ -184,4 +184,19 @@ cat <<'TOUR'
 TOUR
 printf '\n'
 
+# Tier limits are on by default, because what is behind them is a GPU and a
+# metered key. They are wrong for a demo: five episodes is not enough to judge
+# the writing, and being told to come back tomorrow halfway through showing
+# somebody the product is the worst possible moment to meet a limit.
+#
+# So they are off here, and said out loud - a fallback that does not announce
+# itself is the failure this project has lost the most time to, and "the limits
+# do not seem to work" would be an afternoon spent on a server that was
+# configured correctly.
+if [ -z "${ENFORCE_QUOTAS:-}" ]; then
+  export ENFORCE_QUOTAS=0
+  printf '  \033[2mTier limits are off for this demo (ENFORCE_QUOTAS=0). '
+  printf 'The server enforces them by default.\033[0m\n\n'
+fi
+
 exec $PY -m uvicorn app:app --host "${HOST:-0.0.0.0}" --port "$PORT"
