@@ -986,6 +986,73 @@
     border:1px dashed var(--border-strong); font-size:12.5px; line-height:1.55;
     color:var(--text-muted); }
   .locked-acts{ display:flex; gap:9px; margin-top:13px; }
+  /* -------- Save for Later, and the offline shelf --------
+     Two states on one row, because they are two states of one thing: an
+     episode is saved, and it may also be held on the device. A separate
+     "downloads" list would put the same episode in two places and make
+     removing it from one of them ambiguous. */
+  .sv-folders{ display:flex; gap:7px; overflow-x:auto; padding:0 18px 12px;
+    -webkit-overflow-scrolling:touch; }
+  .sv-folders::-webkit-scrollbar{ display:none; }
+  .sv-chip{ flex:0 0 auto; padding:7px 12px; border-radius:14px; cursor:pointer;
+    background:var(--surface); border:1px solid var(--border);
+    font-family:'Space Grotesk', sans-serif; font-size:10.5px; color:var(--text-muted);
+    white-space:nowrap; }
+  .sv-chip.active{ background:var(--copper); border-color:var(--copper); color:var(--ink);
+    font-weight:600; }
+  .sv-chip.add{ color:var(--copper); }
+  .sv-row{ display:flex; align-items:center; gap:11px; padding:12px 18px;
+    border-bottom:1px solid var(--border); cursor:pointer; }
+  .sv-row:active{ background:var(--surface); }
+  .sv-art{ width:38px; height:38px; flex:0 0 38px; border-radius:10px;
+    background:var(--surface-2); color:var(--copper);
+    display:flex; align-items:center; justify-content:center; }
+  .sv-main{ flex:1; min-width:0; }
+  .sv-title{ font-family:'Fraunces', serif; font-weight:500; font-size:12.5px;
+    color:var(--text); margin-bottom:3px; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .sv-meta{ font-family:'JetBrains Mono', monospace; font-size:8px;
+    color:var(--text-faint); letter-spacing:0.04em; }
+  .sv-dl{ color:var(--sage); }
+  .sv-x{ color:var(--text-faint); padding:6px; }
+  .sv-empty{ padding:30px 18px; text-align:center; color:var(--text-faint);
+    font-family:'Space Grotesk', sans-serif; font-size:11px; line-height:1.6; }
+  .sv-bar{ margin:0 18px 12px; padding:9px 12px; border-radius:11px;
+    background:var(--surface); border:1px solid var(--border);
+    font-family:'JetBrains Mono', monospace; font-size:8px; color:var(--text-muted);
+    letter-spacing:0.04em; }
+
+  /* -------- Share sheet: inside FAM, and outside it --------
+     One sheet with two halves rather than two sheets, because "share this"
+     is one intent and the listener should not have to know which kind of
+     sharing they want before they can start. */
+  .sh-grid{ display:grid; grid-template-columns:repeat(4, 1fr); gap:10px 6px;
+    margin-top:4px; }
+  .sh-target{ display:flex; flex-direction:column; align-items:center; gap:5px;
+    cursor:pointer; }
+  .sh-target:active{ transform:scale(0.94); }
+  .sh-circ{ width:40px; height:40px; border-radius:50%; background:var(--surface-2);
+    border:1px solid var(--border); display:flex; align-items:center;
+    justify-content:center; color:var(--text); font-family:'Space Grotesk', sans-serif;
+    font-weight:700; font-size:12px; }
+  .sh-name{ font-family:'JetBrains Mono', monospace; font-size:7.5px;
+    color:var(--text-faint); text-align:center; letter-spacing:0.02em; }
+  .sh-note{ font-family:'JetBrains Mono', monospace; font-size:7.5px;
+    color:var(--coral); margin-top:10px; line-height:1.6; }
+
+  /* -------- The download question --------
+     Asked the moment something is saved, because that is when the listener is
+     thinking about it - and answered in one tap either way. */
+  .dl-size{ font-family:'JetBrains Mono', monospace; font-size:9px;
+    color:var(--text-muted); margin:-4px 0 14px; letter-spacing:0.04em; }
+  .dl-full{ font-family:'Space Grotesk', sans-serif; font-size:11px;
+    color:var(--text-muted); line-height:1.6; margin-bottom:10px; }
+  .dl-cand{ display:flex; align-items:center; gap:9px; padding:8px 0;
+    border-top:1px solid var(--border); cursor:pointer; }
+  .dl-cand-title{ flex:1; font-family:'Space Grotesk', sans-serif; font-size:11px;
+    color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dl-cand-free{ font-family:'JetBrains Mono', monospace; font-size:8px;
+    color:var(--copper); }
 </style>
 
 <style>
@@ -1266,6 +1333,20 @@
         </div>
       </section>
 
+      <!-- ============ SAVE FOR LATER ============
+           Save for later is a pointer and needs the network; a download is the
+           audio on this device and does not. One list shows both, because they
+           are two states of one episode - see saved.py. -->
+      <section class="screen" id="screen-saved">
+        <div class="back-row">
+          <span class="back" onclick="goBack()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6l-6 6 6 6"/><path d="M10 6l-6 6 6 6"/></svg></span>
+          <h2>Save for Later</h2>
+        </div>
+        <div class="sv-bar" id="svDownloadBar">Loading&hellip;</div>
+        <div class="sv-folders" id="svFolders"></div>
+        <div class="scroll" id="svBody"></div>
+      </section>
+
       <!-- ============ HOME ============ -->
       <section class="screen" id="screen-home">
         <div class="scroll" style="display:flex; flex-direction:column;">
@@ -1431,6 +1512,7 @@
             <div class="speed-len-pill" id="speedLenPill" onclick="openSpeedLengthModal()">1.2× · 3 min</div>
             <span class="pt-icon" onclick="openShareModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/></svg></span>
             <span class="pt-icon" id="playerEcho" data-echo onclick="toggleEcho()" title="Echo to your friends"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg></span>
+            <span class="pt-icon" id="playerSave" onclick="saveForLater()" title="Save for later"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h12a1 1 0 011 1v15l-7-4-7 4V5a1 1 0 011-1z"/></svg></span>
             <span class="pt-icon" id="ccIcon" onclick="toggleCC()"><span style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;">CC</span></span>
           </div>
         </div>
@@ -1451,6 +1533,7 @@
             <div class="sb-icon" onclick="toggleFavorite(this)"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M12 21s-7.5-4.9-10-9.3C.4 8.5 2 5 5.6 5c2 0 3.5 1.1 4.4 2.6C11 6.1 12.4 5 14.4 5 18 5 19.6 8.5 18 11.7 15.5 16.1 12 21 12 21z"/></svg></div><div class="lbl">Favorite</div></div>
             <div class="sb-icon" onclick="openShareModal()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/></svg></div><div class="lbl">Share</div></div>
             <div class="sb-icon echo-icon" id="echoIcon" data-echo onclick="toggleEcho()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg></div><div class="lbl">Echo</div></div>
+            <div class="sb-icon" onclick="saveForLater()"><div class="circ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--paper)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h12a1 1 0 011 1v15l-7-4-7 4V5a1 1 0 011-1z"/></svg></div><div class="lbl">Save</div></div>
             <div class="sb-icon" id="paCcIcon" onclick="paToggleCC()"><div class="circ"><span style="font-family:'JetBrains Mono',monospace;font-size:8.5px;font-weight:700;color:var(--paper);opacity:0.55;">CC</span></div><div class="lbl">Captions<br>off</div></div>
           </div>
         </div>
@@ -1496,6 +1579,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
             </div>
             <div class="reel-btn echo-btn" id="reelEcho" data-echo onclick="toggleEcho()" title="Echo to your friends"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 018-8h5"/><path d="M14 1l3 3-3 3"/><path d="M20 12a8 8 0 01-8 8H7"/><path d="M10 23l-3-3 3-3"/></svg><span>echo</span></div>
+            <div class="reel-btn" onclick="saveForLater()" title="Save for later"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h12a1 1 0 011 1v15l-7-4-7 4V5a1 1 0 011-1z"/></svg><span>save</span></div>
             <div class="reel-btn" onclick="skipAudio(15)" title="Forward 15 seconds">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M13 18l8-6-8-6v4H4v4h9z"/></svg>
               <span>15</span>
@@ -1552,11 +1636,19 @@
               <div class="yf-tile-name">Weekly Recap</div>
               <div class="yf-tile-sub" id="yfRecapSub">Your week, in one episode</div>
             </div>
-            <div class="yf-tile" onclick="openExploreNew()">
-              <div class="yf-tile-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg></div>
-              <div class="yf-tile-name">Explore New</div>
-              <div class="yf-tile-sub">Next to your taste, not more of it</div>
+            <div class="yf-tile" onclick="openSaved()">
+              <div class="yf-tile-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h12a1 1 0 011 1v15l-7-4-7 4V5a1 1 0 011-1z"/></svg></div>
+              <div class="yf-tile-name">Save for Later</div>
+              <div class="yf-tile-sub" id="yfSavedSub">Episodes you kept</div>
             </div>
+          </div>
+          <!-- Explore New lost its tile to Save for Later, and is kept
+               reachable here rather than orphaned: it is the only surface that
+               offers anything OUTSIDE an established taste (CLAUDE.md open
+               problem #4), so deleting its only entry point would quietly
+               remove the app's whole discovery path. -->
+          <div class="sv-bar" onclick="openExploreNew()" style="cursor:pointer;">
+            EXPLORE NEW &middot; NEXT TO YOUR TASTE, NOT MORE OF IT &rsaquo;
           </div>
           <div class="search-bar" onclick="toast('Search messages (demo only)')">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -1687,8 +1779,33 @@
           </div>
           <div class="gc-label" style="margin-bottom:8px;">Your FAM contacts</div>
           <div class="share-contacts" id="shareContacts"></div>
+          <!-- Outside FAM. Nothing is posted from here: the phone's share
+               sheet and each platform's own app do the posting, with the
+               person looking at it - so FAM holds no token for any of them.
+               See sharing.py. -->
+          <div class="gc-label" style="margin:16px 0 8px;">Anywhere else</div>
+          <div class="sh-grid" id="shareTargets"></div>
+          <div class="sh-note" id="shareNote" hidden></div>
           <div class="modal-btns" style="margin-top:16px;">
             <button class="modal-btn ghost" style="flex:1;" onclick="closeShareModal()">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Asked the moment something is saved. Saving needs the network to
+           play; downloading does not, and that difference is the whole reason
+           this popup exists rather than one button doing both silently. -->
+      <div class="modal-overlay" id="downloadOverlay" onclick="if(event.target===this) closeDownloadModal()">
+        <div class="modal-card">
+          <div class="modal-title" id="dlTitle">Saved. Download it too?</div>
+          <div class="dl-size" id="dlSize"></div>
+          <div id="dlFullBox" hidden>
+            <div class="dl-full" id="dlFullText"></div>
+            <div id="dlCandidates"></div>
+          </div>
+          <div class="modal-btns">
+            <button class="modal-btn ghost" onclick="closeDownloadModal()">Not now</button>
+            <button class="modal-btn primary" id="dlConfirmBtn" onclick="confirmDownload()">Download</button>
           </div>
         </div>
       </div>
@@ -1728,7 +1845,7 @@
    this keeps it in localStorage instead. That is the only place the demo
    diverges, and the badge says so. ------------------------------------- */
 (function () {
-  var FIXTURES = {"/api/myfam": {"personalised": true, "sections": [{"key": "from_history", "title": "Made for you", "topics": [{"id": "chip-supply", "title": "Who Actually Makes the World's Chips", "subtitle": "Fabs, bottlenecks, and why it is so concentrated.", "query": "why semiconductor manufacturing is concentrated in so few places", "tags": ["tech", "world"], "icon": "tech"}, {"id": "energy-grid", "title": "What the Grid Does When the Wind Drops", "subtitle": "Storage, baseload, and the balancing act.", "query": "how electricity grids handle intermittent renewable power", "tags": ["science", "money"], "icon": "rocket"}, {"id": "founder-motivation", "title": "Where Motivation Actually Comes From", "subtitle": "Progress, evidence, and the founder's problem.", "query": "finding the motivation for my startup", "tags": ["health", "business"], "icon": "leaf"}, {"id": "hormuz", "title": "The Two-Mile Lane That Moves the Oil Price", "subtitle": "Chokepoints, insurance, and why geography decides.", "query": "why the Strait of Hormuz moves the oil price", "tags": ["world", "money"], "icon": "business"}], "empty_reason": ""}, {"key": "followers", "title": "Your circle is on this", "topics": [{"id": "stadium-money", "title": "Who Really Pays for a Stadium", "subtitle": "Public money, private returns, and the argument.", "query": "who actually pays for new sports stadiums", "tags": ["sports", "money"], "icon": "business"}, {"id": "sleep-science", "title": "What We Actually Know About Sleep", "subtitle": "The research, the myths, what isn't settled.", "query": "what sleep research actually establishes", "tags": ["health", "science"], "icon": "leaf"}, {"id": "space-race", "title": "Inside the New Space Race", "subtitle": "Reusable rockets, private missions, who's winning.", "query": "how reusable rockets changed the economics of spaceflight", "tags": ["science", "business"], "icon": "rocket"}, {"id": "longevity-claims", "title": "Sorting the Longevity Claims", "subtitle": "What holds up, what is marketing.", "query": "which longevity interventions have real evidence", "tags": ["health", "science"], "icon": "leaf"}], "empty_reason": ""}, {"key": "trending", "title": "What FAM can't stop playing", "topics": [{"id": "ai-agents", "title": "Why Everyone Is Talking About AI Agents", "subtitle": "What they are, how they work, why now.", "query": "what AI agents are and why they matter now", "tags": ["tech"], "icon": "tech"}, {"id": "fed-next-move", "title": "The Fed's Next Move, Explained", "subtitle": "Rates, inflation data, and what markets expect.", "query": "what the Federal Reserve is likely to do about interest rates", "tags": ["money"], "icon": "business"}, {"id": "housing-market", "title": "Why Houses Cost What They Cost", "subtitle": "Supply, rates, and the arguments that repeat.", "query": "what actually drives house prices", "tags": ["money"], "icon": "business"}, {"id": "operator-ceos", "title": "Why Founders Are Taking Back Control", "subtitle": "Leadership, product, and the rise of operator CEOs.", "query": "why boards are keeping founders as CEO", "tags": ["business"], "icon": "business"}, {"id": "hollywood-comebacks", "title": "Inside the Best Hollywood Comebacks", "subtitle": "The stories, the risks, the second acts.", "query": "how Hollywood comeback stories actually happen", "tags": ["culture"], "icon": "camera"}, {"id": "habits-research", "title": "The Habits That Actually Change Your Life", "subtitle": "What the research says, and what people ignore.", "query": "what habit research actually shows about lasting change", "tags": ["health"], "icon": "leaf"}], "empty_reason": ""}]}, "/api/mixes": {"mixes": [{"id": "m1", "name": "Morning", "items": [{"id": "fed-next-move", "title": "The Fed's Next Move, Explained", "subtitle": "Rates, inflation data, and what markets expect.", "query": "what the Federal Reserve is likely to do about interest rates", "tags": ["money"], "icon": "business", "custom": false}, {"id": "ai-agents", "title": "Why Everyone Is Talking About AI Agents", "subtitle": "What they are, how they work, why now.", "query": "what AI agents are and why they matter now", "tags": ["tech"], "icon": "tech", "custom": false}, {"id": "morning-mindset", "title": "What to Do With the First Ten Minutes", "subtitle": "Why waking up feels the way it does.", "query": "a good mindset for when I wake up in the morning", "tags": ["health"], "icon": "leaf", "custom": false}], "topics": [{"id": "fed-next-move", "title": "The Fed's Next Move, Explained", "subtitle": "Rates, inflation data, and what markets expect.", "query": "what the Federal Reserve is likely to do about interest rates", "tags": ["money"], "icon": "business", "custom": false}, {"id": "ai-agents", "title": "Why Everyone Is Talking About AI Agents", "subtitle": "What they are, how they work, why now.", "query": "what AI agents are and why they matter now", "tags": ["tech"], "icon": "tech", "custom": false}, {"id": "morning-mindset", "title": "What to Do With the First Ten Minutes", "subtitle": "Why waking up feels the way it does.", "query": "a good mindset for when I wake up in the morning", "tags": ["health"], "icon": "leaf", "custom": false}], "topic_ids": ["fed-next-move", "ai-agents", "morning-mindset"], "custom_count": 0, "public": true, "created_at": 0, "updated_at": 0}, {"id": "m2", "name": "At the gym", "items": [{"id": "training-load", "title": "How Athletes Are Actually Trained Now", "subtitle": "Load, recovery, and the data behind it.", "query": "how modern athletic training load is managed", "tags": ["sports", "health"], "icon": "sports", "custom": false}, {"id": "the-trade", "title": "The Trade That Changed Everything", "subtitle": "Front offices, cap space, and deals nobody saw.", "query": "how a single trade reshapes a sports franchise", "tags": ["sports"], "icon": "sports", "custom": false}, {"id": "habits-research", "title": "The Habits That Actually Change Your Life", "subtitle": "What the research says, and what people ignore.", "query": "what habit research actually shows about lasting change", "tags": ["health"], "icon": "leaf", "custom": false}], "topics": [{"id": "training-load", "title": "How Athletes Are Actually Trained Now", "subtitle": "Load, recovery, and the data behind it.", "query": "how modern athletic training load is managed", "tags": ["sports", "health"], "icon": "sports", "custom": false}, {"id": "the-trade", "title": "The Trade That Changed Everything", "subtitle": "Front offices, cap space, and deals nobody saw.", "query": "how a single trade reshapes a sports franchise", "tags": ["sports"], "icon": "sports", "custom": false}, {"id": "habits-research", "title": "The Habits That Actually Change Your Life", "subtitle": "What the research says, and what people ignore.", "query": "what habit research actually shows about lasting change", "tags": ["health"], "icon": "leaf", "custom": false}], "topic_ids": ["training-load", "the-trade", "habits-research"], "custom_count": 0, "public": false, "created_at": 0, "updated_at": 0}, {"id": "m3", "name": "Wind down", "items": [{"id": "sleep-science", "title": "What We Actually Know About Sleep", "subtitle": "The research, the myths, what isn't settled.", "query": "what sleep research actually establishes", "tags": ["health", "science"], "icon": "leaf", "custom": false}, {"id": "anxiety-loop", "title": "Why Worry Feels Productive", "subtitle": "The loop, and what actually interrupts it.", "query": "why worrying feels useful when it is not", "tags": ["health"], "icon": "leaf", "custom": false}, {"id": "q:whatmycoun", "title": "what my council is doing about the high street", "query": "what my council is doing about the high street", "custom": true, "subtitle": "Added by you", "icon": "leaf"}], "topics": [{"id": "sleep-science", "title": "What We Actually Know About Sleep", "subtitle": "The research, the myths, what isn't settled.", "query": "what sleep research actually establishes", "tags": ["health", "science"], "icon": "leaf", "custom": false}, {"id": "anxiety-loop", "title": "Why Worry Feels Productive", "subtitle": "The loop, and what actually interrupts it.", "query": "why worrying feels useful when it is not", "tags": ["health"], "icon": "leaf", "custom": false}], "topic_ids": ["sleep-science", "anxiety-loop"], "custom_count": 1, "public": false, "created_at": 0, "updated_at": 0}], "starters": [{"name": "Morning", "topic_ids": ["fed-next-move", "ai-agents", "morning-mindset"]}, {"name": "At the gym", "topic_ids": ["training-load", "the-trade", "habits-research"]}, {"name": "Wind down", "topic_ids": ["sleep-science", "anxiety-loop", "hollywood-comebacks"]}]}, "/api/topics": {"topics": [{"id": "nil-arms-race", "title": "The New College Football Arms Race", "subtitle": "NIL money, facilities, and the new power brokers.", "query": "how NIL money changed college football recruiting", "tags": ["sports", "money"], "icon": "sports"}, {"id": "operator-ceos", "title": "Why Founders Are Taking Back Control", "subtitle": "Leadership, product, and the rise of operator CEOs.", "query": "why boards are keeping founders as CEO", "tags": ["business"], "icon": "business"}, {"id": "ai-agents", "title": "Why Everyone Is Talking About AI Agents", "subtitle": "What they are, how they work, why now.", "query": "what AI agents are and why they matter now", "tags": ["tech"], "icon": "tech"}, {"id": "hollywood-comebacks", "title": "Inside the Best Hollywood Comebacks", "subtitle": "The stories, the risks, the second acts.", "query": "how Hollywood comeback stories actually happen", "tags": ["culture"], "icon": "camera"}, {"id": "golf-evolution", "title": "The Quiet Evolution of Golf", "subtitle": "New players. New formats. Same obsession.", "query": "how professional golf formats are changing", "tags": ["sports"], "icon": "golf"}, {"id": "habits-research", "title": "The Habits That Actually Change Your Life", "subtitle": "What the research says, and what people ignore.", "query": "what habit research actually shows about lasting change", "tags": ["health"], "icon": "leaf"}, {"id": "fed-next-move", "title": "The Fed's Next Move, Explained", "subtitle": "Rates, inflation data, and what markets expect.", "query": "what the Federal Reserve is likely to do about interest rates", "tags": ["money"], "icon": "business"}, {"id": "space-race", "title": "Inside the New Space Race", "subtitle": "Reusable rockets, private missions, who's winning.", "query": "how reusable rockets changed the economics of spaceflight", "tags": ["science", "business"], "icon": "rocket"}, {"id": "song-breaks-internet", "title": "How One Song Breaks the Internet", "subtitle": "Playlists, algorithms, and the new path to a hit.", "query": "how a song becomes a hit through playlists and short video", "tags": ["culture", "tech"], "icon": "music"}, {"id": "restaurant-scene", "title": "The Restaurants Everyone's Talking About", "subtitle": "Openings, closings, and where the lines form.", "query": "why some restaurants become impossible to book", "tags": ["culture"], "icon": "food"}, {"id": "the-trade", "title": "The Trade That Changed Everything", "subtitle": "Front offices, cap space, and deals nobody saw.", "query": "how a single trade reshapes a sports franchise", "tags": ["sports"], "icon": "sports"}, {"id": "sleep-science", "title": "What We Actually Know About Sleep", "subtitle": "The research, the myths, what isn't settled.", "query": "what sleep research actually establishes", "tags": ["health", "science"], "icon": "leaf"}, {"id": "chip-supply", "title": "Who Actually Makes the World's Chips", "subtitle": "Fabs, bottlenecks, and why it is so concentrated.", "query": "why semiconductor manufacturing is concentrated in so few places", "tags": ["tech", "world"], "icon": "tech"}, {"id": "hormuz", "title": "The Two-Mile Lane That Moves the Oil Price", "subtitle": "Chokepoints, insurance, and why geography decides.", "query": "why the Strait of Hormuz moves the oil price", "tags": ["world", "money"], "icon": "business"}, {"id": "morning-mindset", "title": "What to Do With the First Ten Minutes", "subtitle": "Why waking up feels the way it does.", "query": "a good mindset for when I wake up in the morning", "tags": ["health"], "icon": "leaf"}, {"id": "founder-motivation", "title": "Where Motivation Actually Comes From", "subtitle": "Progress, evidence, and the founder's problem.", "query": "finding the motivation for my startup", "tags": ["health", "business"], "icon": "leaf"}, {"id": "housing-market", "title": "Why Houses Cost What They Cost", "subtitle": "Supply, rates, and the arguments that repeat.", "query": "what actually drives house prices", "tags": ["money"], "icon": "business"}, {"id": "longevity-claims", "title": "Sorting the Longevity Claims", "subtitle": "What holds up, what is marketing.", "query": "which longevity interventions have real evidence", "tags": ["health", "science"], "icon": "leaf"}, {"id": "streaming-economics", "title": "Why Streaming Keeps Getting Worse", "subtitle": "Licensing, churn, and the maths underneath.", "query": "why streaming services keep raising prices and losing shows", "tags": ["culture", "business"], "icon": "camera"}, {"id": "election-mechanics", "title": "How a Close Election Is Actually Called", "subtitle": "Counting, models, and why it takes days.", "query": "how news organisations decide to call an election", "tags": ["world"], "icon": "business"}, {"id": "energy-grid", "title": "What the Grid Does When the Wind Drops", "subtitle": "Storage, baseload, and the balancing act.", "query": "how electricity grids handle intermittent renewable power", "tags": ["science", "money"], "icon": "rocket"}, {"id": "attention-economy", "title": "The Fight for Fifteen Seconds", "subtitle": "How short video rewired everything downstream.", "query": "how short-form video changed the media business", "tags": ["tech", "culture"], "icon": "music"}, {"id": "transfer-window", "title": "How a Transfer Window Actually Works", "subtitle": "Agents, deadlines, and the money underneath.", "query": "how football transfer deals actually get done", "tags": ["sports", "money"], "icon": "sports"}, {"id": "stadium-money", "title": "Who Really Pays for a Stadium", "subtitle": "Public money, private returns, and the argument.", "query": "who actually pays for new sports stadiums", "tags": ["sports", "money"], "icon": "business"}, {"id": "anxiety-loop", "title": "Why Worry Feels Productive", "subtitle": "The loop, and what actually interrupts it.", "query": "why worrying feels useful when it is not", "tags": ["health"], "icon": "leaf"}, {"id": "pricing-psychology", "title": "Why Everything Ends in Ninety-Nine", "subtitle": "What the pricing research does and does not show.", "query": "what the evidence says about psychological pricing", "tags": ["business", "money"], "icon": "business"}, {"id": "food-supply", "title": "How Food Gets to a City", "subtitle": "Logistics, margins, and the fragile bits.", "query": "how a city's food supply chain actually works", "tags": ["world", "business"], "icon": "food"}, {"id": "training-load", "title": "How Athletes Are Actually Trained Now", "subtitle": "Load, recovery, and the data behind it.", "query": "how modern athletic training load is managed", "tags": ["sports", "health"], "icon": "sports"}]}, "/api/attach": {"id": "preview-attachment", "kind": "document", "name": "Attached file", "chars": 4200, "url": "", "preview": "A stand-in for extracted text."}, "/api/explore": {"episodes": [{"query": "why the strait of hormuz moves the oil price", "title": "Why the strait of hormuz moves the oil price", "minutes": 3, "plays": 4, "thread": "why the shipping lanes run through Omani water", "age_seconds": 140, "echoed_by": ""}, {"query": "what habit research actually shows about lasting change", "title": "What habit research actually shows about lasting change", "minutes": 2, "plays": 2, "thread": "why streaks break in the third week", "age_seconds": 900, "echoed_by": ""}, {"query": "how reusable rockets changed the economics of spaceflight", "title": "How reusable rockets changed the economics of spaceflight", "minutes": 5, "plays": 7, "thread": "what happens when launch gets cheaper than shipping", "age_seconds": 4000, "echoed_by": "Rachel Solomon"}, {"query": "a good mindset for when I wake up in the morning", "title": "A good mindset for when I wake up in the morning", "minutes": 1, "plays": 3, "thread": "why a flat morning cortisol curve might mean burnout", "age_seconds": 9000, "echoed_by": ""}, {"query": "what the Federal Reserve is likely to do about interest rates", "title": "What the Federal Reserve is likely to do about interest rates", "minutes": 3, "plays": 9, "thread": "who actually loses when rates stay high", "age_seconds": 30000, "echoed_by": ""}, {"query": "how a city's food supply chain actually works", "title": "How a city's food supply chain actually works", "minutes": 4, "plays": 1, "thread": "the three days of stock nobody plans for", "age_seconds": 100000, "echoed_by": ""}]}, "/api/next": {"thread": "why the shipping lanes run through Omani water"}, "/api/godeeper": {"threads": [{"thread": "why the shipping lanes run through Omani water", "title": "The Two-Mile Lane That Moves the Oil", "from_title": "Why the Strait of Hormuz Moves the Oil Price", "at": 0}, {"thread": "how NIL money changed college football recruiting", "title": "The New College Football Arms Race", "from_title": "Who Really Pays for a Stadium", "at": 0}]}, "/api/voices": {"voices": [{"id": "piper:en_GB-alba-medium", "label": "Alba (GB, medium)", "engine": "piper", "detail": "neural, ships with the app"}, {"id": "piper:en_GB-northern_english_male-medium", "label": "Northern_English_Male (GB, medium)", "engine": "piper", "detail": "neural, ships with the app"}, {"id": "piper:en_US-amy-medium", "label": "Amy (US, medium)", "engine": "piper", "detail": "neural, ships with the app"}, {"id": "piper:en_US-lessac-medium", "label": "Lessac (US, medium)", "engine": "piper", "detail": "neural, ships with the app"}, {"id": "say:Samantha", "label": "Samantha", "engine": "say", "detail": "en-US"}, {"id": "say:Daniel", "label": "Daniel", "engine": "say", "detail": "en-GB"}, {"id": "say:Karen", "label": "Karen", "engine": "say", "detail": "en-AU"}, {"id": "say:Moira", "label": "Moira", "engine": "say", "detail": "en-IE"}, {"id": "say:Aman", "label": "Aman", "engine": "say", "detail": "en-IN"}, {"id": "say:Fred", "label": "Fred", "engine": "say", "detail": "en-US"}, {"id": "say:Rishi", "label": "Rishi", "engine": "say", "detail": "en-IN"}, {"id": "say:Tara", "label": "Tara", "engine": "say", "detail": "en-IN"}, {"id": "say:Tessa", "label": "Tessa", "engine": "say", "detail": "en-ZA"}], "default": "piper:en_GB-alba-medium"}, "/api/auth/me": {"user_id": "preview-listener", "email": "ian@example.com", "authenticated": true}, "/api/profile": {"listener": "preview-listener", "played": 34, "finished": 21, "searched": 12, "open_threads": 2, "subjects": ["tech", "money", "science", "health"], "since": 1783538926.4665735, "name": "Ian Solomon", "handle": "iansolomon", "joined": 1783538926.4665747, "echo_count": 7, "mixes": [{"id": "m1", "name": "Morning Run", "public": true, "items": [{"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}], "topics": [], "topic_ids": [], "custom_count": 0, "created_at": 0, "updated_at": 0}, {"id": "m2", "name": "Market Watch", "public": true, "items": [{"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}], "topics": [], "topic_ids": [], "custom_count": 0, "created_at": 0, "updated_at": 0}, {"id": "m3", "name": "Kids' Questions", "public": true, "items": [{"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}], "topics": [], "topic_ids": [], "custom_count": 0, "created_at": 0, "updated_at": 0}], "echoes": [{"title": "The Two-Mile Lane That Moves the Oil", "minutes": 4, "query": "why the strait of hormuz moves the oil price", "asked": true}, {"title": "How a City's Food Supply Chain Works", "minutes": 4, "query": "how a city's food supply chain actually works", "asked": false}, {"title": "Who Actually Makes the World's Chips", "minutes": 6, "query": "why semiconductor manufacturing is concentrated", "asked": true}, {"title": "What We Actually Know About Sleep", "minutes": 5, "query": "what sleep research actually establishes", "asked": false}]}, "/api/health": {"ok": true, "demo": true, "engine": "preview"}, "/api/event": {"ok": true}, "/api/preferences": {"interests_available": [{"id": "sports", "label": "Sport"}, {"id": "business", "label": "Business"}, {"id": "money", "label": "Money & markets"}, {"id": "tech", "label": "Technology"}, {"id": "science", "label": "Science"}, {"id": "health", "label": "Health & mind"}, {"id": "culture", "label": "Culture"}, {"id": "world", "label": "World"}], "languages": [{"code": "en", "label": "English", "endonym": "English"}, {"code": "es", "label": "Spanish", "endonym": "Espa\u00f1ol"}, {"code": "fr", "label": "French", "endonym": "Fran\u00e7ais"}, {"code": "de", "label": "German", "endonym": "Deutsch"}, {"code": "pt", "label": "Portuguese", "endonym": "Portugu\u00eas"}, {"code": "it", "label": "Italian", "endonym": "Italiano"}, {"code": "hi", "label": "Hindi", "endonym": "\u0939\u093f\u0928\u094d\u0926\u0940"}, {"code": "ar", "label": "Arabic", "endonym": "\u0627\u0644\u0639\u0631\u0628\u064a\u0629"}, {"code": "zh", "label": "Chinese", "endonym": "\u4e2d\u6587"}, {"code": "ja", "label": "Japanese", "endonym": "\u65e5\u672c\u8a9e"}], "max_interests": 6, "language_active": false, "account": true, "saved": true, "account_required": "You need an account for this.", "interests": [], "language": "en", "weekly_recap": true, "recap_week": "", "intro_done": false}, "/api/recap": {"week": "2026-09-06", "played": 9, "finished": 6, "searched": 4, "subjects": ["tech", "money", "science"], "subject_labels": ["Technology", "Money & markets", "Science"], "minutes": 5, "title": "Your week in FAM", "subtitle": "6 finished \u00b7 Technology, Money & markets, Science", "query": "what happened this week in technology, money & markets and science", "empty": false, "reason": "", "due": true, "enabled": true}, "/api/nextup": {"topics": [{"id": "energy-grid", "title": "What the Grid Does When the Wind Drops", "subtitle": "Storage, baseload, and the balancing act.", "query": "how electricity grids handle intermittent renewable power", "tags": ["science", "money"], "icon": "rocket"}, {"id": "chip-supply", "title": "Who Actually Makes the World's Chips", "subtitle": "Fabs, bottlenecks, and why it is so concentrated.", "query": "why semiconductor manufacturing is concentrated in so few places", "tags": ["tech", "world"], "icon": "tech"}, {"id": "space-race", "title": "Inside the New Space Race", "subtitle": "Reusable rockets, private missions, who's winning.", "query": "how reusable rockets changed the economics of spaceflight", "tags": ["science", "business"], "icon": "rocket"}, {"id": "housing-market", "title": "Why Houses Cost What They Cost", "subtitle": "Supply, rates, and the arguments that repeat.", "query": "what actually drives house prices", "tags": ["money"], "icon": "business"}], "algo": "2026-09-08.1"}, "/api/explorenew": {"topics": [{"id": "hollywood-comebacks", "title": "Inside the Best Hollywood Comebacks", "subtitle": "The stories, the risks, the second acts.", "query": "how Hollywood comeback stories actually happen", "tags": ["culture"], "icon": "camera"}, {"id": "food-supply", "title": "How Food Gets to a City", "subtitle": "Logistics, margins, and the fragile bits.", "query": "how a city's food supply chain actually works", "tags": ["world", "business"], "icon": "food"}, {"id": "anxiety-loop", "title": "Why Worry Feels Productive", "subtitle": "The loop, and what actually interrupts it.", "query": "why worrying feels useful when it is not", "tags": ["health"], "icon": "leaf"}, {"id": "training-load", "title": "How Athletes Are Actually Trained Now", "subtitle": "Load, recovery, and the data behind it.", "query": "how modern athletic training load is managed", "tags": ["sports", "health"], "icon": "sports"}, {"id": "pricing-psychology", "title": "Why Everything Ends in Ninety-Nine", "subtitle": "What the pricing research does and does not show.", "query": "what the evidence says about psychological pricing", "tags": ["business", "money"], "icon": "business"}, {"id": "space-race", "title": "Inside the New Space Race", "subtitle": "Reusable rockets, private missions, who's winning.", "query": "how reusable rockets changed the economics of spaceflight", "tags": ["science", "business"], "icon": "rocket"}], "personalised": true, "reason": "Next to what you already listen to, rather than more of it.", "algo": "2026-09-08.1"}};
+  var FIXTURES = {"/api/myfam": {"personalised": true, "sections": [{"key": "from_history", "title": "Made for you", "topics": [{"id": "chip-supply", "title": "Who Actually Makes the World's Chips", "subtitle": "Fabs, bottlenecks, and why it is so concentrated.", "query": "why semiconductor manufacturing is concentrated in so few places", "tags": ["tech", "world"], "icon": "tech"}, {"id": "energy-grid", "title": "What the Grid Does When the Wind Drops", "subtitle": "Storage, baseload, and the balancing act.", "query": "how electricity grids handle intermittent renewable power", "tags": ["science", "money"], "icon": "rocket"}, {"id": "founder-motivation", "title": "Where Motivation Actually Comes From", "subtitle": "Progress, evidence, and the founder's problem.", "query": "finding the motivation for my startup", "tags": ["health", "business"], "icon": "leaf"}, {"id": "hormuz", "title": "The Two-Mile Lane That Moves the Oil Price", "subtitle": "Chokepoints, insurance, and why geography decides.", "query": "why the Strait of Hormuz moves the oil price", "tags": ["world", "money"], "icon": "business"}], "empty_reason": ""}, {"key": "followers", "title": "Your circle is on this", "topics": [{"id": "stadium-money", "title": "Who Really Pays for a Stadium", "subtitle": "Public money, private returns, and the argument.", "query": "who actually pays for new sports stadiums", "tags": ["sports", "money"], "icon": "business"}, {"id": "sleep-science", "title": "What We Actually Know About Sleep", "subtitle": "The research, the myths, what isn't settled.", "query": "what sleep research actually establishes", "tags": ["health", "science"], "icon": "leaf"}, {"id": "space-race", "title": "Inside the New Space Race", "subtitle": "Reusable rockets, private missions, who's winning.", "query": "how reusable rockets changed the economics of spaceflight", "tags": ["science", "business"], "icon": "rocket"}, {"id": "longevity-claims", "title": "Sorting the Longevity Claims", "subtitle": "What holds up, what is marketing.", "query": "which longevity interventions have real evidence", "tags": ["health", "science"], "icon": "leaf"}], "empty_reason": ""}, {"key": "trending", "title": "What FAM can't stop playing", "topics": [{"id": "ai-agents", "title": "Why Everyone Is Talking About AI Agents", "subtitle": "What they are, how they work, why now.", "query": "what AI agents are and why they matter now", "tags": ["tech"], "icon": "tech"}, {"id": "fed-next-move", "title": "The Fed's Next Move, Explained", "subtitle": "Rates, inflation data, and what markets expect.", "query": "what the Federal Reserve is likely to do about interest rates", "tags": ["money"], "icon": "business"}, {"id": "housing-market", "title": "Why Houses Cost What They Cost", "subtitle": "Supply, rates, and the arguments that repeat.", "query": "what actually drives house prices", "tags": ["money"], "icon": "business"}, {"id": "operator-ceos", "title": "Why Founders Are Taking Back Control", "subtitle": "Leadership, product, and the rise of operator CEOs.", "query": "why boards are keeping founders as CEO", "tags": ["business"], "icon": "business"}, {"id": "hollywood-comebacks", "title": "Inside the Best Hollywood Comebacks", "subtitle": "The stories, the risks, the second acts.", "query": "how Hollywood comeback stories actually happen", "tags": ["culture"], "icon": "camera"}, {"id": "habits-research", "title": "The Habits That Actually Change Your Life", "subtitle": "What the research says, and what people ignore.", "query": "what habit research actually shows about lasting change", "tags": ["health"], "icon": "leaf"}], "empty_reason": ""}]}, "/api/mixes": {"mixes": [{"id": "m1", "name": "Morning", "items": [{"id": "fed-next-move", "title": "The Fed's Next Move, Explained", "subtitle": "Rates, inflation data, and what markets expect.", "query": "what the Federal Reserve is likely to do about interest rates", "tags": ["money"], "icon": "business", "custom": false}, {"id": "ai-agents", "title": "Why Everyone Is Talking About AI Agents", "subtitle": "What they are, how they work, why now.", "query": "what AI agents are and why they matter now", "tags": ["tech"], "icon": "tech", "custom": false}, {"id": "morning-mindset", "title": "What to Do With the First Ten Minutes", "subtitle": "Why waking up feels the way it does.", "query": "a good mindset for when I wake up in the morning", "tags": ["health"], "icon": "leaf", "custom": false}], "topics": [{"id": "fed-next-move", "title": "The Fed's Next Move, Explained", "subtitle": "Rates, inflation data, and what markets expect.", "query": "what the Federal Reserve is likely to do about interest rates", "tags": ["money"], "icon": "business", "custom": false}, {"id": "ai-agents", "title": "Why Everyone Is Talking About AI Agents", "subtitle": "What they are, how they work, why now.", "query": "what AI agents are and why they matter now", "tags": ["tech"], "icon": "tech", "custom": false}, {"id": "morning-mindset", "title": "What to Do With the First Ten Minutes", "subtitle": "Why waking up feels the way it does.", "query": "a good mindset for when I wake up in the morning", "tags": ["health"], "icon": "leaf", "custom": false}], "topic_ids": ["fed-next-move", "ai-agents", "morning-mindset"], "custom_count": 0, "public": true, "created_at": 0, "updated_at": 0}, {"id": "m2", "name": "At the gym", "items": [{"id": "training-load", "title": "How Athletes Are Actually Trained Now", "subtitle": "Load, recovery, and the data behind it.", "query": "how modern athletic training load is managed", "tags": ["sports", "health"], "icon": "sports", "custom": false}, {"id": "the-trade", "title": "The Trade That Changed Everything", "subtitle": "Front offices, cap space, and deals nobody saw.", "query": "how a single trade reshapes a sports franchise", "tags": ["sports"], "icon": "sports", "custom": false}, {"id": "habits-research", "title": "The Habits That Actually Change Your Life", "subtitle": "What the research says, and what people ignore.", "query": "what habit research actually shows about lasting change", "tags": ["health"], "icon": "leaf", "custom": false}], "topics": [{"id": "training-load", "title": "How Athletes Are Actually Trained Now", "subtitle": "Load, recovery, and the data behind it.", "query": "how modern athletic training load is managed", "tags": ["sports", "health"], "icon": "sports", "custom": false}, {"id": "the-trade", "title": "The Trade That Changed Everything", "subtitle": "Front offices, cap space, and deals nobody saw.", "query": "how a single trade reshapes a sports franchise", "tags": ["sports"], "icon": "sports", "custom": false}, {"id": "habits-research", "title": "The Habits That Actually Change Your Life", "subtitle": "What the research says, and what people ignore.", "query": "what habit research actually shows about lasting change", "tags": ["health"], "icon": "leaf", "custom": false}], "topic_ids": ["training-load", "the-trade", "habits-research"], "custom_count": 0, "public": false, "created_at": 0, "updated_at": 0}, {"id": "m3", "name": "Wind down", "items": [{"id": "sleep-science", "title": "What We Actually Know About Sleep", "subtitle": "The research, the myths, what isn't settled.", "query": "what sleep research actually establishes", "tags": ["health", "science"], "icon": "leaf", "custom": false}, {"id": "anxiety-loop", "title": "Why Worry Feels Productive", "subtitle": "The loop, and what actually interrupts it.", "query": "why worrying feels useful when it is not", "tags": ["health"], "icon": "leaf", "custom": false}, {"id": "q:whatmycoun", "title": "what my council is doing about the high street", "query": "what my council is doing about the high street", "custom": true, "subtitle": "Added by you", "icon": "leaf"}], "topics": [{"id": "sleep-science", "title": "What We Actually Know About Sleep", "subtitle": "The research, the myths, what isn't settled.", "query": "what sleep research actually establishes", "tags": ["health", "science"], "icon": "leaf", "custom": false}, {"id": "anxiety-loop", "title": "Why Worry Feels Productive", "subtitle": "The loop, and what actually interrupts it.", "query": "why worrying feels useful when it is not", "tags": ["health"], "icon": "leaf", "custom": false}], "topic_ids": ["sleep-science", "anxiety-loop"], "custom_count": 1, "public": false, "created_at": 0, "updated_at": 0}], "starters": [{"name": "Morning", "topic_ids": ["fed-next-move", "ai-agents", "morning-mindset"]}, {"name": "At the gym", "topic_ids": ["training-load", "the-trade", "habits-research"]}, {"name": "Wind down", "topic_ids": ["sleep-science", "anxiety-loop", "hollywood-comebacks"]}]}, "/api/topics": {"topics": [{"id": "nil-arms-race", "title": "The New College Football Arms Race", "subtitle": "NIL money, facilities, and the new power brokers.", "query": "how NIL money changed college football recruiting", "tags": ["sports", "money"], "icon": "sports"}, {"id": "operator-ceos", "title": "Why Founders Are Taking Back Control", "subtitle": "Leadership, product, and the rise of operator CEOs.", "query": "why boards are keeping founders as CEO", "tags": ["business"], "icon": "business"}, {"id": "ai-agents", "title": "Why Everyone Is Talking About AI Agents", "subtitle": "What they are, how they work, why now.", "query": "what AI agents are and why they matter now", "tags": ["tech"], "icon": "tech"}, {"id": "hollywood-comebacks", "title": "Inside the Best Hollywood Comebacks", "subtitle": "The stories, the risks, the second acts.", "query": "how Hollywood comeback stories actually happen", "tags": ["culture"], "icon": "camera"}, {"id": "golf-evolution", "title": "The Quiet Evolution of Golf", "subtitle": "New players. New formats. Same obsession.", "query": "how professional golf formats are changing", "tags": ["sports"], "icon": "golf"}, {"id": "habits-research", "title": "The Habits That Actually Change Your Life", "subtitle": "What the research says, and what people ignore.", "query": "what habit research actually shows about lasting change", "tags": ["health"], "icon": "leaf"}, {"id": "fed-next-move", "title": "The Fed's Next Move, Explained", "subtitle": "Rates, inflation data, and what markets expect.", "query": "what the Federal Reserve is likely to do about interest rates", "tags": ["money"], "icon": "business"}, {"id": "space-race", "title": "Inside the New Space Race", "subtitle": "Reusable rockets, private missions, who's winning.", "query": "how reusable rockets changed the economics of spaceflight", "tags": ["science", "business"], "icon": "rocket"}, {"id": "song-breaks-internet", "title": "How One Song Breaks the Internet", "subtitle": "Playlists, algorithms, and the new path to a hit.", "query": "how a song becomes a hit through playlists and short video", "tags": ["culture", "tech"], "icon": "music"}, {"id": "restaurant-scene", "title": "The Restaurants Everyone's Talking About", "subtitle": "Openings, closings, and where the lines form.", "query": "why some restaurants become impossible to book", "tags": ["culture"], "icon": "food"}, {"id": "the-trade", "title": "The Trade That Changed Everything", "subtitle": "Front offices, cap space, and deals nobody saw.", "query": "how a single trade reshapes a sports franchise", "tags": ["sports"], "icon": "sports"}, {"id": "sleep-science", "title": "What We Actually Know About Sleep", "subtitle": "The research, the myths, what isn't settled.", "query": "what sleep research actually establishes", "tags": ["health", "science"], "icon": "leaf"}, {"id": "chip-supply", "title": "Who Actually Makes the World's Chips", "subtitle": "Fabs, bottlenecks, and why it is so concentrated.", "query": "why semiconductor manufacturing is concentrated in so few places", "tags": ["tech", "world"], "icon": "tech"}, {"id": "hormuz", "title": "The Two-Mile Lane That Moves the Oil Price", "subtitle": "Chokepoints, insurance, and why geography decides.", "query": "why the Strait of Hormuz moves the oil price", "tags": ["world", "money"], "icon": "business"}, {"id": "morning-mindset", "title": "What to Do With the First Ten Minutes", "subtitle": "Why waking up feels the way it does.", "query": "a good mindset for when I wake up in the morning", "tags": ["health"], "icon": "leaf"}, {"id": "founder-motivation", "title": "Where Motivation Actually Comes From", "subtitle": "Progress, evidence, and the founder's problem.", "query": "finding the motivation for my startup", "tags": ["health", "business"], "icon": "leaf"}, {"id": "housing-market", "title": "Why Houses Cost What They Cost", "subtitle": "Supply, rates, and the arguments that repeat.", "query": "what actually drives house prices", "tags": ["money"], "icon": "business"}, {"id": "longevity-claims", "title": "Sorting the Longevity Claims", "subtitle": "What holds up, what is marketing.", "query": "which longevity interventions have real evidence", "tags": ["health", "science"], "icon": "leaf"}, {"id": "streaming-economics", "title": "Why Streaming Keeps Getting Worse", "subtitle": "Licensing, churn, and the maths underneath.", "query": "why streaming services keep raising prices and losing shows", "tags": ["culture", "business"], "icon": "camera"}, {"id": "election-mechanics", "title": "How a Close Election Is Actually Called", "subtitle": "Counting, models, and why it takes days.", "query": "how news organisations decide to call an election", "tags": ["world"], "icon": "business"}, {"id": "energy-grid", "title": "What the Grid Does When the Wind Drops", "subtitle": "Storage, baseload, and the balancing act.", "query": "how electricity grids handle intermittent renewable power", "tags": ["science", "money"], "icon": "rocket"}, {"id": "attention-economy", "title": "The Fight for Fifteen Seconds", "subtitle": "How short video rewired everything downstream.", "query": "how short-form video changed the media business", "tags": ["tech", "culture"], "icon": "music"}, {"id": "transfer-window", "title": "How a Transfer Window Actually Works", "subtitle": "Agents, deadlines, and the money underneath.", "query": "how football transfer deals actually get done", "tags": ["sports", "money"], "icon": "sports"}, {"id": "stadium-money", "title": "Who Really Pays for a Stadium", "subtitle": "Public money, private returns, and the argument.", "query": "who actually pays for new sports stadiums", "tags": ["sports", "money"], "icon": "business"}, {"id": "anxiety-loop", "title": "Why Worry Feels Productive", "subtitle": "The loop, and what actually interrupts it.", "query": "why worrying feels useful when it is not", "tags": ["health"], "icon": "leaf"}, {"id": "pricing-psychology", "title": "Why Everything Ends in Ninety-Nine", "subtitle": "What the pricing research does and does not show.", "query": "what the evidence says about psychological pricing", "tags": ["business", "money"], "icon": "business"}, {"id": "food-supply", "title": "How Food Gets to a City", "subtitle": "Logistics, margins, and the fragile bits.", "query": "how a city's food supply chain actually works", "tags": ["world", "business"], "icon": "food"}, {"id": "training-load", "title": "How Athletes Are Actually Trained Now", "subtitle": "Load, recovery, and the data behind it.", "query": "how modern athletic training load is managed", "tags": ["sports", "health"], "icon": "sports"}]}, "/api/attach": {"id": "preview-attachment", "kind": "document", "name": "Attached file", "chars": 4200, "url": "", "preview": "A stand-in for extracted text."}, "/api/explore": {"episodes": [{"query": "why the strait of hormuz moves the oil price", "title": "Why the strait of hormuz moves the oil price", "minutes": 3, "plays": 4, "thread": "why the shipping lanes run through Omani water", "age_seconds": 140, "echoed_by": ""}, {"query": "what habit research actually shows about lasting change", "title": "What habit research actually shows about lasting change", "minutes": 2, "plays": 2, "thread": "why streaks break in the third week", "age_seconds": 900, "echoed_by": ""}, {"query": "how reusable rockets changed the economics of spaceflight", "title": "How reusable rockets changed the economics of spaceflight", "minutes": 5, "plays": 7, "thread": "what happens when launch gets cheaper than shipping", "age_seconds": 4000, "echoed_by": "Rachel Solomon"}, {"query": "a good mindset for when I wake up in the morning", "title": "A good mindset for when I wake up in the morning", "minutes": 1, "plays": 3, "thread": "why a flat morning cortisol curve might mean burnout", "age_seconds": 9000, "echoed_by": ""}, {"query": "what the Federal Reserve is likely to do about interest rates", "title": "What the Federal Reserve is likely to do about interest rates", "minutes": 3, "plays": 9, "thread": "who actually loses when rates stay high", "age_seconds": 30000, "echoed_by": ""}, {"query": "how a city's food supply chain actually works", "title": "How a city's food supply chain actually works", "minutes": 4, "plays": 1, "thread": "the three days of stock nobody plans for", "age_seconds": 100000, "echoed_by": ""}]}, "/api/next": {"thread": "why the shipping lanes run through Omani water"}, "/api/godeeper": {"threads": [{"thread": "why the shipping lanes run through Omani water", "title": "The Two-Mile Lane That Moves the Oil", "from_title": "Why the Strait of Hormuz Moves the Oil Price", "at": 0}, {"thread": "how NIL money changed college football recruiting", "title": "The New College Football Arms Race", "from_title": "Who Really Pays for a Stadium", "at": 0}]}, "/api/voices": {"voices": [{"id": "piper:en_GB-alba-medium", "label": "Alba (GB, medium)", "engine": "piper", "detail": "neural, ships with the app"}, {"id": "piper:en_GB-northern_english_male-medium", "label": "Northern_English_Male (GB, medium)", "engine": "piper", "detail": "neural, ships with the app"}, {"id": "piper:en_US-amy-medium", "label": "Amy (US, medium)", "engine": "piper", "detail": "neural, ships with the app"}, {"id": "piper:en_US-lessac-medium", "label": "Lessac (US, medium)", "engine": "piper", "detail": "neural, ships with the app"}, {"id": "say:Samantha", "label": "Samantha", "engine": "say", "detail": "en-US"}, {"id": "say:Daniel", "label": "Daniel", "engine": "say", "detail": "en-GB"}, {"id": "say:Karen", "label": "Karen", "engine": "say", "detail": "en-AU"}, {"id": "say:Moira", "label": "Moira", "engine": "say", "detail": "en-IE"}, {"id": "say:Aman", "label": "Aman", "engine": "say", "detail": "en-IN"}, {"id": "say:Fred", "label": "Fred", "engine": "say", "detail": "en-US"}, {"id": "say:Rishi", "label": "Rishi", "engine": "say", "detail": "en-IN"}, {"id": "say:Tara", "label": "Tara", "engine": "say", "detail": "en-IN"}, {"id": "say:Tessa", "label": "Tessa", "engine": "say", "detail": "en-ZA"}], "default": "piper:en_GB-alba-medium"}, "/api/auth/me": {"user_id": "preview-listener", "email": "ian@example.com", "authenticated": true}, "/api/profile": {"listener": "preview-listener", "played": 34, "finished": 21, "searched": 12, "open_threads": 2, "subjects": ["tech", "money", "science", "health"], "since": 1783626664.1573071, "name": "Ian Solomon", "handle": "iansolomon", "joined": 1783626664.1573083, "echo_count": 7, "mixes": [{"id": "m1", "name": "Morning Run", "public": true, "items": [{"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}], "topics": [], "topic_ids": [], "custom_count": 0, "created_at": 0, "updated_at": 0}, {"id": "m2", "name": "Market Watch", "public": true, "items": [{"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}], "topics": [], "topic_ids": [], "custom_count": 0, "created_at": 0, "updated_at": 0}, {"id": "m3", "name": "Kids' Questions", "public": true, "items": [{"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}, {"id": "x"}], "topics": [], "topic_ids": [], "custom_count": 0, "created_at": 0, "updated_at": 0}], "echoes": [{"title": "The Two-Mile Lane That Moves the Oil", "minutes": 4, "query": "why the strait of hormuz moves the oil price", "asked": true}, {"title": "How a City's Food Supply Chain Works", "minutes": 4, "query": "how a city's food supply chain actually works", "asked": false}, {"title": "Who Actually Makes the World's Chips", "minutes": 6, "query": "why semiconductor manufacturing is concentrated", "asked": true}, {"title": "What We Actually Know About Sleep", "minutes": 5, "query": "what sleep research actually establishes", "asked": false}]}, "/api/health": {"ok": true, "demo": true, "engine": "preview"}, "/api/event": {"ok": true}, "/api/preferences": {"interests_available": [{"id": "sports", "label": "Sport"}, {"id": "business", "label": "Business"}, {"id": "money", "label": "Money & markets"}, {"id": "tech", "label": "Technology"}, {"id": "science", "label": "Science"}, {"id": "health", "label": "Health & mind"}, {"id": "culture", "label": "Culture"}, {"id": "world", "label": "World"}], "languages": [{"code": "en", "label": "English", "endonym": "English"}, {"code": "es", "label": "Spanish", "endonym": "Espa\u00f1ol"}, {"code": "fr", "label": "French", "endonym": "Fran\u00e7ais"}, {"code": "de", "label": "German", "endonym": "Deutsch"}, {"code": "pt", "label": "Portuguese", "endonym": "Portugu\u00eas"}, {"code": "it", "label": "Italian", "endonym": "Italiano"}, {"code": "hi", "label": "Hindi", "endonym": "\u0939\u093f\u0928\u094d\u0926\u0940"}, {"code": "ar", "label": "Arabic", "endonym": "\u0627\u0644\u0639\u0631\u0628\u064a\u0629"}, {"code": "zh", "label": "Chinese", "endonym": "\u4e2d\u6587"}, {"code": "ja", "label": "Japanese", "endonym": "\u65e5\u672c\u8a9e"}], "max_interests": 6, "language_active": false, "account": true, "saved": true, "account_required": "You need an account for this.", "interests": [], "language": "en", "weekly_recap": true, "recap_week": "", "intro_done": false}, "/api/recap": {"week": "2026-09-06", "played": 9, "finished": 6, "searched": 4, "subjects": ["tech", "money", "science"], "subject_labels": ["Technology", "Money & markets", "Science"], "minutes": 5, "title": "Your week in FAM", "subtitle": "6 finished \u00b7 Technology, Money & markets, Science", "query": "what happened this week in technology, money & markets and science", "empty": false, "reason": "", "due": true, "enabled": true}, "/api/nextup": {"topics": [{"id": "energy-grid", "title": "What the Grid Does When the Wind Drops", "subtitle": "Storage, baseload, and the balancing act.", "query": "how electricity grids handle intermittent renewable power", "tags": ["science", "money"], "icon": "rocket"}, {"id": "chip-supply", "title": "Who Actually Makes the World's Chips", "subtitle": "Fabs, bottlenecks, and why it is so concentrated.", "query": "why semiconductor manufacturing is concentrated in so few places", "tags": ["tech", "world"], "icon": "tech"}, {"id": "space-race", "title": "Inside the New Space Race", "subtitle": "Reusable rockets, private missions, who's winning.", "query": "how reusable rockets changed the economics of spaceflight", "tags": ["science", "business"], "icon": "rocket"}, {"id": "housing-market", "title": "Why Houses Cost What They Cost", "subtitle": "Supply, rates, and the arguments that repeat.", "query": "what actually drives house prices", "tags": ["money"], "icon": "business"}], "algo": "2026-09-08.1"}, "/api/explorenew": {"topics": [{"id": "hollywood-comebacks", "title": "Inside the Best Hollywood Comebacks", "subtitle": "The stories, the risks, the second acts.", "query": "how Hollywood comeback stories actually happen", "tags": ["culture"], "icon": "camera"}, {"id": "food-supply", "title": "How Food Gets to a City", "subtitle": "Logistics, margins, and the fragile bits.", "query": "how a city's food supply chain actually works", "tags": ["world", "business"], "icon": "food"}, {"id": "anxiety-loop", "title": "Why Worry Feels Productive", "subtitle": "The loop, and what actually interrupts it.", "query": "why worrying feels useful when it is not", "tags": ["health"], "icon": "leaf"}, {"id": "training-load", "title": "How Athletes Are Actually Trained Now", "subtitle": "Load, recovery, and the data behind it.", "query": "how modern athletic training load is managed", "tags": ["sports", "health"], "icon": "sports"}, {"id": "pricing-psychology", "title": "Why Everything Ends in Ninety-Nine", "subtitle": "What the pricing research does and does not show.", "query": "what the evidence says about psychological pricing", "tags": ["business", "money"], "icon": "business"}, {"id": "space-race", "title": "Inside the New Space Race", "subtitle": "Reusable rockets, private missions, who's winning.", "query": "how reusable rockets changed the economics of spaceflight", "tags": ["science", "business"], "icon": "rocket"}], "personalised": true, "reason": "Next to what you already listen to, rather than more of it.", "algo": "2026-09-08.1"}, "/api/saved": {"folders": [{"id": "fld_commute", "name": "Commute", "created": 0, "items": 1}], "items": [{"id": "sav_1", "folder_id": "fld_commute", "query": "why semiconductor manufacturing is concentrated", "minutes": 3, "title": "Who Actually Makes the World's Chips", "source": "player", "created": 0, "downloaded": true, "bytes": 7900000, "downloaded_at": 0, "last_played": 0, "estimated_bytes": 7938000}, {"id": "sav_2", "folder_id": "", "query": "how electricity grids handle intermittent renewable power", "minutes": 5, "title": "What the Grid Does When the Wind Drops", "source": "explore", "created": 0, "downloaded": false, "bytes": 0, "downloaded_at": 0, "last_played": 0, "estimated_bytes": 13230000}], "downloads": {"used": 1, "limit": 3, "unlimited": false, "remaining": 2, "bytes": 7900000, "tier": "free"}}, "/api/share/targets": {"targets": [{"key": "copy", "label": "Copy link", "kind": "copy", "needs_image": false, "max_chars": 0}, {"key": "sms", "label": "Message", "kind": "message", "needs_image": false, "max_chars": 0}, {"key": "email", "label": "Email", "kind": "message", "needs_image": false, "max_chars": 0}, {"key": "whatsapp", "label": "WhatsApp", "kind": "message", "needs_image": false, "max_chars": 0}, {"key": "x", "label": "X", "kind": "link", "needs_image": false, "max_chars": 240}, {"key": "facebook", "label": "Facebook", "kind": "link", "needs_image": false, "max_chars": 0}, {"key": "linkedin", "label": "LinkedIn", "kind": "link", "needs_image": false, "max_chars": 2800}, {"key": "instagram_story", "label": "Instagram story", "kind": "story", "needs_image": true, "max_chars": 0}, {"key": "snapchat_story", "label": "Snapchat story", "kind": "story", "needs_image": true, "max_chars": 0}]}};
   var SAMPLE_RATE = 22050;
   var ALGO = "2026-09-08.1";
   var TAG_WORDS = {"sports": ["nfl", "nba", "football", "basketball", "golf", "soccer", "tennis", "olympics", "coach", "playoff", "draft", "league", "match"], "business": ["startup", "founder", "company", "ceo", "ipo", "merger", "layoff", "strategy", "brand", "hiring", "venture"], "money": ["fed", "inflation", "rates", "market", "stocks", "economy", "tariff", "recession", "housing", "oil", "currency", "bond"], "tech": ["ai", "software", "chip", "robot", "app", "model", "data", "code", "computing", "algorithm", "internet"], "science": ["physics", "space", "rocket", "climate", "biology", "brain", "research", "study", "energy", "quantum", "genome"], "health": ["sleep", "diet", "exercise", "habit", "stress", "anxiety", "mindset", "motivation", "longevity", "cortisol", "mental", "therapy"], "culture": ["film", "movie", "music", "album", "book", "art", "hollywood", "song", "show", "artist", "fashion"], "world": ["election", "war", "treaty", "border", "sanctions", "summit", "government", "protest", "strait", "diplomacy", "policy"]};   // topics.TAG_WORDS, verbatim
@@ -2345,11 +2462,19 @@
   }
 
   // --------------------------------------------------------------- the wire
-  function json(body, status) {
-    return new Response(JSON.stringify(body), {
-      status: status || 200, headers: { "Content-Type": "application/json" }
+  function json(body, status, extraHeaders) {
+    var headers = { "Content-Type": "application/json" };
+    Object.keys(extraHeaders || {}).forEach(function (k) {
+      headers[k] = extraHeaders[k];
     });
+    return Promise.resolve(new Response(JSON.stringify(body), {
+      status: status || 200, headers: headers
+    }));
   }
+
+  // The share wording, from sharing.py at build time, so the preview and the
+  // server cannot show different copy for the same button.
+  var SHARE_TEMPLATES = [{"key": "copy", "label": "Copy link", "kind": "copy", "needs_image": false, "text": "{title} - a {minutes}-minute FAM episode: {url}"}, {"key": "sms", "label": "Message", "kind": "message", "needs_image": false, "text": "Listen to this - {title}. About {minutes} minutes: {url}"}, {"key": "email", "label": "Email", "kind": "message", "needs_image": false, "text": "I asked FAM \"{question}\" and it made a {minutes}-minute episode answering it.\n\nHave a listen: {url}"}, {"key": "whatsapp", "label": "WhatsApp", "kind": "message", "needs_image": false, "text": "Listen to this - {title}. About {minutes} minutes: {url}"}, {"key": "x", "label": "X", "kind": "link", "needs_image": false, "text": "{question}\n\nFAM made me a {minutes}-minute episode on it. {url}"}, {"key": "facebook", "label": "Facebook", "kind": "link", "needs_image": false, "text": "I asked FAM \"{question}\" - here is the {minutes}-minute answer. {url}"}, {"key": "linkedin", "label": "LinkedIn", "kind": "link", "needs_image": false, "text": "\"{question}\"\n\nFAM turned that into a {minutes}-minute briefing. Worth a listen if you have been wondering the same thing.\n\n{url}"}, {"key": "instagram_story", "label": "Instagram story", "kind": "story", "needs_image": true, "text": "{title}"}, {"key": "snapchat_story", "label": "Snapchat story", "kind": "story", "needs_image": true, "text": "{title}"}];
   function silence(seconds) {
     var total = Math.round(seconds * SAMPLE_RATE), sent = 0;
     return Promise.resolve(new Response(new ReadableStream({
@@ -2566,6 +2691,89 @@
         paint();
         return json(shapeMix(rows("mixes").filter(function (m) { return m.id === mixId; })[0]));
       });
+    }
+
+    // ---- save for later, downloads and sharing ----
+    // Held in the fixture object rather than in the artifact db: the shelf is
+    // per-listener and this build's db is shared by everyone looking at the
+    // link, so persisting it would show one viewer another viewer's saves.
+    // The flow is what this preview is for; the storage has its own tests.
+    if (path === "/api/saved" && method === "POST") {
+      var shelf = FIXTURES["/api/saved"];
+      var already = shelf.items.filter(function (i) {
+        return i.query === body.query && i.minutes === body.minutes; })[0];
+      var item = already || {
+        id: "sav_" + rid(), folder_id: body.folder_id || "",
+        query: body.query, minutes: body.minutes || 3,
+        title: body.title || body.query, source: body.source || "",
+        created: now(), downloaded: false, bytes: 0, downloaded_at: 0,
+        last_played: 0,
+        estimated_bytes: (body.minutes || 3) * 60 * 22050 * 2
+      };
+      if (!already) shelf.items.unshift(item);
+      return json({ ok: true, item: item, downloads: shelf.downloads });
+    }
+    if (path === "/api/saved/folders" && method === "POST") {
+      var folder = { id: "fld_" + rid(), name: body.name, created: now(), items: 0 };
+      FIXTURES["/api/saved"].folders.push(folder);
+      return json({ ok: true, folder: folder });
+    }
+    if (path.indexOf("/api/saved/") === 0) {
+      var bits = path.split("/");
+      var sid = bits[3], verb = bits[4] || "";
+      var shelf2 = FIXTURES["/api/saved"];
+      var found = shelf2.items.filter(function (i) { return i.id === sid; })[0];
+      if (verb === "download" && method === "POST") {
+        if (!found) return json({ error: "No such saved episode." }, 404);
+        if (shelf2.downloads.remaining <= 0) {
+          return json({ error: "You are holding " + shelf2.downloads.used
+            + " downloaded episodes, which is all your plan keeps offline. "
+            + "Remove one to make room." }, 409, {
+              "X-FAM-Downloads": JSON.stringify({
+                candidates: shelf2.items.filter(function (i) { return i.downloaded; }),
+                status: shelf2.downloads })
+            });
+        }
+        found.downloaded = true; found.bytes = found.estimated_bytes;
+        shelf2.downloads.used += 1; shelf2.downloads.remaining -= 1;
+        return json({ ok: true, item: found, downloads: shelf2.downloads,
+                      stream: "/api/audio?q=" + encodeURIComponent(found.query)
+                              + "&minutes=" + found.minutes + "&fmt=pcm" });
+      }
+      if (verb === "download" && method === "DELETE") {
+        if (found && found.downloaded) {
+          found.downloaded = false; found.bytes = 0;
+          shelf2.downloads.used -= 1; shelf2.downloads.remaining += 1;
+        }
+        return json({ ok: true, downloads: shelf2.downloads });
+      }
+      if (verb) return json({ ok: true, item: found || null });
+      if (method === "DELETE") {
+        var at = shelf2.items.indexOf(found);
+        if (at >= 0) {
+          if (found.downloaded) {
+            shelf2.downloads.used -= 1; shelf2.downloads.remaining += 1;
+          }
+          shelf2.items.splice(at, 1);
+        }
+        return json({ ok: true });
+      }
+    }
+    if (path === "/api/share" && method === "POST") {
+      var link = "/s/preview";
+      var made = {};
+      SHARE_TEMPLATES.forEach(function (t) {
+        made[t.key] = {
+          target: t.key, label: t.label, kind: t.kind,
+          needs_image: t.needs_image, url: link, subject: "",
+          text: t.text.replace("{title}", body.title || "A FAM episode")
+                      .replace("{question}", body.query || "")
+                      .replace("{minutes}", body.minutes || 3)
+                      .replace("{url}", link)
+        };
+      });
+      return json({ share: { id: "preview" }, url: link, public: false,
+                    card: "/api/share/card?share=preview", targets: made });
     }
 
     if (FIXTURES[path]) return json(FIXTURES[path]);
@@ -3252,6 +3460,68 @@ window.FamAudio = (function () {
     });
   }
 
+  /* Play from samples this device already holds, rather than from the network.
+     What a downloaded episode is: the same Int16 buffer the streaming path
+     builds, handed over whole instead of arriving in pieces. Everything below
+     the buffer - the cursor, the scheduler, seek, rate - is untouched, which is
+     why offline playback cannot drift from online playback. */
+  function playStored(samples, rate, h) {
+    handlers = h || {};
+    stop();
+    var myToken = ++token;
+    active = true;
+
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    timer = setInterval(tick, 80);
+    sampleRate = Number(rate) || 22050;
+    pcm = samples;
+    totalSamples = samples.length;
+    streamDone = true;   // there is no more coming; it is all already here
+
+    ctx.resume().then(function () {
+      if (myToken !== token) return;
+      playHead = ctx.currentTime;
+      tick();
+      if (handlers.onFirstAudio) handlers.onFirstAudio();
+    }).catch(function (err) {
+      if (myToken !== token) return;
+      active = false;
+      if (handlers.onError) handlers.onError(err);
+    });
+  }
+
+  /* Stream an episode and hand back everything that arrived, for storing.
+     Deliberately a separate entry point from `play`: downloading and
+     listening are different acts, and a listener who taps download is not
+     asking to hear it now. */
+  function fetchAll(url, onProgress) {
+    return fetch(url).then(function (res) {
+      if (!res.ok) throw new Error("Could not fetch that episode.");
+      var rate = Number(res.headers.get("X-Sample-Rate")) || 22050;
+      var reader = res.body.getReader();
+      var chunks = [];
+      var total = 0;
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) return;
+          chunks.push(r.value);
+          total += r.value.length;
+          if (onProgress) onProgress(total);
+          return pump();
+        });
+      }
+      return pump().then(function () {
+        var bytes = new Uint8Array(total);
+        var at = 0;
+        chunks.forEach(function (c) { bytes.set(c, at); at += c.length; });
+        // Trim an odd trailing byte: a 16-bit sample cannot be half stored.
+        var usable = bytes.length - (bytes.length % 2);
+        return { rate: rate, samples: new Int16Array(
+          bytes.buffer.slice(0, usable)) };
+      });
+    });
+  }
+
   function pause() { if (ctx && ctx.state === "running") ctx.suspend(); }
   function resume() { if (ctx && ctx.state === "suspended") ctx.resume(); }
   function isPaused() { return !!ctx && ctx.state === "suspended"; }
@@ -3288,6 +3558,9 @@ window.FamAudio = (function () {
 
   return {
     play: play,
+    // Offline playback, from samples already on this device.
+    playStored: playStored,
+    fetchAll: fetchAll,
     pause: pause,
     resume: resume,
     isPaused: isPaused,
@@ -6235,6 +6508,318 @@ window.FamAudio = (function () {
     return null;
   }
 
+  // ---------------- Save for later, and the offline shelf ----------------
+  // Two different things, and the interface has to keep them different:
+  //
+  //   Save for later  a pointer. Plays like any other episode, and needs the
+  //                   network to do it.
+  //   Download        the audio, on this device, in IndexedDB. Plays with the
+  //                   network off.
+  //
+  // A download is an upgrade to a saved item rather than a second list, which
+  // is why saving asks the question and why one row shows both states.
+  //
+  // The bytes are stored HERE and never on the server - that is what keeps the
+  // settled "no MP3, no audio files" constraint intact. The server streams as
+  // it always does; this stops throwing the samples away.
+
+  var OFFLINE_DB = "fam-offline";
+  var savedFolder = null;      // null = everything, "" = unfiled
+  var savedCache = { items: [], folders: [], downloads: {} };
+  var pendingSave = null;
+
+  function offlineDB(){
+    return new Promise(function(resolve, reject){
+      var req = indexedDB.open(OFFLINE_DB, 1);
+      req.onupgradeneeded = function(){
+        if(!req.result.objectStoreNames.contains("episodes")){
+          req.result.createObjectStore("episodes", { keyPath: "id" });
+        }
+      };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    });
+  }
+  function offlinePut(id, rate, samples){
+    return offlineDB().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction("episodes", "readwrite");
+        tx.objectStore("episodes").put({ id: id, rate: rate, samples: samples });
+        tx.oncomplete = function(){ resolve(samples.length * 2); };
+        tx.onerror = function(){ reject(tx.error); };
+      });
+    });
+  }
+  function offlineGet(id){
+    return offlineDB().then(function(db){
+      return new Promise(function(resolve){
+        var req = db.transaction("episodes", "readonly")
+                    .objectStore("episodes").get(id);
+        req.onsuccess = function(){ resolve(req.result || null); };
+        req.onerror = function(){ resolve(null); };
+      });
+    }).catch(function(){ return null; });
+  }
+  function offlineDrop(id){
+    return offlineDB().then(function(db){
+      var tx = db.transaction("episodes", "readwrite");
+      tx.objectStore("episodes").delete(id);
+      return new Promise(function(resolve){ tx.oncomplete = resolve; });
+    }).catch(function(){});
+  }
+
+  function openSaved(){
+    closeMessages();
+    navigate("saved");
+    loadSaved();
+  }
+  function loadSaved(){
+    var url = "/api/saved" + (savedFolder === null ? "" :
+              "?folder_id=" + encodeURIComponent(savedFolder));
+    fetch(url).then(function(r){
+      return r.json().then(function(d){
+        if(!r.ok) throw new Error(d.error || "Could not open your shelf");
+        return d;
+      });
+    }).then(function(d){
+      savedCache = d;
+      renderSaved(d);
+    }).catch(function(err){
+      document.getElementById("svBody").innerHTML =
+        '<div class="sv-empty">' + escapeHtml(err.message) + '</div>';
+      document.getElementById("svDownloadBar").textContent = "";
+      document.getElementById("svFolders").innerHTML = "";
+    });
+  }
+  function renderSaved(d){
+    var dl = d.downloads || {};
+    // Says the number rather than a bar, because the number is the thing that
+    // decides whether the next download needs something cleared first.
+    document.getElementById("svDownloadBar").textContent = dl.unlimited
+      ? "DOWNLOADED " + (dl.used || 0) + " · NO LIMIT ON YOUR PLAN"
+      : "DOWNLOADED " + (dl.used || 0) + " OF " + (dl.limit || 0)
+        + " · " + (dl.remaining || 0) + " SLOT" + ((dl.remaining === 1) ? "" : "S") + " FREE";
+
+    var chips = '<div class="sv-chip' + (savedFolder === null ? ' active' : '')
+      + '" onclick="pickFolder(null)">All</div>';
+    (d.folders || []).forEach(function(f){
+      chips += '<div class="sv-chip' + (savedFolder === f.id ? ' active' : '')
+        + '" onclick="pickFolder(\'' + f.id + '\')">' + escapeHtml(f.name)
+        + ' · ' + f.items + '</div>';
+    });
+    chips += '<div class="sv-chip add" onclick="newSavedFolder()">+ Folder</div>';
+    document.getElementById("svFolders").innerHTML = chips;
+
+    var items = d.items || [];
+    if(!items.length){
+      document.getElementById("svBody").innerHTML =
+        '<div class="sv-empty">Nothing here yet.<br>Save an episode from the '
+        + 'player and it lands here.</div>';
+      return;
+    }
+    document.getElementById("svBody").innerHTML = items.map(function(i){
+      var badge = i.downloaded
+        ? '<span class="sv-dl">↓ on this device</span> · '
+        : "";
+      return '<div class="sv-row">'
+        + '<div class="sv-art" onclick="playSaved(\'' + i.id + '\')">'
+        + '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>'
+        + '<div class="sv-main" onclick="playSaved(\'' + i.id + '\')">'
+        + '<div class="sv-title">' + escapeHtml(i.title || i.query) + '</div>'
+        + '<div class="sv-meta">' + badge + i.minutes + ' MIN</div></div>'
+        + '<div class="sv-x" onclick="removeSaved(\'' + i.id + '\')">'
+        + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></div>'
+        + '</div>';
+    }).join("");
+  }
+  function pickFolder(id){ savedFolder = id; loadSaved(); }
+  function newSavedFolder(){
+    showModal({ title: "New folder", placeholder: "Commute, Deep work…",
+                confirmLabel: "Create", onConfirm: function(name){
+      name = (name || "").trim();
+      if(!name) return;
+      closeModal();
+      fetch("/api/saved/folders", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ name: name })
+      }).then(function(r){ return r.json().then(function(d){
+        if(!r.ok) throw new Error(d.error || "Could not make that folder");
+        return d; }); })
+        .then(function(){ loadSaved(); toast("Folder made ✓"); })
+        .catch(function(e){ toast(e.message); });
+    }});
+  }
+  function savedItem(id){
+    return (savedCache.items || []).filter(function(i){ return i.id === id; })[0];
+  }
+  function removeSaved(id){
+    fetch("/api/saved/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function(){ offlineDrop(id); loadSaved(); toast("Removed"); })
+      .catch(function(){ toast("Could not remove that"); });
+  }
+  function playSaved(id){
+    var item = savedItem(id);
+    if(!item) return;
+    // A downloaded episode plays from this device. Tried first rather than
+    // only when offline: it is instant, costs nothing, and is what the
+    // listener asked for when they downloaded it.
+    offlineGet(id).then(function(stored){
+      if(stored && stored.samples && stored.samples.length){
+        playStoredEpisode(item, stored);
+        return;
+      }
+      if(navigator.onLine === false){
+        // The honest failure. Save for later is a pointer, so without a
+        // network there is nothing to point at - and saying that is better
+        // than a spinner that never resolves.
+        toast("That one is not on this device, and you are offline");
+        return;
+      }
+      TOPICS["_saved"] = {
+        title: item.title || item.query, prompt: item.query,
+        source: "Saved for later",
+        caption: "Generating your live transcript as this plays\u2014"
+      };
+      selectedLengthMinutes = item.minutes || selectedLengthMinutes;
+      generate("_saved");
+    });
+  }
+
+  /* Playback with the network off. Deliberately goes through the same player
+     screen and the same progress and transport code as everything else: an
+     offline episode that looked or behaved differently would be a second
+     player to keep in step, and the two would drift. */
+  function playStoredEpisode(item, stored){
+    var title = item.title || item.query;
+    var minutes = item.minutes || 3;
+    rememberEpisode(item.query, minutes, "");
+    setEchoed(false);
+    currentPlayingTopicKey = null;
+    TOPICS["_saved"] = { title: title, prompt: item.query,
+                         source: "Downloaded", caption: "" };
+    currentPlayingTopicKey = "_saved";
+    navigate("player");
+    document.getElementById("p-title").textContent = title;
+    FamAudio.playStored(stored.samples, stored.rate, {
+      onFirstAudio: function(){
+        startProgress(stored.samples.length / (stored.rate || 22050));
+        applyPlaybackSpeed();
+        showNowBar(title, item.query, minutes, "Downloaded");
+      },
+      onEnd: function(){
+        refreshProgressNow(); stopProgress(); setPlayState(false); hideNowBar();
+      },
+      onError: function(){ toast("Could not play that from this device"); }
+    });
+    setPlayState(true);
+    fetch("/api/saved/" + encodeURIComponent(item.id) + "/played",
+          { method: "POST" }).catch(function(){});
+  }
+
+  // ---- the download question ----
+  function saveForLater(){
+    var ep = currentEpisode();
+    if(!ep){ toast("Play something first"); return; }
+    fetch("/api/saved", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ query: ep.query, minutes: ep.minutes,
+                             title: ep.title, source: "player" })
+    }).then(function(r){
+      return r.json().then(function(d){
+        if(!r.ok) throw new Error(d.error || "Could not save that");
+        return d;
+      });
+    }).then(function(d){
+      pendingSave = d.item;
+      openDownloadModal(d.item, d.downloads);
+    }).catch(function(e){ toast(e.message); });
+  }
+  function openDownloadModal(item, status){
+    document.getElementById("dlTitle").textContent = "Saved. Download it too?";
+    var mb = Math.max(1, Math.round((item.estimated_bytes || 0) / 1048576));
+    document.getElementById("dlSize").textContent =
+      "ABOUT " + mb + " MB · PLAYS WITH NO SIGNAL · "
+      + (status && status.unlimited ? "NO LIMIT"
+         : (status ? status.remaining + " OF " + status.limit + " FREE" : ""));
+    document.getElementById("dlFullBox").hidden = true;
+    document.getElementById("dlConfirmBtn").hidden = false;
+    document.getElementById("dlConfirmBtn").textContent = "Download";
+    document.getElementById("downloadOverlay").classList.add("active");
+  }
+  function closeDownloadModal(){
+    document.getElementById("downloadOverlay").classList.remove("active");
+    pendingSave = null;
+    if(document.getElementById("screen-saved").classList.contains("active")) loadSaved();
+  }
+  function confirmDownload(){
+    if(!pendingSave) { closeDownloadModal(); return; }
+    var item = pendingSave;
+    var btn = document.getElementById("dlConfirmBtn");
+    btn.textContent = "Downloading…";
+    fetch("/api/saved/" + encodeURIComponent(item.id) + "/download",
+          { method: "POST" })
+      .then(function(r){
+        return r.json().then(function(d){
+          if(r.status === 409){
+            // The shelf is full. The refusal names what to clear, because a
+            // limit without a remedy is a dead end on a phone.
+            var extra = {};
+            try { extra = JSON.parse(r.headers.get("X-FAM-Quota")
+                  || r.headers.get("X-FAM-Downloads") || "{}"); } catch(e){}
+            showDownloadFull(d.error, extra.candidates || []);
+            throw new Error("__handled__");
+          }
+          if(!r.ok) throw new Error(d.error || "Could not download that");
+          return d;
+        });
+      })
+      .then(function(d){
+        return FamAudio.fetchAll(d.stream).then(function(audio){
+          return offlinePut(item.id, audio.rate, audio.samples);
+        }).then(function(bytes){
+          return fetch("/api/saved/" + encodeURIComponent(item.id)
+                       + "/download/confirm", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ bytes: bytes })
+          });
+        });
+      })
+      .then(function(){
+        closeDownloadModal();
+        toast("Downloaded — plays with no signal ✓");
+      })
+      .catch(function(e){
+        if(e.message === "__handled__") return;
+        // The slot was taken and the bytes did not arrive, so give it back:
+        // a shelf holding something that is not there is the worst of both.
+        fetch("/api/saved/" + encodeURIComponent(item.id) + "/download",
+              { method: "DELETE" }).catch(function(){});
+        btn.textContent = "Download";
+        toast(e.message || "Could not download that");
+      });
+  }
+  function showDownloadFull(message, candidates){
+    document.getElementById("dlTitle").textContent = "No room on this device";
+    document.getElementById("dlSize").textContent = "";
+    document.getElementById("dlFullText").textContent = message || "";
+    document.getElementById("dlCandidates").innerHTML = candidates.map(function(c){
+      return '<div class="dl-cand" onclick="freeDownloadSlot(\'' + c.id + '\')">'
+        + '<div class="dl-cand-title">' + escapeHtml(c.title || c.query) + '</div>'
+        + '<div class="dl-cand-free">Free up</div></div>';
+    }).join("");
+    document.getElementById("dlFullBox").hidden = false;
+    document.getElementById("dlConfirmBtn").hidden = true;
+  }
+  function freeDownloadSlot(id){
+    fetch("/api/saved/" + encodeURIComponent(id) + "/download", { method: "DELETE" })
+      .then(function(){ offlineDrop(id); })
+      .then(function(){
+        if(pendingSave){ confirmDownload(); }
+        else { closeDownloadModal(); loadSaved(); }
+      })
+      .catch(function(){ toast("Could not free that up"); });
+  }
+
   var pendingShareTopicKey = null;
   var shareMode = "audio";
   function setShareMode(mode){
@@ -6242,6 +6827,7 @@ window.FamAudio = (function () {
     document.getElementById("stAudio").classList.toggle("active", mode === "audio");
     document.getElementById("stTranscript").classList.toggle("active", mode === "transcript");
   }
+  var shareTargets = null;   // {key: rendered} for the episode on screen
   function openShareModal(){
     pendingShareTopicKey = getCurrentPlayingTopicKey();
     setShareMode("audio");
@@ -6250,6 +6836,81 @@ window.FamAudio = (function () {
     }).join("");
     document.getElementById("shareContacts").innerHTML = html;
     document.getElementById("shareOverlay").classList.add("active");
+    loadShareTargets();
+  }
+
+  /* Outside FAM. The server writes the link and the words; the phone posts
+     them. FAM holds no token for any of these platforms and never posts on
+     anybody's behalf - see sharing.py. */
+  function loadShareTargets(){
+    var ep = currentEpisode();
+    var grid = document.getElementById("shareTargets");
+    var note = document.getElementById("shareNote");
+    shareTargets = null;
+    note.hidden = true;
+    if(!ep){ grid.innerHTML = ""; return; }
+    grid.innerHTML = '<div class="sh-name">Making a link\u2026</div>';
+    fetch("/api/share", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ query: ep.query, minutes: ep.minutes,
+                             title: ep.title })
+    }).then(function(r){
+      return r.json().then(function(d){
+        if(!r.ok) throw new Error(d.error || "Could not make a share link");
+        return d;
+      });
+    }).then(function(d){
+      shareTargets = d;
+      grid.innerHTML = Object.keys(d.targets).map(function(key){
+        var t = d.targets[key];
+        return '<div class="sh-target" onclick="shareTo(\'' + key + '\')">'
+          + '<div class="sh-circ">' + escapeHtml(shareGlyph(key)) + '</div>'
+          + '<div class="sh-name">' + escapeHtml(t.label) + '</div></div>';
+      }).join("");
+      if(!d.public){
+        // Said out loud rather than discovered: without PUBLIC_BASE_URL this
+        // link works inside the app and nowhere else, and a share posted to
+        // LinkedIn that resolves to localhost is the quiet failure this
+        // project keeps a rule about.
+        note.textContent = "This server has no public address set, so the link "
+          + "only works on this network.";
+        note.hidden = false;
+      }
+    }).catch(function(e){
+      grid.innerHTML = '<div class="sh-name">' + escapeHtml(e.message) + '</div>';
+    });
+  }
+  function shareGlyph(key){
+    var glyphs = { copy: "\u29c9", sms: "\u2709", email: "@", whatsapp: "W",
+                   x: "X", facebook: "f", linkedin: "in",
+                   instagram_story: "IG", snapchat_story: "SC" };
+    return glyphs[key] || "\u2197";
+  }
+  function shareTo(key){
+    if(!shareTargets) return;
+    var t = shareTargets.targets[key];
+    if(!t) return;
+    closeShareModal();
+    // A story is a picture with a link on it, not a sentence with a URL in
+    // it, so those destinations get the card instead of the text. The app
+    // hands both to the platform's own SDK; a browser can only open it.
+    if(t.needs_image){
+      window.open(shareTargets.card, "_blank");
+      toast("Card ready \u2014 add it to your story");
+      return;
+    }
+    var payload = { title: t.subject || undefined, text: t.text };
+    if(navigator.share){
+      navigator.share(payload).catch(function(){});
+      return;
+    }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t.text).then(function(){
+        toast("Copied \u2014 paste it wherever you like");
+      }).catch(function(){ toast(t.text); });
+      return;
+    }
+    toast(t.text);
   }
   function closeShareModal(){
     document.getElementById("shareOverlay").classList.remove("active");

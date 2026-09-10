@@ -65,6 +65,26 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001 - report, don't stop
                 failures.append(f"{label}: {exc}")
                 print(f"  FAIL  {label}: {exc}")
+                # Leave the page clickable for whatever runs next.
+                #
+                # A behaviour that fails partway through can leave a modal
+                # open, and an overlay swallows every click after it - so one
+                # real failure was reported as six, five of which were the
+                # harness tripping over its own wreckage. A report whose
+                # failures have that blast radius is one nobody can read.
+                #
+                # **Only after a failure.** Doing it after every behaviour
+                # dismissed state a passing one had deliberately left standing:
+                # the weekly recap pops by itself on first run, and clearing it
+                # made the very next check unable to find it. Tidying up after
+                # a success is not tidying up, it is interference.
+                try:
+                    page.evaluate(
+                        "document.querySelectorAll('.modal-overlay.active,"
+                        " .sheet-overlay.active').forEach("
+                        "  function(el){ el.classList.remove('active'); })")
+                except Exception:  # noqa: BLE001 - the page may be gone
+                    pass
 
         def first_run_asks_before_it_shows_the_app():
             """The entry flow runs once, and every path through it lands in
@@ -231,13 +251,84 @@ def main() -> int:
             page.click("#screen-myfam .myfam-msg-btn")
             page.wait_for_timeout(600)
             tiles = page.eval_on_selector_all(".yf-tile-name", "e => e.map(x => x.textContent)")
-            assert tiles == ["Weekly Recap", "Explore New"], f"saw {tiles}"
+            assert tiles == ["Weekly Recap", "Save for Later"], f"saw {tiles}"
+            # Explore New gave up its tile to Save for Later and must not have
+            # been orphaned with it: it is the only surface offering anything
+            # outside an established taste, so losing its last entry point
+            # would quietly remove the app's whole discovery path.
             page.evaluate("openExploreNew()")
             page.wait_for_selector("#screen-explorenew.active .xn-card",
                                    timeout=10000, state="attached")
             assert page.eval_on_selector_all(".xn-card", "e => e.length") >= 4
             assert page.text_content("#xnReason").strip(), \
                 "Explore New did not say why it was showing these"
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
+        def save_for_later_lists_the_shelf_and_its_folders():
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+            page.evaluate("openSaved()")
+            page.wait_for_selector("#screen-saved.active .sv-row",
+                                   timeout=10000, state="attached")
+            rows = page.eval_on_selector_all(".sv-row", "e => e.length")
+            assert rows >= 2, f"the shelf showed {rows} episodes"
+            # Both states of an episode on one list: saved, and saved AND held
+            # on the device. Two lists would put the same episode in two places
+            # and make removing it from one of them ambiguous.
+            assert page.eval_on_selector_all(".sv-dl", "e => e.length") >= 1, \
+                "nothing on the shelf was marked as being on this device"
+            bar = page.text_content("#svDownloadBar")
+            assert "OF" in bar and "FREE" in bar, \
+                f"the shelf did not say how much offline room was left: {bar!r}"
+            chips = page.eval_on_selector_all(".sv-chip", "e => e.map(x => x.textContent)")
+            assert any("Commute" in c for c in chips), f"no folders: {chips}"
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
+        def saving_from_the_player_asks_about_downloading():
+            """The distinction the whole feature rests on. Save for later is a
+            pointer and needs the network; a download is the audio on this
+            device. One button that silently did both would make the limit
+            arrive as a surprise."""
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+            page.evaluate("showScreen('player')")
+            page.evaluate("nowBarState = {query: 'why bonds move',"
+                          " title: 'Bonds', minutes: 3}")
+            page.evaluate("saveForLater()")
+            page.wait_for_selector("#downloadOverlay.active", timeout=8000)
+            assert "Download" in page.text_content("#dlTitle")
+            size = page.text_content("#dlSize")
+            assert "MB" in size and "NO SIGNAL" in size, \
+                f"the popup did not say the size or what downloading buys: {size!r}"
+            page.evaluate("closeDownloadModal()")
+            page.wait_for_timeout(300)
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+
+        def an_episode_can_be_shared_outside_fam():
+            """FAM posts nothing: the server writes the link and the wording,
+            and the phone does the sending. What has to be on screen is a
+            destination for each place somebody would send it."""
+            page.evaluate("openMyFamTab()")
+            page.wait_for_timeout(400)
+            page.evaluate("showScreen('player')")
+            page.evaluate("nowBarState = {query: 'why bonds move',"
+                          " title: 'Bonds', minutes: 3}")
+            page.evaluate("openShareModal()")
+            page.wait_for_selector("#shareTargets .sh-target", timeout=8000)
+            names = page.eval_on_selector_all(".sh-name", "e => e.map(x => x.textContent)")
+            for wanted in ("Facebook", "LinkedIn", "Instagram story", "Snapchat story"):
+                assert wanted in names, f"{wanted} was not offered: {names}"
+            # Sharing inside FAM did not go away to make room for it: one
+            # sheet, two halves, because "share this" is one intent.
+            assert page.eval_on_selector_all(".share-contact", "e => e.length") > 0, \
+                "the sheet lost the option to send it to somebody in FAM"
+            assert not page.eval_on_selector("#shareNote", "e => e.hidden"), \
+                "the preview link is not public and the sheet did not say so"
+            page.evaluate("closeShareModal()")
+            page.wait_for_timeout(300)
             page.evaluate("openMyFamTab()")
             page.wait_for_timeout(400)
 
@@ -536,6 +627,12 @@ def main() -> int:
         check("A file can be attached to a search", attachments)
         check("Searching shows the loading screen", loading_screen_on_a_search)
         check("One loading screen serves every surface", loading_screen_covers_every_surface)
+        check("Save for Later lists the shelf and its folders",
+              save_for_later_lists_the_shelf_and_its_folders)
+        check("Saving asks about downloading",
+              saving_from_the_player_asks_about_downloading)
+        check("An episode can be shared outside FAM",
+              an_episode_can_be_shared_outside_fam)
         check("Your FAM offers the recap and Explore New",
               your_fam_offers_the_recap_and_explore_new)
         check("What's next offers four with a countdown",

@@ -521,6 +521,13 @@ class Settings:
         default_factory=lambda: os.environ.get("GOOGLE_CLIENT_IDS", ""))
     apple_client_ids: str = field(
         default_factory=lambda: os.environ.get("APPLE_CLIENT_IDS", ""))
+    # Where this server is reachable from the internet, for share links.
+    # Unset, a share still works and its link comes back relative - what must
+    # never happen is a link that names `localhost` being posted to LinkedIn,
+    # so nothing here invents a host. `sharing.py` says so, and the interface
+    # shows the share as not-yet-public rather than pretending.
+    public_base_url: str = field(
+        default_factory=lambda: os.environ.get("PUBLIC_BASE_URL", "").rstrip("/"))
     # How much *audio* must exist before the response starts. A quantity, not
     # a delay: at TARGET_WPM this is 3.75 words, so any ordinary opening
     # sentence satisfies it on the first chunk and it costs nothing. It exists

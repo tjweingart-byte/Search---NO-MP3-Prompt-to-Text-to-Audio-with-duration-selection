@@ -59,6 +59,10 @@ FAM_ENVIRONMENT = (
     # which client ids a provider token is accepted for. A developer with any
     # of these set must not run a different suite from CI.
     "ENFORCE_QUOTAS", "API_ORIGINS", "GOOGLE_CLIENT_IDS", "APPLE_CLIENT_IDS",
+    # Where share links point. A developer's real host must not leak into the
+    # suite: a test asserting a link is not yet public would pass or fail
+    # depending on whose machine it ran on.
+    "PUBLIC_BASE_URL",
 )
 
 #: Where each database lives is per-machine state too. These reach config.py
@@ -67,8 +71,8 @@ FAM_ENVIRONMENT = (
 #: listed by hand for the same reason the voice directories are. A leaked one
 #: would point the suite at a developer's real cache or account store.
 DATA_ENVIRONMENT = (
-    "ACCOUNTS_DB", "ATTACHMENTS_PATH", "CACHE_PATH", "MIXES_DB", "MYFAM_DB",
-    "PREFS_DB", "QUOTAS_DB", "SOCIAL_DB",
+    "ACCOUNTS_DB", "ATTACHMENTS_PATH", "CACHE_PATH", "MESSAGES_DB", "MIXES_DB",
+    "MYFAM_DB", "PREFS_DB", "QUOTAS_DB", "SAVED_DB", "SHARES_DB", "SOCIAL_DB",
 )
 
 #: Tier limits. Read by `entitlements.py` rather than `config.py`, so the
@@ -211,6 +215,17 @@ def isolated_stores(tmp_path, monkeypatch):
                         attachments_mod.AttachmentStore(str(here / "attachments.db")))
     monkeypatch.setattr(appmod, "METER",
                         metering_mod.MeterStore(str(here / "metering.db")))
+
+    import messages as messages_mod
+    import saved as saved_mod
+    import sharing as sharing_mod
+
+    monkeypatch.setattr(appmod, "MESSAGES",
+                        messages_mod.MessageStore(str(here / "messages.db")))
+    monkeypatch.setattr(appmod, "SAVED",
+                        saved_mod.SavedStore(str(here / "saved.db")))
+    monkeypatch.setattr(appmod, "SHARES",
+                        sharing_mod.ShareStore(str(here / "shares.db")))
 
 
 @pytest.fixture(autouse=True)

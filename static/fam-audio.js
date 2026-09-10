@@ -220,6 +220,68 @@ window.FamAudio = (function () {
     });
   }
 
+  /* Play from samples this device already holds, rather than from the network.
+     What a downloaded episode is: the same Int16 buffer the streaming path
+     builds, handed over whole instead of arriving in pieces. Everything below
+     the buffer - the cursor, the scheduler, seek, rate - is untouched, which is
+     why offline playback cannot drift from online playback. */
+  function playStored(samples, rate, h) {
+    handlers = h || {};
+    stop();
+    var myToken = ++token;
+    active = true;
+
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    timer = setInterval(tick, 80);
+    sampleRate = Number(rate) || 22050;
+    pcm = samples;
+    totalSamples = samples.length;
+    streamDone = true;   // there is no more coming; it is all already here
+
+    ctx.resume().then(function () {
+      if (myToken !== token) return;
+      playHead = ctx.currentTime;
+      tick();
+      if (handlers.onFirstAudio) handlers.onFirstAudio();
+    }).catch(function (err) {
+      if (myToken !== token) return;
+      active = false;
+      if (handlers.onError) handlers.onError(err);
+    });
+  }
+
+  /* Stream an episode and hand back everything that arrived, for storing.
+     Deliberately a separate entry point from `play`: downloading and
+     listening are different acts, and a listener who taps download is not
+     asking to hear it now. */
+  function fetchAll(url, onProgress) {
+    return fetch(url).then(function (res) {
+      if (!res.ok) throw new Error("Could not fetch that episode.");
+      var rate = Number(res.headers.get("X-Sample-Rate")) || 22050;
+      var reader = res.body.getReader();
+      var chunks = [];
+      var total = 0;
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) return;
+          chunks.push(r.value);
+          total += r.value.length;
+          if (onProgress) onProgress(total);
+          return pump();
+        });
+      }
+      return pump().then(function () {
+        var bytes = new Uint8Array(total);
+        var at = 0;
+        chunks.forEach(function (c) { bytes.set(c, at); at += c.length; });
+        // Trim an odd trailing byte: a 16-bit sample cannot be half stored.
+        var usable = bytes.length - (bytes.length % 2);
+        return { rate: rate, samples: new Int16Array(
+          bytes.buffer.slice(0, usable)) };
+      });
+    });
+  }
+
   function pause() { if (ctx && ctx.state === "running") ctx.suspend(); }
   function resume() { if (ctx && ctx.state === "suspended") ctx.resume(); }
   function isPaused() { return !!ctx && ctx.state === "suspended"; }
@@ -256,6 +318,9 @@ window.FamAudio = (function () {
 
   return {
     play: play,
+    // Offline playback, from samples already on this device.
+    playStored: playStored,
+    fetchAll: fetchAll,
     pause: pause,
     resume: resume,
     isPaused: isPaused,

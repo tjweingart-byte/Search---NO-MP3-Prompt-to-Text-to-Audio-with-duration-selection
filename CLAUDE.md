@@ -254,14 +254,22 @@ another rule.
    a mix holds *topic ids*, never audio, so "At the gym" is the same subjects
    every day and a different set of episodes. Members are validated against the
    same shared bank, which is what keeps the cost design intact.
-6. **"What your followers are listening to" has no follow graph behind it.**
-   It ranks co-listener overlap. The heading promises a social network the app
-   does not have; either build follows or rename it.
-7. **Echoes are the social layer, and they generate nothing.** `social.py`
-   stores an echo as a row pointing at a query whose script already exists, so
-   pushing an episode to other listeners costs nothing. It changes what the
-   Explore card says, not what has to be written. Mixes are private by default
-   and appear on the profile once made public.
+6. ~~**"What your followers are listening to" has no follow graph behind it.**~~
+   - *the graph is built* (`SHARING.md`). Follows are asymmetric, like the copy
+   always said, and a **friend is the mutual case, derived and never stored** -
+   no request, no accept, no pending state to get wrong. What is still true:
+   the myFAM rail itself still ranks co-listener overlap rather than the graph.
+   That is now a one-line change rather than a missing feature, and worth
+   making deliberately - a new listener follows nobody, so a rail backed only
+   by follows would be empty on the day it matters most.
+7. **The social layer generates nothing, and now there is more of it.**
+   `social.py` stores an echo as a row pointing at a query whose script already
+   exists. `messages.py` does the same for a *directed* share - one person, one
+   episode - and `sharing.py` for a link posted outside FAM. All three cost one
+   row: sending an episode to ten people costs ten rows and not ten episodes,
+   because their taps are what synthesise audio, from one cached script,
+   against their own allowances. Mixes are private by default and appear on the
+   profile once made public.
 8. **Profile is a scaffold, deliberately.** `/api/profile` returns only what
    the event log actually holds - started, finished, open threads, subjects -
    because a profile page is the easiest place in an app to invent numbers,
@@ -299,6 +307,13 @@ another rule.
   and is played as it arrives. This is the core of the product. Compression
   (Opus over a stream) is compatible with it and is the right answer at scale;
   writing a *file* is not.
+  **Downloads do not break this, and the reason is worth stating** *(SHARING.md).*
+  The server still writes nothing: the episode streams exactly as it always
+  does, and the *client* keeps the bytes it was already sent - IndexedDB in the
+  browser, the app's container on iOS. No file exists server-side, nothing is
+  cached as audio, and no URL serves a stored episode. `saved.py` holds a
+  registry of what a listener claims to hold, never the audio - which is also
+  why that registry can drift, and why releasing a slot is one tap.
 - **Duration is a ceiling, not a quota.** *(Revised.)* The selected length still
   caps the episode and over-runs are trimmed, but a script that runs out of
   substance now ends early instead of being padded. Enforcing the number in both
@@ -347,6 +362,23 @@ another rule.
   quota is **a budget shaped like a limit, not a security control**: an
   anonymous session can be thrown away and a fresh allowance started, which is
   the price of not putting a login in front of the first word.
+- **Save for later and download are different things, and stay different.**
+  *(SHARING.md.)* Saving is a **pointer** - question, length, folder - and
+  playing one needs the network like any other episode. Downloading is **the
+  audio on the device** and plays with the network off. A download is an
+  upgrade to a saved item rather than a second list, which is why saving asks
+  the question and why one row carries both states. The limit is per tier and
+  is a **standing capacity, not a rate** - a windowed counter would hand out a
+  fresh download allowance every morning and never require anybody to delete
+  anything. A full shelf is a 409 that **names what to clear**, least recently
+  played first, because a limit without a remedy is a dead end on a phone.
+- **FAM posts nothing to anybody's social account, and holds no token.**
+  *(SHARING.md.)* Every external destination is reached from the phone: the
+  share sheet, or a platform SDK hand-off where their app does the posting with
+  the person watching. The server produces the link, the wording and - for
+  Instagram and Snapchat, which cannot carry a link as text - the story card.
+  This is the correct shape rather than a stage: no OAuth to maintain, no
+  tokens to leak, and nothing that can post while somebody is asleep.
 - **A listener id is never accepted from the client.** It arrives from an
   HttpOnly session cookie the server minted, and `?user=` is ignored wherever
   it still appears. This replaced `famUserId()`, which made an id up with
@@ -529,8 +561,9 @@ Read in this order: this file for where it is going and what is settled,
 most recent), `DEVELOPMENT.md` for the loop, `CREDENTIALS.md` for how a
 machine gets its API keys without anybody typing one, `METERING.md` for
 what a listener costs and how the report says so, `ACCOUNTS.md` for identity,
-tiers, quotas and the public API, and `IOS_APP.md` for the app version this is
-now being written towards.
+tiers, quotas and the public API, `SHARING.md` for friends, sharing, saving
+and downloads, and `IOS_APP.md` for the app version this is now being written
+towards.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
 and the second one is not optional:
@@ -540,7 +573,7 @@ and the second one is not optional:
 
 Then run `./dev.sh check` before changing anything, so you know the baseline is
 green rather than assuming it. A complete run ends with `all checks passed` and
-twenty-one named smoke behaviours; anything less means something was skipped, and
+twenty-four named smoke behaviours; anything less means something was skipped, and
 `dev.sh` now says so out loud (PROBLEMS.md §49).
 
 What is true but not obvious from the code:
