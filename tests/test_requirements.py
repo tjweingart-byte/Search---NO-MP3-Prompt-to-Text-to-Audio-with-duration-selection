@@ -47,6 +47,16 @@ DELIBERATELY_OPTIONAL = {
     # missing package, and research.diagnose() reports it on /api/health - so
     # the app starts and says what it cannot do.
     "exa_py": "requirements-exa.txt",
+    # Sign in with Google and Sign in with Apple, installed from
+    # requirements-oauth.txt. Imported inside `oauth._library`, which raises
+    # OAuthUnavailable naming the pip line; /api/health reports it per
+    # provider, and a sign-in attempt is refused with that reason.
+    #
+    # The load-bearing part is what it does *not* do: with this missing there
+    # is no path that accepts a token it could not verify. An unverified JWT is
+    # not a weak credential, it is anybody's credential, so this is the one
+    # optional dependency whose absence must never degrade into a fallback.
+    "jwt": "requirements-oauth.txt",
     # diagnose_api.py reports which HTTP libraries are present. Both imports
     # are inside try/except and their absence IS the diagnostic output.
     "h2": "diagnose_api.py reports its absence rather than needing it",

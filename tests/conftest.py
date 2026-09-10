@@ -55,6 +55,10 @@ FAM_ENVIRONMENT = (
     "RATE_LIMIT_SECONDS", "READ_LIMIT_PER_WINDOW", "SAMPLE_RATE", "SAY_BIN",
     "SAY_VOICE", "SEARCH_MODE", "STREAMING_PIPELINE", "TARGET_WPM",
     "TTS_ENGINE",
+    # The public API: whether tier limits bite, who may call cross-origin, and
+    # which client ids a provider token is accepted for. A developer with any
+    # of these set must not run a different suite from CI.
+    "ENFORCE_QUOTAS", "API_ORIGINS", "GOOGLE_CLIENT_IDS", "APPLE_CLIENT_IDS",
 )
 
 #: Where each database lives is per-machine state too. These reach config.py
@@ -64,8 +68,22 @@ FAM_ENVIRONMENT = (
 #: would point the suite at a developer's real cache or account store.
 DATA_ENVIRONMENT = (
     "ACCOUNTS_DB", "ATTACHMENTS_PATH", "CACHE_PATH", "MIXES_DB", "MYFAM_DB",
-    "PREFS_DB", "SOCIAL_DB",
+    "PREFS_DB", "QUOTAS_DB", "SOCIAL_DB",
 )
+
+#: Tier limits. Read by `entitlements.py` rather than `config.py`, so the
+#: staleness guard's source scan cannot see them - named there in
+#: `LIMIT_ENVIRONMENT` and imported here, so the two cannot drift. A developer
+#: who has widened a cap to try something must not silently widen the suite's.
+def _limit_environment() -> tuple:
+    import sys as _sys
+    _sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+    import entitlements
+
+    return entitlements.LIMIT_ENVIRONMENT
+
+
+LIMIT_ENVIRONMENT = _limit_environment()
 
 #: The embedding backend, which decides whether near matching is lexical or
 #: semantic - and therefore what half the cache tests are actually measuring.
@@ -82,6 +100,7 @@ VOICE_ENVIRONMENT = ("FAM_VOICES_DIR", "VOICES_DIR", "EXA_API_KEY")
 #: the list above and forgotten at the two places that use it.
 LEAKY_ENVIRONMENT = (
     FAM_ENVIRONMENT + VOICE_ENVIRONMENT + DATA_ENVIRONMENT + EMBED_ENVIRONMENT
+    + LIMIT_ENVIRONMENT
 )
 
 #: Set, not cleared: it is what stops config.py reading the two env files.
@@ -158,3 +177,64 @@ def isolated_accounts(tmp_path, monkeypatch):
         "PREFS",
         prefs_mod.PreferenceStore(str(tmp_path / "auth" / "preferences.db")),
     )
+
+
+@pytest.fixture(autouse=True)
+def isolated_stores(tmp_path, monkeypatch):
+    """The other five per-listener stores, for the same reason as the first two.
+
+    Accounts and preferences were isolated when they arrived; events, mixes,
+    echoes, attachments and the cost ledger were not, so a full run left five
+    real database files in the project root holding a run's worth of debris -
+    including a metering ledger accumulating rows for listeners that only ever
+    existed inside a test.
+
+    That was untidy rather than dangerous until account deletion arrived, and
+    then it stopped being either: a deletion test cannot assert what was
+    removed while every previous test's rows are still in the same table.
+    """
+    import app as appmod
+    import attachments as attachments_mod
+    import metering as metering_mod
+    import mixes as mixes_mod
+    import social as social_mod
+    import topics as topics_mod
+
+    here = tmp_path / "stores"
+    monkeypatch.setattr(appmod, "EVENTS",
+                        topics_mod.EventStore(str(here / "myfam.db")))
+    monkeypatch.setattr(appmod, "MIXES",
+                        mixes_mod.MixStore(str(here / "mixes.db")))
+    monkeypatch.setattr(appmod, "SOCIAL",
+                        social_mod.SocialStore(str(here / "social.db")))
+    monkeypatch.setattr(appmod, "ATTACHMENTS",
+                        attachments_mod.AttachmentStore(str(here / "attachments.db")))
+    monkeypatch.setattr(appmod, "METER",
+                        metering_mod.MeterStore(str(here / "metering.db")))
+
+
+@pytest.fixture(autouse=True)
+def isolated_quotas(tmp_path, monkeypatch):
+    """Every test counts against its own allowance, and by default none bites.
+
+    Two separate decisions, and both are deliberate.
+
+    **Its own store**, for the same reason accounts get one: the suite must not
+    write counters into the real quotas.db, and one test's spending must not
+    exhaust the next test's allowance - which would make the suite's result
+    depend on the order it ran in.
+
+    **Not enforced unless a test asks.** Almost every test here exercises
+    something other than the tier system, and several legitimately generate
+    more episodes than a free tier allows. A suite where the fifth call in any
+    test starts failing for an unrelated reason is a suite that stops testing
+    what it says it tests. `tests/test_quotas.py` and `tests/test_public_api.py`
+    turn enforcement on explicitly, which also puts what they are testing in
+    the test rather than in the environment.
+    """
+    import app as appmod
+    import quotas as quotas_mod
+
+    monkeypatch.setattr(
+        appmod, "QUOTAS", quotas_mod.QuotaStore(str(tmp_path / "auth" / "quotas.db")))
+    monkeypatch.setattr(quotas_mod, "settings_enforcing", lambda: False)

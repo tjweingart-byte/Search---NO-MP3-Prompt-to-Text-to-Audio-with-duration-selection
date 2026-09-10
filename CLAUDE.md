@@ -283,9 +283,15 @@ another rule.
    the constraint that stopped this becoming a login screen in front of the
    product. What an account now buys is durability: mixes, chosen interests and
    language, and the weekly recap are gated on having one (PROBLEMS.md §70, and
-   the constraint above). What is genuinely missing: **password reset**, which needs
-   email delivery the app has no route to, so a forgotten password today means
-   a lost account. Say so before anyone relies on it.
+   the constraint above). Sign-up is now **email or phone**, and **Sign in with
+   Google or Apple** attach the same way - one account, several routes in,
+   keyed on `(provider, subject)` because Apple sends an address on the first
+   authorization only. What is genuinely missing is one capability behind three
+   gaps: **delivery**. Without it there is no **password reset**, no verified
+   address and no verified number - so a phone number is an identifier rather
+   than a second factor, and a forgotten password is still a lost account. Say
+   so before anyone relies on it; the provider sign-ins have no such gap, which
+   is a real argument for making them the prominent buttons in the app.
 
 ## Constraints that are settled — do not undo without discussing
 
@@ -326,6 +332,21 @@ another rule.
   `ACCOUNT_REQUIRED` in `app.py` holds the reasoning beside the code that
   enforces it. Nothing is lost by signing up late: a mix made before the gate
   is still under the same id and appears the moment credentials are attached.
+- **A tier is what you may spend, never what you may reach.** *(ACCOUNTS.md.)*
+  Three tiers - `free`, `plus`, `unlimited` - and the free one is a **daily
+  ceiling on episodes**, not a smaller product: `entitlements.FEATURES` gates
+  capabilities and today every tier has every one of them. The mechanism ships
+  on and the policy ships empty, because taking away something every listener
+  has always had is the "quietly worse than intended" failure again, with the
+  twist that here they notice and are right. Moving a feature behind a tier is
+  one line plus the test that fails when you do, which exists to make it a
+  decision somebody wrote down.
+  Two things counted separately, because they cost differently: an **episode**
+  may write a script, an **Explore replay** provably cannot. A cache hit is
+  still an episode - the listener heard one and the GPU made it. And the free
+  quota is **a budget shaped like a limit, not a security control**: an
+  anonymous session can be thrown away and a fresh allowance started, which is
+  the price of not putting a login in front of the first word.
 - **A listener id is never accepted from the client.** It arrives from an
   HttpOnly session cookie the server minted, and `?user=` is ignored wherever
   it still appears. This replaced `famUserId()`, which made an id up with
@@ -334,6 +355,12 @@ another rule.
   full identity, because requiring a login to hear an episode would break the
   one-sentence spec. If you add an endpoint that touches per-listener data,
   take the id from `_listener(request)` and never from a parameter.
+  **Two carriers now, one rule.** A native client cannot rely on a cookie jar
+  iOS clears without asking, so the same server-minted token is also accepted
+  as `Authorization: Bearer` and stored in the Keychain. Nothing about the
+  trust changes - a bearer token is the same unforgeable, revocable string the
+  cookie holds - and a browser must never ask for one, because reading it in
+  script is what HttpOnly exists to prevent.
 - **Failures must be visible.** Silent success (empty audio, a placeholder tone,
   demo mode mistaken for live) has caused more lost time on this project than
   any real bug. Every fallback must announce itself. *(PROBLEMS.md §51: demo
@@ -411,11 +438,19 @@ rather than a scale question (26 MB for a ten-minute episode on cellular). And
 creates accounts - and an interesting decision here, because the script cache
 is shared, so a deleted listener's scripts are other listeners' Explore feed.
 
+**The server side of that is now built** - `ACCOUNTS.md` is the whole of it.
+Email-or-phone sign-up, Sign in with Google and Apple, account settings,
+in-app deletion, three tiers with enforced per-window limits, bearer sessions
+beside the cookie, and every endpoint reachable at `/api/v1/...`. What is not
+built, and is not an oversight: **payment** (nothing sets a paid plan yet, and
+the enforcement path is worth trusting before money moves) and **delivery**
+(no email or SMS, so no password reset and no verified address or number).
+
 What has to happen, in order: hear an episode in the production voice (open
 problem #1 - everything else is scaffolding around an unlistened product);
-make the server a public API with a real quota rather than a 3-second
-debounce; then a throwaway Swift spike that plays one streamed episode with the
-phone locked, which is the go/no-go for all of it.
+deploy the API somewhere with a GPU that is up when a phone asks; then a
+throwaway Swift spike that plays one streamed episode with the phone locked,
+which is the go/no-go for all of it.
 
 ## Decisions that will shape the next phase
 
@@ -493,8 +528,9 @@ Read in this order: this file for where it is going and what is settled,
 `PROBLEMS.md` for every problem hit and its cause (newest last — §68-73 are the
 most recent), `DEVELOPMENT.md` for the loop, `CREDENTIALS.md` for how a
 machine gets its API keys without anybody typing one, `METERING.md` for
-what a listener costs and how the report says so, and `IOS_APP.md` for the
-app version this is now being written towards.
+what a listener costs and how the report says so, `ACCOUNTS.md` for identity,
+tiers, quotas and the public API, and `IOS_APP.md` for the app version this is
+now being written towards.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
 and the second one is not optional:

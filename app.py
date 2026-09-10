@@ -30,7 +30,10 @@ from cache import MemoryScriptCache, SqliteScriptCache, build_cache, research_wo
 import embeddings
 from demo_script import DemoGenerator
 import credentials
+import entitlements
 import metering
+import oauth
+import quotas
 from config import DEFAULT_PIPELINE, describe_key, key_source, settings
 from research import ResearchUnavailable, report as research_report
 from pipeline import GenerationStats, NotCached, PodcastPipeline
@@ -417,6 +420,154 @@ def _read_limit(request: Request) -> None:
     hits.append(now)
 
 
+def _has_password(user_id: str) -> bool:
+    """Whether this account can be logged into with a password.
+
+    The settings screen needs it to decide between "change password" and "set
+    one", and `unlink_identity` needs it to know whether dropping a provider
+    would lock the account. Read through the store rather than exposing the
+    hash anywhere near a response.
+    """
+    try:
+        row = ACCOUNTS._conn().execute(  # noqa: SLF001 - one field, no public reader
+            "SELECT password FROM accounts WHERE user_id = ?", (user_id,)).fetchone()
+    except Exception:
+        log.exception("could not check for a password")
+        return False
+    return bool(row and row[0])
+
+
+def _quota_snapshot(user: str, tier_name: str) -> dict:
+    """Where this listener stands against every countable resource.
+
+    One shape, so the settings screen, the entitlements endpoint and a refusal
+    all describe the allowance the same way. A status read never refuses and
+    never raises: an interface unable to say what the limit is, is worse than
+    one showing a limit that is briefly stale.
+    """
+    if not user:
+        return {}
+    return {resource: QUOTAS.status(user, tier_name, resource).as_dict()
+            for resource in entitlements.RESOURCES}
+
+
+def _tier(request: Request) -> str:
+    """Which tier this request is entitled to.
+
+    From the resolved session, never from a parameter - the same rule the
+    listener id follows, and for the same reason: a plan is worth money, so a
+    client-supplied one is a client-supplied upgrade.
+    """
+    listener = getattr(request.state, "listener", None)
+    return entitlements.normalise(listener.tier if listener else "free")
+
+
+def _reserve(request: Request, resource: str):
+    """Take one from this listener's allowance, or refuse with the reason.
+
+    Returns the granted verdict, which the caller keeps so it can refund. A
+    402 would be the pedantic status for "you have run out of allowance", but
+    it means "payment required" in a way browsers and SDKs have never agreed
+    on; 429 is what a client library already knows to back off from, and the
+    `X-FAM-Quota` header carries the whole verdict - the limit, what is left,
+    when it resets - so the interface can say what to do next rather than only
+    that something was refused.
+    """
+    user = _listener(request)
+    if not user:
+        # No session to count against. Not an error - `carry_the_session` logs
+        # why - and not a free pass either: `_rate_limit` still applies.
+        return None
+    try:
+        return QUOTAS.reserve(user, _tier(request), resource)
+    except quotas.QuotaExceeded as exc:
+        raise HTTPException(status_code=429, detail=exc.verdict.message,
+                            headers={"X-FAM-Quota": json.dumps(exc.verdict.as_dict())}
+                            ) from exc
+
+
+def _refund(verdict, user: str) -> None:
+    """Give the allowance back unconditionally. For the paths where nothing
+    could have been spent - the server has no voice, the request never
+    started - so there is nothing to weigh."""
+    if verdict is not None and user:
+        QUOTAS.refund(user, verdict.resource, verdict.window)
+
+
+def _refund_if_unspent(verdict, user: str, usage: metering.Usage) -> None:
+    """On a **failed** request, give the allowance back if nothing was billed.
+
+    Only ever called from an error path. A request that succeeded keeps its
+    reservation whatever it cost to serve - in particular **a cache hit is a
+    full episode**: the listener heard one and the GPU produced it, and only
+    the Claude call was saved. An earlier version refunded whenever no model
+    call had been made, which silently made every cached episode free and
+    would have made the allowance unenforceable exactly as the cache warmed up.
+
+    Among failures the rule is *was money spent*:
+
+    * A replay whose entry expired between listing and tapping, and a server
+      with no voice installed, spent nothing - charging for those would shrink
+      an allowance for reasons the listener cannot see.
+    * A generation that called Claude and then failed did spend, and refunding
+      it would make a broken key the cheapest thing on the server and the most
+      expensive thing on the invoice - the same reasoning `_record_usage`
+      already applies to the ledger.
+
+    An episode that arrives empty is therefore not refunded, and that is a bug
+    to fix rather than a quota to soften.
+    """
+    if verdict is None or not user:
+        return
+    if usage.model_calls or usage.exa_searches:
+        return
+    QUOTAS.refund(user, verdict.resource, verdict.window)
+
+
+def erase_listener(user_id: str) -> dict:
+    """Delete everything FAM holds about one listener, and say what went.
+
+    Required by App Store guideline 5.1.1(v) for any app that lets someone
+    create an account, and the shape of it is a decision rather than a loop:
+
+    * **Every per-listener store is emptied** - events, mixes, echoes, the
+      profile row, preferences, attachments, quota counters, credentials,
+      identities and sessions.
+    * **The cost ledger is anonymised, not emptied.** What the GPU and the
+      model cost in a given month is a fact about the business; a ledger with
+      holes cannot be reconciled against an invoice. The link to the person
+      goes and the amount stays (`metering.anonymise`).
+    * **The shared script cache is untouched, and needs no decision.** It holds
+      no `user_id` at all - it never has - so a script written for this
+      listener is already unattributed, and other listeners' Explore feeds do
+      not develop holes because somebody left.
+
+    Returns a per-store count so the endpoint reports what it did. Each store
+    is attempted independently: a failure in one must not leave the other six
+    undeleted, which would be the worst outcome available here - a deletion
+    that half happened and reported success.
+    """
+    removed: dict[str, int] = {}
+    for name, store in (("events", EVENTS), ("mixes", MIXES), ("social", SOCIAL),
+                        ("preferences", PREFS), ("attachments", ATTACHMENTS),
+                        ("quotas", QUOTAS)):
+        try:
+            removed[name] = store.forget(user_id)
+        except Exception:
+            log.exception("could not erase %s for %r", name, user_id)
+            removed[name] = -1
+    try:
+        removed["usage_rows_anonymised"] = METER.anonymise(user_id)
+    except Exception:
+        log.exception("could not anonymise usage for %r", user_id)
+        removed["usage_rows_anonymised"] = -1
+    credentials_gone = ACCOUNTS.delete_account(user_id)
+    removed["identities"] = credentials_gone["identities"]
+    removed["sessions"] = credentials_gone["sessions"]
+    removed["account"] = 1 if credentials_gone["account"] else 0
+    return removed
+
+
 def _validated_plan(q: str, minutes: int, context: str = "", search: bool | None = None,
                     cached_only: bool = False, attachments: tuple = ()):
     q = (q or "").strip()
@@ -478,12 +629,70 @@ async def health() -> dict:
         # Every database, its resolved path, and a real read against each.
         "databases": _database_report(),
         "voice_store": VOICE_STORE["dir"],
+        # The public API surface, so a client can ask rather than assume.
+        "api": {"version": API_VERSION, "prefix": API_PREFIX,
+                "cors_origins": _ALLOWED_ORIGINS},
+        # Whether Google and Apple sign-in can actually complete on this
+        # machine, per provider and with the reason when they cannot.
+        # "Configured" is not "works" (PROBLEMS.md §52): a missing PyJWT and an
+        # empty audience both make the button fail, and both say so here rather
+        # than at the moment somebody presses it.
+        "oauth": oauth.report(),
+        # Whether tier limits bite, and what they are. A server running with
+        # them off looks identical from the outside to one running with them
+        # on, and that is exactly the thing worth being able to ask.
+        "quotas": {"enforced": quotas.settings_enforcing(),
+                   "tiers": entitlements.catalogue()["tiers"]},
     }
 
 
 class CredentialsRequest(BaseModel):
-    email: str = Field(..., max_length=accounts_mod.MAX_EMAIL)
+    """Email **or** phone, plus a password.
+
+    Both optional at the schema level and exactly one required in the handler,
+    because "you must send one of these two" is not a thing a field validator
+    can say clearly, and a 422 from the framework is a worse message than a
+    sentence written for the person reading it.
+    """
+
+    email: str = Field("", max_length=accounts_mod.MAX_EMAIL)
+    phone: str = Field("", max_length=accounts_mod.MAX_PHONE * 2)
     password: str = Field(..., max_length=accounts_mod.MAX_PASSWORD)
+    #: Native clients only. See `_maybe_token` - a browser must never ask for
+    #: this, because reading the token in script is precisely what the HttpOnly
+    #: cookie exists to prevent.
+    want_token: bool = False
+
+
+class ProviderRequest(BaseModel):
+    """A verified identity token from Google or Apple."""
+
+    provider: str = Field(..., max_length=16)
+    id_token: str = Field(..., max_length=8192)
+    #: The raw nonce the client generated for this sign-in, if it used one.
+    #: Sending it is what stops a captured token being replayed; the server
+    #: accepts both the raw value and its SHA-256, because Apple is sent the
+    #: hash and Google echoes the original.
+    nonce: str = Field("", max_length=256)
+    want_token: bool = False
+
+
+class ProfileRequest(BaseModel):
+    """Account settings. Every field optional and `None` means "leave it" -
+    an empty string means "remove it", which is a different request."""
+
+    display_name: Optional[str] = Field(None, max_length=accounts_mod.MAX_DISPLAY_NAME)
+    email: Optional[str] = Field(None, max_length=accounts_mod.MAX_EMAIL)
+    phone: Optional[str] = Field(None, max_length=accounts_mod.MAX_PHONE * 2)
+
+
+class NewPasswordRequest(BaseModel):
+    """Setting a first password, for an account created with Google or Apple.
+    `PasswordChangeRequest` cannot serve this: there is no current password to
+    prove, and asking for one would lock those accounts out of ever having
+    one."""
+
+    new: str = Field(..., max_length=accounts_mod.MAX_PASSWORD)
 
 
 class PasswordChangeRequest(BaseModel):
@@ -501,6 +710,33 @@ async def auth_me(request: Request) -> dict:
     return listener.as_dict()
 
 
+def _one_identifier(req: CredentialsRequest) -> str:
+    """Which of email or phone this request is using. Exactly one."""
+    if bool(req.email) == bool(req.phone):
+        raise HTTPException(
+            status_code=400,
+            detail="Send either an email address or a phone number, not both.")
+    return "email" if req.email else "phone"
+
+
+def _maybe_token(request: Request, token: str, want_token: bool) -> dict:
+    """The session token in the response body, but only if it was asked for.
+
+    A native app has to be handed the token: it stores it in the Keychain and
+    sends it as `Authorization: Bearer`, because iOS clears its cookie jar
+    under conditions the app does not control.
+
+    A browser must never ask. The cookie is set either way, and it is HttpOnly
+    precisely so that page script cannot read it - a web client that requests
+    the token has voluntarily undone that, and an XSS on that page can then
+    take the session rather than merely borrow it. Which is why this is an
+    explicit opt-in rather than something every response carries.
+    """
+    if not want_token:
+        return {}
+    return {"session_token": token, "expires_in": accounts_mod.SESSION_TTL}
+
+
 @app.post("/api/auth/signup")
 async def auth_signup(req: CredentialsRequest, request: Request) -> dict:
     """Attach an account to the identity this listener already has.
@@ -510,11 +746,22 @@ async def auth_signup(req: CredentialsRequest, request: Request) -> dict:
     one, which is why nothing has to be migrated.
     """
     _rate_limit(request)
+    user = _require_listener(request)
     try:
-        listener = ACCOUNTS.sign_up(_require_listener(request), req.email, req.password)
+        if _one_identifier(req) == "email":
+            listener = ACCOUNTS.sign_up(user, req.email, req.password)
+        else:
+            listener = ACCOUNTS.sign_up_phone(user, req.phone, req.password)
     except accounts_mod.AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return listener.as_dict()
+    # A fresh token even though the id has not changed, so that a native
+    # client is handed one it can store. The old session stays valid: nothing
+    # about signing up should log out the browser tab that did it.
+    token = _session_token(request)
+    if req.want_token and not token:
+        token, _ = ACCOUNTS.new_session(listener.user_id)
+        request.state.set_session = token
+    return {**listener.as_dict(), **_maybe_token(request, token, req.want_token)}
 
 
 @app.post("/api/auth/login")
@@ -527,16 +774,66 @@ async def auth_login(req: CredentialsRequest, request: Request) -> dict:
     """
     _rate_limit(request)
     try:
-        listener = ACCOUNTS.log_in(req.email, req.password)
+        if _one_identifier(req) == "email":
+            listener = ACCOUNTS.log_in(req.email, req.password)
+        else:
+            listener = ACCOUNTS.log_in_phone(req.phone, req.password)
     except accounts_mod.AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    old = request.cookies.get(accounts_mod.COOKIE_NAME, "")
+    old = _session_token(request)
     token, _user_id = ACCOUNTS.new_session(listener.user_id)
     if old:
-        # The anonymous session this browser was carrying is finished with.
+        # The anonymous session this client was carrying is finished with.
         ACCOUNTS.end_session(old)
     request.state.set_session = token
-    return listener.as_dict()
+    return {**listener.as_dict(), **_maybe_token(request, token, req.want_token)}
+
+
+@app.post("/api/auth/provider")
+async def auth_provider(req: ProviderRequest, request: Request) -> dict:
+    """Sign in with Google or Sign in with Apple.
+
+    The app gets an identity token from the platform SDK and posts it here;
+    `oauth.verify` checks the signature, issuer, audience and nonce against the
+    provider's published keys. There is no code exchange and no client secret,
+    because a native app needs neither - which removes the most common way this
+    is built wrong.
+
+    The two failure modes are deliberately different status codes. 503 means
+    *this server* cannot verify tokens for that provider - PyJWT is missing, or
+    no audience is configured - and is an operator's problem with an operator's
+    message. 401 means the token was checked and refused.
+    """
+    _rate_limit(request)
+    provider = (req.provider or "").strip().lower()
+    try:
+        verified = oauth.verify(provider, req.id_token, req.nonce)
+    except oauth.OAuthUnavailable as exc:
+        log.error("provider sign-in unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except oauth.OAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    try:
+        listener, is_new = ACCOUNTS.sign_in_with(
+            verified.provider, verified.subject, email=verified.email,
+            display_name=verified.name,
+            current_user_id=_require_listener(request))
+    except accounts_mod.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    old = _session_token(request)
+    token, _user_id = ACCOUNTS.new_session(listener.user_id)
+    if old:
+        ACCOUNTS.end_session(old)
+    request.state.set_session = token
+    return {**listener.as_dict(), "is_new": is_new,
+            # Said out loud rather than left for the client to work out from
+            # the address: an Apple relay address forwards today and can be
+            # switched off by its owner tomorrow, so nothing should promise to
+            # reach somebody there.
+            "private_relay": verified.is_private_relay,
+            **_maybe_token(request, token, req.want_token)}
 
 
 @app.post("/api/auth/logout")
@@ -544,7 +841,7 @@ async def auth_logout(request: Request) -> dict:
     """Drop the session. The next request mints a fresh anonymous one, so the
     app keeps working - as a different listener, with nothing of theirs."""
     _read_limit(request)
-    ACCOUNTS.end_session(request.cookies.get(accounts_mod.COOKIE_NAME, ""))
+    ACCOUNTS.end_session(_session_token(request))
     request.state.set_session = ""
     return {"ok": True}
 
@@ -562,6 +859,141 @@ async def auth_password(req: PasswordChangeRequest, request: Request) -> dict:
     return {"ok": True}
 
 
+@app.post("/api/auth/password/set")
+async def auth_password_set(req: NewPasswordRequest, request: Request) -> dict:
+    """Add a first password to an account that signed up with Google or Apple.
+
+    Its own endpoint rather than a branch inside the change-password one,
+    because the two have different preconditions: that one proves the current
+    password, and this one is reachable exactly when there is none to prove.
+    Merging them would mean a request that omits `current` is sometimes a
+    legitimate first set and sometimes an attempt to skip the check.
+    """
+    _rate_limit(request)
+    try:
+        ACCOUNTS.set_password(_require_account(request), req.new)
+    except accounts_mod.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.get("/api/account")
+async def account_read(request: Request) -> dict:
+    """Everything the settings screen shows: who you are, how you get in,
+    what tier you are on, and where else you are signed in."""
+    _read_limit(request)
+    user = _require_account(request)
+    account = ACCOUNTS.account(user) or {}
+    tier_name = entitlements.normalise(account.get("plan", "free"))
+    return {
+        "user_id": user,
+        "email": account.get("email", ""),
+        "phone": account.get("phone", ""),
+        "display_name": account.get("display_name", ""),
+        "created": account.get("created", 0),
+        "identities": ACCOUNTS.identities_for(user),
+        "has_password": bool(ACCOUNTS.account(user) and _has_password(user)),
+        "sessions": ACCOUNTS.sessions_for(user, _session_token(request)),
+        "entitlements": entitlements.describe(tier_name),
+        # Said here as well as on /api/entitlements because a settings screen
+        # that shows a plan without showing what is left of it invites the
+        # question it cannot answer.
+        "usage": _quota_snapshot(user, tier_name),
+    }
+
+
+@app.post("/api/account")
+async def account_update(req: ProfileRequest, request: Request) -> dict:
+    """Change the account's own details. Not preferences - those are
+    `/api/preferences`, they are not credentials, and they work without an
+    account at all."""
+    _rate_limit(request)
+    try:
+        account = ACCOUNTS.update_profile(
+            _require_account(request), display_name=req.display_name,
+            email=req.email, phone=req.phone)
+    except accounts_mod.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return account
+
+
+@app.delete("/api/account")
+async def account_delete(request: Request) -> dict:
+    """Delete the account and everything FAM holds about this listener.
+
+    Required of any app that offers account creation (App Store guideline
+    5.1.1(v)), and it has to be reachable *in the app* rather than through a
+    support address - which is why it is an endpoint and not a mailbox.
+
+    `erase_listener` says exactly what is removed, what is anonymised and what
+    is deliberately untouched. The session is dropped afterwards, so the next
+    request mints a fresh anonymous listener and the app keeps working.
+    """
+    _rate_limit(request)
+    user = _require_account(request)
+    removed = erase_listener(user)
+    request.state.set_session = ""
+    log.info("erased listener %r: %s", user, removed)
+    return {"ok": True, "removed": removed}
+
+
+@app.post("/api/account/signout-everywhere")
+async def account_signout_everywhere(request: Request) -> dict:
+    """Drop every other session, keeping this one.
+
+    The thing somebody reaches for when they think a device is lost, and it is
+    the reason `sessions_for` reports a count without reporting tokens.
+    """
+    _rate_limit(request)
+    ended = ACCOUNTS.end_other_sessions(_require_account(request),
+                                        _session_token(request))
+    return {"ok": True, "ended": ended}
+
+
+@app.delete("/api/account/identity")
+async def account_unlink(request: Request,
+                         provider: str = Query(..., max_length=16)) -> dict:
+    """Remove one sign-in route, unless it is the only way in."""
+    _rate_limit(request)
+    try:
+        removed = ACCOUNTS.unlink_identity(_require_account(request),
+                                           provider.strip().lower())
+    except accounts_mod.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": bool(removed), "removed": removed}
+
+
+@app.get("/api/entitlements")
+async def entitlements_read(request: Request) -> dict:
+    """What this listener may do, and how much of it is left.
+
+    Works without an account, because an anonymous listener is on a tier too
+    and needs to be told what it allows - a limit nobody can see coming is
+    indistinguishable from a bug when it arrives.
+    """
+    _read_limit(request)
+    user = _listener(request)
+    tier_name = _tier(request)
+    return {
+        "enforced": quotas.settings_enforcing(),
+        **entitlements.describe(tier_name),
+        "usage": _quota_snapshot(user, tier_name),
+    }
+
+
+@app.get("/api/plans")
+async def plans_read(request: Request) -> dict:
+    """Every tier and every feature, for a pricing screen.
+
+    Deliberately has no prices in it. A number here and a number in App Store
+    Connect are two places for one fact, and the one that is wrong is always
+    the one the listener is reading - so the price comes from the store's own
+    product metadata, which is also the only place it can be right per country.
+    """
+    _read_limit(request)
+    return {**entitlements.catalogue(), "current": _tier(request)}
+
+
 @app.get("/api/voices")
 async def voices() -> dict:
     """Voices this server can speak in, best first."""
@@ -575,6 +1007,12 @@ async def voices() -> dict:
 @app.post("/api/script")
 async def script(req: ScriptRequest, request: Request) -> dict:
     _rate_limit(request)
+    # A script is a Claude call, which is the expensive half of an episode.
+    # Counted against the same allowance rather than a second one: from the
+    # allowance's point of view this *is* an episode, minus the audio.
+    # Kept only so the shape matches /api/audio: there is no failure path here
+    # between the reservation and the response, so nothing is ever refunded.
+    _reserve(request, "episode")
     plan = _validated_plan(req.query, req.minutes, "", req.search)
     generator = DemoGenerator() if DEMO_MODE else ScriptGenerator()
     notes = ScriptNotes()
@@ -597,12 +1035,39 @@ async def script(req: ScriptRequest, request: Request) -> dict:
 # Each store resolves its own path (env var, else the project root), so the
 # mapping from variable to file lives in one place per store rather than
 # being restated here.
+# Browser origins allowed to call this server. Off unless configured, and
+# deliberately not a wildcard: these requests carry the session cookie, and a
+# browser refuses `*` together with credentials - so a wildcard here would look
+# permissive, not work, and hide the real fix behind a setting that appeared to
+# be already correct.
+#
+# A native app is not a browser. It sends no Origin header and is not subject
+# to the same-origin policy at all, so the iOS client needs nothing here; this
+# exists only for a web client served from somewhere other than this server.
+_ALLOWED_ORIGINS = [o.strip() for o in settings.api_origins.split(",") if o.strip()]
+if _ALLOWED_ORIGINS:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+        # So a browser client can read the quota verdict on a 429 rather than
+        # only the status code.
+        expose_headers=["X-FAM-Quota", "X-Sample-Rate", "X-Requested-Seconds"],
+    )
+    log.info("CORS enabled for %s", ", ".join(_ALLOWED_ORIGINS))
+
+
 EVENTS = topics_mod.EventStore()
 MIXES = mixes_mod.MixStore()
 SOCIAL = social_mod.SocialStore()
 ACCOUNTS = accounts_mod.AccountStore()
 PREFS = prefs_mod.PreferenceStore()
 METER = metering.MeterStore()
+QUOTAS = quotas.QuotaStore()
 
 
 @app.middleware("http")
@@ -627,7 +1092,7 @@ async def carry_the_session(request: Request, call_next):
     wants_identity = path == "/" or (
         path.startswith("/api/") and path != "/api/health"
     )
-    token = request.cookies.get(accounts_mod.COOKIE_NAME, "")
+    token = _session_token(request)
     listener = ACCOUNTS.listener_for(token) if token else None
     minted = ""
     if listener is None and wants_identity:
@@ -653,6 +1118,66 @@ async def carry_the_session(request: Request, call_next):
     elif minted:
         _set_session_cookie(response, request, minted)
     return response
+
+
+#: The public API's version. Every endpoint is reachable at `/api/v1/...` as
+#: well as at `/api/...`, and the prefixed form is the one a shipped app must
+#: use. The reason is the whole reason a version exists: an app on somebody's
+#: phone cannot be redeployed with the server, so the day an endpoint has to
+#: change shape, `/api/v2` can carry the new one while `/api/v1` keeps the
+#: promise made to every phone already out there. Without a prefix that day
+#: forces a choice between breaking installed apps and never changing the API.
+API_VERSION = "v1"
+API_PREFIX = f"/api/{API_VERSION}"
+
+
+@app.middleware("http")
+async def version_prefix(request: Request, call_next):
+    """Serve `/api/v1/x` from the same handler as `/api/x`.
+
+    A rewrite rather than a second set of routes: two registrations of one
+    endpoint is two places for a decorator to drift, and the failure would be
+    a native client quietly getting different behaviour from the web one.
+
+    Declared after `carry_the_session` so it wraps it and therefore runs
+    *first* - the session middleware decides what to do from the path, and it
+    has to see the real one.
+    """
+    path = request.scope.get("path", "")
+    if path.startswith(API_PREFIX + "/") or path == API_PREFIX:
+        request.scope["path"] = "/api" + path[len(API_PREFIX):]
+    return await call_next(request)
+
+
+def _session_token(request: Request) -> str:
+    """The session token, from the cookie or from an Authorization header.
+
+    Two carriers, one session model. The web client uses the HttpOnly cookie
+    and cannot read it, which is what makes an XSS unable to walk off with
+    somebody's identity. A native app has no cookie jar worth relying on -
+    iOS clears `HTTPCookieStorage` under conditions the app does not control,
+    and "the listener silently became a different listener" is the worst
+    failure available to a product whose personalisation is an append-only log
+    keyed on that id - so it holds the same token in the Keychain and sends it
+    as `Authorization: Bearer`.
+
+    The settled rule is untouched: **the id still never comes from the
+    client.** A bearer token is the same server-minted, high-entropy,
+    revocable, never-stored-in-the-clear string the cookie carries. What
+    changes is the envelope, not the trust.
+
+    The cookie wins when both are present. A browser attaches its cookie
+    automatically, so a header alongside it is either a mistake or somebody
+    testing whether one overrides the other; the answer is no.
+    """
+    cookie = request.cookies.get(accounts_mod.COOKIE_NAME, "")
+    if cookie:
+        return cookie
+    header = request.headers.get("authorization", "")
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() == "bearer" and value.strip():
+        return value.strip()
+    return ""
 
 
 def _set_session_cookie(response, request: Request, token: str) -> None:
@@ -1248,12 +1773,24 @@ async def audio(
     # what the feed is for.
     (_read_limit if cached_only else _rate_limit)(request)
     user = _listener(request)
+    minutes = min(minutes, entitlements.max_minutes(_tier(request),
+                                                    settings.max_minutes))
     plan = _validated_plan(q, minutes, context, search, cached_only,
                            _attachments_for(user, attach))
+
+    # After validation, so a malformed request never costs an allowance, and
+    # before anything expensive starts. An Explore replay counts against a
+    # different, looser allowance because it provably cannot write a script -
+    # the pipeline refuses - so it costs GPU seconds and nothing else.
+    reserved = _reserve(request, "explore" if cached_only else "episode")
 
     try:
         pipeline = _make_pipeline(voice or None)
     except TTSUnavailable as exc:
+        # The server cannot speak at all. Nothing was generated and nothing was
+        # billed, so the allowance goes back - this is the machine being
+        # broken, not the listener spending.
+        _refund(reserved, user)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     stats = GenerationStats()
@@ -1289,6 +1826,7 @@ async def audio(
     except NotCached as exc:
         # Expected, not a fault: the entry expired between listing and tapping.
         # The interface drops the card and moves on.
+        _refund_if_unspent(reserved, user, stats.usage)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         log.exception("generation failed before any audio was produced")
@@ -1300,6 +1838,8 @@ async def audio(
                       surface=_surface(cached_only, topic_id, context),
                       minutes=plan.minutes, audio_seconds=stats.audio_seconds,
                       cache_hit=stats.cache == "hit")
+        # Same rule as the ledger above: refunded only if nothing was billed.
+        _refund_if_unspent(reserved, user, stats.usage)
         raise HTTPException(status_code=502, detail=friendly_error(exc)) from exc
 
     # `stats.sentences` is the honest test: silence is bytes, but it is not an
@@ -1445,7 +1985,12 @@ async def usage(
 
 @app.exception_handler(HTTPException)
 async def http_error(_: Request, exc: HTTPException):
-    return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+    # Headers are forwarded, not dropped. A 429 from the quota carries the
+    # whole verdict in `X-FAM-Quota` - what the limit was, what is left, when
+    # it resets - and a handler that kept only the sentence would leave the
+    # interface able to say "no" and nothing else.
+    return JSONResponse({"error": exc.detail}, status_code=exc.status_code,
+                        headers=getattr(exc, "headers", None))
 
 
 # Also resolved from the project root, and for the same reason as the

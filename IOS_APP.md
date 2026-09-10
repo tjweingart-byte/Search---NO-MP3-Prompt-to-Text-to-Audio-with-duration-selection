@@ -64,9 +64,10 @@ cleared by conditions the app does not control, and "the listener silently
 became a different listener" is the worst possible failure for a product whose
 whole personalisation model is an append-only log keyed on that id.
 
-So, before the app: `/api/auth/*` should be able to hand back a session token
-the client stores in the Keychain and sends as `Authorization: Bearer`, with
-the cookie path untouched for the web. One session model, two carriers.
+*Built.* `/api/auth/*` hands back a session token when the client asks with
+`want_token`, and `_session_token` accepts it as `Authorization: Bearer` with
+the cookie path untouched for the web. One session model, two carriers; a
+browser must never ask for the token.
 
 The rule for anything written between now and then, unchanged in spirit and
 extended in wording: **take the listener from `_listener(request)`, never from
@@ -92,14 +93,13 @@ Verify each against the current guidelines when the submission is real — they
 move — but these are the ones that apply to this app specifically, and two of
 them are hard rejections rather than notes.
 
-* **In-app account deletion (5.1.1(v)) — hard.** `accounts.py` has sign-up,
-  login, and password change. There is no delete. An app that creates accounts
-  and cannot delete them is rejected. It is also more interesting here than
-  usual: deleting a listener means deciding what happens to their events, their
-  echoes, their public mixes, and their rows in the shared script cache — and
-  the cache is *shared*, so their scripts are other listeners' Explore feed.
-  The answer is almost certainly: delete the identity and its personal stores,
-  keep the cached scripts unattributed. Decide it deliberately, once.
+* ~~**In-app account deletion (5.1.1(v))**~~ — *built* (`DELETE /api/account`;
+  ACCOUNTS.md). Every per-listener store is emptied, the cost ledger is
+  **anonymised rather than deleted** because a ledger with holes cannot be
+  reconciled against an invoice, and the shared script cache turned out to need
+  no decision at all: it holds no `user_id` and never has, so a departing
+  listener's scripts are already unattributed and nobody's Explore feed
+  develops holes.
 * **Generated and other-listener content (1.2) — hard.** FAM speaks an answer
   to an arbitrary typed question, and **Explore replays episodes other
   listeners generated**, with echoes carrying names. That is squarely the
@@ -136,13 +136,14 @@ writing with `write.py`. Do not start Stage 1 until an episode has been heard
 end to end and the endings are known to be good.
 
 **Stage 1 — the server becomes a public API rather than a localhost app.**
-A stable host with TLS and a name that does not change; a GPU that is up when a
-phone asks; bearer-token sessions beside the cookie; CORS for exactly the
-origins that need it; a version prefix so a shipped app is not broken by a
-server deploy; and a real quota. `RATE_LIMIT_SECONDS=3.0` is a debounce, not a
-budget — it stops double-taps and stops nothing else. A public beta with no
-ceiling on episodes per listener per day is an uncapped bill against an
-uncapped GPU.
+*Mostly built* (ACCOUNTS.md): bearer sessions beside the cookie, CORS for named
+origins only, `/api/v1` so a shipped app is not broken by a server deploy, and
+real per-tier quotas — `RATE_LIMIT_SECONDS=3.0` was a debounce, not a budget.
+Sign-in with Google and Apple, email-or-phone accounts, settings and deletion
+came with it.
+
+What remains in this stage is **deployment, not code**: a stable host with TLS
+and a name that does not change, and a GPU that is up when a phone asks.
 
 **Stage 2 — the audio spike, and it is the go/no-go.** One throwaway Swift app
 that plays one episode from the real server, from PCM over a live stream, and
