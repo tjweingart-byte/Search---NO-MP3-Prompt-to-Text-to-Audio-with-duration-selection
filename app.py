@@ -10,6 +10,7 @@ Endpoints
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import os
 import json
@@ -287,6 +288,33 @@ ATTACHMENTS = attachments_mod.AttachmentStore()
 # canned. This is what makes the audio approach verifiable before anyone has
 # an API key in place.
 DEMO_MODE = not settings.anthropic_api_key
+
+
+def _wake_remote_voice() -> None:
+    """Fire-and-forget: start a remote GPU booting, if one is configured.
+
+    Deliberately not awaited. The wake is worth several seconds when it lands
+    and must be worth zero when it does not, so nothing here may raise, block,
+    or keep a reference the request has to clean up. A no-op for every backend
+    but a serverless one, where there is genuinely something asleep.
+    """
+    if settings.voice_backend != "remote":
+        return
+    try:
+        import remote_voice
+
+        task = asyncio.create_task(remote_voice.RemoteChatterboxEngine.wake())
+        # Held so the loop cannot garbage-collect a running task, and dropped
+        # the moment it finishes.
+        _WAKES.add(task)
+        task.add_done_callback(_WAKES.discard)
+    except Exception as exc:  # pragma: no cover - a hint that cannot cost one
+        log.debug("could not wake the remote voice: %s", exc)
+
+
+#: Strong references to in-flight wake tasks. asyncio keeps only weak ones, so
+#: without this a wake can be collected mid-flight and silently never sent.
+_WAKES: set = set()
 
 
 def _make_pipeline(voice: Optional[str] = None) -> PodcastPipeline:
@@ -2293,6 +2321,17 @@ async def audio(
         # broken, not the listener spending.
         _refund(reserved, user)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    # Ask for a GPU now, before Claude has written a word.
+    #
+    # A serverless worker that has scaled to zero pays container boot plus a
+    # ~10s model load on its first job. Firing that here means it happens
+    # *alongside* script generation instead of in front of the first chunk -
+    # which is CLAUDE.md's rule that latency is answered by starting earlier
+    # rather than by filling the gap, applied to the one wait this split adds.
+    # It is a hint: `wake()` never raises and never blocks, and a miss costs
+    # only the cold start it was trying to hide.
+    _wake_remote_voice()
 
     stats = GenerationStats()
     started = time.monotonic()

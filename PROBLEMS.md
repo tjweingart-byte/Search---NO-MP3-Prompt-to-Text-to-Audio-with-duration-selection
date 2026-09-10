@@ -3858,3 +3858,119 @@ and a failover still keeps the keys behind it.
 about as a chain - environment, then provider, then files - and the chain is
 right. The cache in front of it was not part of that reasoning, and a cache is a
 precedence decision whether or not anyone wrote it down as one.
+
+## 75. The GPU was 99% idle, so the voice moved off the app's machine
+
+Not a bug. A cost shape that the architecture had already named and nobody had
+acted on, and it is written down here because the *reasoning* is the part worth
+keeping — the code is small.
+
+`DEPLOY.md` said it plainly: **Chatterbox runs in-process, so every replica
+needs a GPU, and a GPU left running is the expensive kind.** At the volume this
+product is actually at, that is the whole problem. Thirty minutes of audio a day
+is **2% of the month**, and at Chatterbox's measured ~4.6x realtime the card is
+genuinely working **0.45%** of the hours it is rented for. A pod billed 24/7 is
+therefore about 99.5% idle, and the bill does not know that.
+
+**What was measured before deciding.** Resemble's hosted API was priced first,
+since it is the same company that publishes Chatterbox: Flex is $0.0005 per
+second of audio with no monthly ceiling, so a 3-minute episode is $0.09 against
+a ~$0.03 script — four times the writing, and about $34.50 per million
+characters, which puts it in the *expensive* third of `VOICE_OPTIONS.md`'s
+shortlist rather than the cheap end. It would also have meant a different model
+and a different voice, and a fresh consent recording from the person whose voice
+`reference_3` is. Renting the same card by the second is cheaper than renting
+somebody's inference by the second, and it keeps the voice.
+
+### The shape of the change
+
+One JSON contract, two envelopes, one worker image:
+
+    remote_voice.py           the app's side; owns the transport, nothing else
+    voice_worker/synth.py     the card's side; owns the audio, nothing else
+    voice_worker/handler.py   RunPod Serverless envelope
+    voice_worker/server.py    plain-HTTP envelope, for an always-on pod
+
+The worker **imports the real `ChatterboxEngine`** rather than reimplementing
+`generate()`. That was the single most load-bearing decision here. The six
+numbers in `CHATTERBOX_GENERATION` *are* the voice — the file says changing one
+invalidates every listening judgement made on it — so a second copy on the
+worker would be a second place for them to drift, and the drift would be
+inaudible until someone compared two episodes side by side. Importing also
+inherits the rights gate and the CPU refusal for free, which are two more things
+that must not exist twice.
+
+`speech_assembly.py` already batches sentences into ~33-word chunks, so an
+episode is about fifteen requests rather than one per sentence. Each chunk is
+~10 seconds of audio, which is ~10 seconds of playback headroom for the next
+round trip. The split is affordable because that batching already happened.
+
+### Four things that had to be got right, none of them obvious
+
+* **The sample rate is known before the first call.** `app.py` writes
+  `X-Sample-Rate` from `engine.sample_rate` before the response body runs, so
+  the engine cannot wait to be told. It is configured, asked for in every
+  request, and the reply is *checked* against it. A worker answering at a
+  different rate is refused rather than played — a wrong rate is a failure the
+  listener hears and nothing anywhere explains.
+* **Base64 over JSON is not an audio file.** "No MP3, no audio files" is a rule
+  about what reaches the listener and what is written to disk, not about what
+  two servers say to each other — the same reasoning §61's WellSaid work
+  established. Nothing is transcoded, and a worker offering `mp3` is refused
+  rather than decoded.
+* **Configured is not reachable.** `available()` reads configuration and never
+  touches the network, because `/api/health` calls it and a health check that
+  makes a billed third-party request is one nobody can afford to poll. What
+  *does* perform the real action is `warm_up()`, and its answer is kept rather
+  than only logged, so `/api/health` reports `reachable: {state: ok|failed|
+  unknown}` beside `configured`. §52 again: "a credential is set" is not "the
+  credential works", and one report must not let either stand in for the other.
+* **The cold start is answered by starting earlier.** A serverless worker at
+  zero pays boot plus a ~10s model load. `app.py` fires `remote_voice.wake()`
+  when a request arrives — before Claude has written a word — so the worker
+  boots while the script is being written. It never raises, never blocks and
+  will not stampede; a miss costs only the cold start it was trying to hide.
+  This is the same move as prefetching scripts for the browse surfaces, and it
+  is emphatically *not* the cold open: nothing is played to cover the wait.
+
+### §61's two guards, re-added by hand as it said to
+
+`VOICE_OPTIONS.md` wrote both down rather than leaving them as dead code, on the
+grounds that the next hosted engine should add them deliberately. It did.
+
+* **A rented voice is never the default.** `VOICE_BACKEND` defaults to
+  `chatterbox` and nothing auto-detects. `default_voice()` returning the first
+  offered voice is how WellSaid silently became what every listener got on any
+  machine without Piper; here the remote backend is unreachable without an
+  explicit decision, and a test fails if that default ever drifts.
+* **A hosted engine never falls back to a local one.** Every failure raises
+  with the real reason — network error, 401, empty audio, wrong rate. There is
+  no substitution, because substituting means judging one backend by another's
+  output, and an operator debugging a GPU that was never being asked to speak.
+
+### Deliberately a knob, which is the exception
+
+This project deletes rather than disables — the cold open, Piper, WellSaid —
+because a knob left behind is an invitation to turn it back on, and this one
+turned itself once already. That rule is suspended here **on purpose**: a card
+of our own is where this is going, and the split exists only while the volume
+does not justify one. So `Dockerfile.gpu`, `RUNPOD_PRODUCTION.md`,
+`pack_for_pod.py`, `pod_production_test.sh`, `requirements-chatterbox.txt` and
+`ChatterboxEngine` are all untouched, and going back is one variable.
+
+The difference from the cases the rule is for: those knobs led *away* from the
+product's spec. This one leads back to it.
+
+### Still unheard
+
+Nobody has heard a FAM episode through this path, or through any Chatterbox
+path — that is still open problem #1 in CLAUDE.md and this does not close it.
+What the tests establish is that the transport is correct, that failures fail,
+and that the contract survives a worker answering wrongly. **Whether it sounds
+like the in-process engine is the thing to check first**, and it is checkable
+cheaply: the same script through both backends, back to back.
+
+The other unmeasured number is the wake. Whether it actually covers a cold
+start on a real endpoint has not been observed — only reasoned about from the
+script-generation time on one side and the model-load time on the other. If it
+does not, `REMOTE_VOICE.md` lists the three fixes in order of cost.

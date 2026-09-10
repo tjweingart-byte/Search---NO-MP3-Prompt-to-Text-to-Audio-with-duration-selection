@@ -1,0 +1,71 @@
+# FAM's voice, on its own.
+#
+# `Dockerfile.gpu` is the whole app on a card. This is only the speech half, so
+# the app can run where it is cheap - a Render CPU service - and the GPU exists
+# only while there is something to say. See REMOTE_VOICE.md.
+#
+# One image, two entrypoints, chosen at runtime:
+#
+#   VOICE_WORKER_MODE=serverless   RunPod Serverless; sleeps when idle
+#   VOICE_WORKER_MODE=http         a plain port on an always-on pod
+#
+# That is deliberate. Two images would drift, and the whole premise of the
+# split is that moving between serverless and always-on is configuration
+# rather than a rebuild - on this side as well as on the app's.
+#
+#   docker build -f Dockerfile.voice -t <registry>/fam-voice:<tag> .
+#   docker push <registry>/fam-voice:<tag>
+
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3.11 python3-pip python3.11-venv ca-certificates curl \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Requirements first, so a code change does not reinstall CUDA-sized wheels.
+# No requirements-exa.txt here: this container never researches anything. It
+# receives text that has already been written and returns audio.
+COPY requirements.txt requirements-chatterbox.txt requirements-voice-worker.txt ./
+RUN python -m pip install --upgrade pip \
+ && python -m pip install -r requirements.txt \
+ && python -m pip install -r requirements-chatterbox.txt \
+ && python -m pip install -r requirements-voice-worker.txt
+
+# The whole tree, because `voice_worker/synth.py` imports the real
+# `ChatterboxEngine` rather than reimplementing it. The generation settings are
+# the voice; a copy of them in this image would be a second place to drift.
+COPY . .
+
+# Two trees must outlive the container, and neither may be baked into it.
+#
+#   /state/hf      Chatterbox weights. from_pretrained downloads on first use,
+#                  which is most of a cold worker's boot. On a network volume
+#                  it is paid once, by the first worker, ever - which is what
+#                  makes serverless cold starts survivable at all.
+#   /state/voices  reference_3.wav and its .rights.json. The engine refuses to
+#                  speak without both. A cloned voice is somebody's voice, and
+#                  a voice in a container registry is somebody's voice in a
+#                  container registry.
+ENV HF_HOME=/state/hf \
+    FAM_VOICES_DIR=/state/voices \
+    CHATTERBOX_DEVICE=auto \
+    VOICE_WORKER_MODE=serverless \
+    PORT=8001
+
+RUN mkdir -p /state/hf /state/voices
+
+EXPOSE 8001
+
+# `exec` so signals reach Python: RunPod stops a worker with SIGTERM, and a
+# shell swallowing it means the platform waits out the grace period on every
+# scale-down.
+CMD ["sh", "-c", "if [ \"$VOICE_WORKER_MODE\" = http ]; then exec python -m uvicorn voice_worker.server:app --host 0.0.0.0 --port ${PORT:-8001}; else exec python -u voice_worker/handler.py; fi"]

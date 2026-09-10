@@ -26,6 +26,49 @@ services:
         value: "0"
       - key: MODEL
         value: claude-sonnet-5
+      # --- The voice ----------------------------------------------------
+      #
+      # Render has no GPU, so this service cannot speak by itself: with the
+      # default backend it reports `interim: true` and plays a placeholder
+      # tone. `remote` points it at Chatterbox on a RunPod worker, which is
+      # what makes a CPU host a complete deployment rather than a mute one.
+      #
+      # The two halves are deployed independently on purpose. Switching this
+      # service between a serverless endpoint and an always-on pod - or back
+      # to an in-process card on GPU hosting - is these variables and nothing
+      # else. See REMOTE_VOICE.md.
+      - key: VOICE_BACKEND
+        value: remote
+      - key: REMOTE_VOICE_TRANSPORT
+        value: runpod      # runpod (sleeps when idle) | http (always-on pod)
+      # The endpoint id from the RunPod console. Not a secret, but it names
+      # *your* endpoint, so it is asked for rather than committed.
+      - key: RUNPOD_ENDPOINT_ID
+        sync: false
+      # Authorises a job on it. Same handling as the Anthropic key: the
+      # dashboard, or FAM_SECRETS. Never in this file.
+      - key: RUNPOD_API_KEY
+        sync: false
+      # Chatterbox's rate. It has to be right before the first request: the
+      # stream header is written from it before any audio exists, and the
+      # engine refuses a worker that answers at a different rate rather than
+      # playing it at the wrong pitch.
+      - key: REMOTE_VOICE_SAMPLE_RATE
+        value: "24000"
+      # Covers a cold worker: container boot, a ~10s model load, then the
+      # synthesis. A warm one answers a chunk in a couple of seconds.
+      - key: REMOTE_VOICE_TIMEOUT
+        value: "180.0"
+      #
+      # Deliberately NOT pinned here: ANSWER_FIRST. `Dockerfile.gpu` sets it to
+      # 1 because the configuration that was listened to and judged good ran
+      # with the cover on, and `config.py` has since derived it from the
+      # research backend. That pin is provisional in the image and unmeasured
+      # either way, so copying it into a second deployment would spread an
+      # untested decision rather than settle it. Once a card has run
+      # `ANSWER_FIRST=1 bash tools/pod_production_test.sh` against the same
+      # harness without it, whichever wins belongs in config.py and neither
+      # deployment needs a line.
     disk:
       name: fam-data
       mountPath: /data     # matches the Dockerfile's CACHE_PATH etc.

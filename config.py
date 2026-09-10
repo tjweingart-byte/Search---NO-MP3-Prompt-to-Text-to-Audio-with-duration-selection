@@ -258,6 +258,12 @@ def _answer_first_default() -> bool:
 #: rather than falling back to either.
 STREAMING_PIPELINES = ("legacy", "phase6")
 
+#: Which machine fills the one production voice slot. See `voice_backend`.
+VOICE_BACKENDS = ("chatterbox", "remote")
+
+#: How the app reaches a remote voice. Both are the same worker image.
+VOICE_TRANSPORTS = ("runpod", "http")
+
 #: What a deployment gets when it says nothing. Named rather than repeated as a
 #: literal, so "the default" is one fact in one place: `Settings`, the health
 #: report and the tests all read it from here.
@@ -460,6 +466,74 @@ class Settings:
     # production engine, or a placeholder tone if this machine cannot run it".
     # It cannot name a production engine into existence: nothing here is one.
     tts_engine: str = field(default_factory=lambda: os.environ.get("TTS_ENGINE", "auto"))
+    # --- Which machine speaks --------------------------------------------
+    # chatterbox | remote. Fills the one production slot.
+    #
+    # `chatterbox` is Chatterbox in this process, on this machine's card. It is
+    # the default, and the default is load-bearing: a hosted or rented voice
+    # must never be reachable because nothing else happened to be installed.
+    # That is the guard PROBLEMS.md §61 removed with WellSaid - `default_voice()`
+    # returns the first offered voice, so merely registering a second engine
+    # made it what every listener got - and this is it, re-added deliberately.
+    # Nothing here auto-detects: a deployment that wants the remote voice says
+    # so, and one that says nothing gets the in-process engine it always had.
+    #
+    # `remote` is the same Chatterbox on a card somewhere else, reached over
+    # HTTP by `remote_voice.py`. Same weights, same reference recording, same
+    # generation settings - so this changes where the GPU is and what it costs,
+    # not what a listener hears.
+    voice_backend: str = field(
+        default_factory=lambda: os.environ.get("VOICE_BACKEND", "chatterbox"))
+    # --- The remote voice, when VOICE_BACKEND=remote ----------------------
+    # runpod | http. The transport, and the only thing that differs between
+    # RunPod Serverless (sleeps when idle, pays per second) and an always-on
+    # pod (never cold, pays per hour). One worker image serves both, so moving
+    # between them is this line plus the endpoint - never a code change.
+    remote_voice_transport: str = field(
+        default_factory=lambda: os.environ.get("REMOTE_VOICE_TRANSPORT", "runpod"))
+    # transport=runpod: the endpoint id from the RunPod console, and the key
+    # that authorises a job on it. The key goes through the credential chain
+    # (process env, FAM_SECRETS, .env, ~/.fam/env) like every other secret.
+    runpod_endpoint_id: str = field(
+        default_factory=lambda: os.environ.get("RUNPOD_ENDPOINT_ID", ""))
+    runpod_api_key: str = field(
+        default_factory=lambda: os.environ.get("RUNPOD_API_KEY", ""))
+    runpod_base_url: str = field(
+        default_factory=lambda: os.environ.get(
+            "RUNPOD_BASE_URL", "https://api.runpod.ai/v2"))
+    # transport=http: the pod's base URL, and the shared secret it checks. An
+    # exposed port with no token is somebody else's free TTS service billed to
+    # your pod, so the worker warns at every boot when it is unset.
+    remote_voice_url: str = field(
+        default_factory=lambda: os.environ.get("REMOTE_VOICE_URL", ""))
+    remote_voice_token: str = field(
+        default_factory=lambda: os.environ.get("REMOTE_VOICE_TOKEN", ""))
+    # The rate the worker's model emits. 24000 is Chatterbox's, and it must be
+    # right *before* the first request: `app.py` writes the stream header from
+    # `engine.sample_rate` before any audio has been asked for. The engine
+    # refuses a reply that disagrees rather than playing it at the wrong pitch.
+    remote_voice_sample_rate: int = _env_int("REMOTE_VOICE_SAMPLE_RATE", 24000)
+    # Long enough to cover a cold serverless worker: container boot plus a ~10s
+    # model load, on top of the synthesis itself. This is a ceiling on the
+    # worst case, not a target - a warm worker answers a chunk in a couple of
+    # seconds, and `remote_voice.wake()` exists so the worst case is rare.
+    remote_voice_timeout: float = _env_float("REMOTE_VOICE_TIMEOUT", 180.0)
+    remote_voice_connect_timeout: float = _env_float(
+        "REMOTE_VOICE_CONNECT_TIMEOUT", 10.0)
+    # How many chunks may be in flight at once. In-process Chatterbox is
+    # pinned at one because a single card cannot run concurrent generations
+    # safely; that is a property of the card, not of the interface, so a
+    # remote backend that can fan out across workers sets its own ceiling.
+    remote_voice_concurrency: int = _env_int("REMOTE_VOICE_CONCURRENCY", 4)
+    # Which reference the worker clones, when it offers more than one. Blank
+    # means the worker's own default, which is reference_3.
+    remote_voice_id: str = field(
+        default_factory=lambda: os.environ.get("REMOTE_VOICE_ID", ""))
+    # Don't send a second wake within this many seconds: a serverless worker
+    # that is already booting does not boot faster for being asked twice, and
+    # each ask is a queued job.
+    remote_voice_wake_interval: float = _env_float(
+        "REMOTE_VOICE_WAKE_INTERVAL", 60.0)
     # --- Chatterbox: the production voice --------------------------------
     # Where the model runs. `auto` picks cuda, then mps, and refuses cpu -
     # Chatterbox on a CPU is slower than speech, so an episode would starve.
@@ -560,6 +634,29 @@ class Settings:
                 f"STREAMING_PIPELINE={self.streaming_pipeline!r} is not a "
                 f"pipeline. Use one of: {', '.join(STREAMING_PIPELINES)}."
             )
+        if self.voice_backend not in VOICE_BACKENDS:
+            # Refused at construction, like the pipeline above and for the same
+            # reason: a typo here ("runpod" where "remote" was meant) would
+            # otherwise fall through to no production engine at all, and the
+            # deployment would serve a placeholder tone that sounds like a
+            # broken GPU rather than a misspelled variable.
+            raise ValueError(
+                f"VOICE_BACKEND={self.voice_backend!r} is not a voice backend. "
+                f"Use one of: {', '.join(VOICE_BACKENDS)}.")
+        if self.voice_backend == "remote":
+            if self.remote_voice_transport not in VOICE_TRANSPORTS:
+                raise ValueError(
+                    f"REMOTE_VOICE_TRANSPORT={self.remote_voice_transport!r} is "
+                    f"not a transport. Use one of: {', '.join(VOICE_TRANSPORTS)}.")
+            if self.remote_voice_sample_rate <= 0:
+                raise ValueError(
+                    f"REMOTE_VOICE_SAMPLE_RATE={self.remote_voice_sample_rate} "
+                    "must be positive: it is the rate the stream header claims "
+                    "before the first byte of audio exists.")
+            if self.remote_voice_concurrency < 1:
+                raise ValueError(
+                    f"REMOTE_VOICE_CONCURRENCY={self.remote_voice_concurrency} "
+                    "must be at least 1; zero would deadlock every episode.")
         if self.research_backend not in RESEARCH_BACKENDS:
             raise ValueError(
                 f"RESEARCH_BACKEND={self.research_backend!r} is not a research "

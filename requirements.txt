@@ -31,8 +31,15 @@ numpy>=1.24
 
 # Development only
 pytest>=8.0
-# For fastapi.testclient only. The Anthropic SDK uses httpx2, which it pulls in
-# itself - do not add httpx expecting the SDK to use it.
+
+# No longer development-only. `remote_voice.py` uses this to reach a Chatterbox
+# worker on a GPU somewhere else, so with VOICE_BACKEND=remote it is on the
+# synthesis path of every episode - a CPU deployment that skipped it would
+# install cleanly and then be unable to speak. It is also what
+# fastapi.testclient runs on.
+#
+# The Anthropic SDK uses httpx2, which it pulls in itself - do not add httpx
+# expecting the SDK to use it.
 httpx>=0.27
 
 # Optional: PDF attachments. Everything else (docx, text, links, photos)

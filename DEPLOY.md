@@ -120,10 +120,16 @@ This makes the machine reproducible; it does not make it automatic.
 
 The constraint to know before you plan around it: **Chatterbox runs in-process**,
 so every replica needs a GPU, and a GPU left running is the expensive kind.
-Splitting speech into its own service — prototyped as
-`experiments/adapters/chatterbox_server_example.py` on the unmerged
-`fam-repo-inventory` branch — is what lets the app run on cheap CPU hosting with
-only the voice on a card. That is a real decision, not a config change.
+
+**That split is now built** — `REMOTE_VOICE.md`, PROBLEMS.md §75. The app runs
+on cheap CPU hosting (Render) and only the voice is on a card, reached over
+HTTP by `remote_voice.py`. It is one variable on each side, and going back to
+the single-box deployment this file describes is unsetting `VOICE_BACKEND`.
+Nothing below changed to make room for it.
+
+Which one is right is a volume question, and the numbers are in `REMOTE_VOICE.md`:
+below roughly four hours of audio a day a rented card billed by the second is
+cheaper than one billed by the hour, and above it this file wins.
 
 The other number that bites at scale is bandwidth: **2.65 MB/min uncompressed**
 per listener. Opus over the stream is the fix and is compatible with the
