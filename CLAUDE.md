@@ -381,6 +381,42 @@ another rule.
   a pool of keys is failover and not headroom, and the real ceiling on
   concurrency is the GPU, not the credential.
 
+## There is an iOS app coming, and it changes how to write everything else
+
+`IOS_APP.md` is the whole of it. The short version, because it constrains work
+that has nothing to do with the app:
+
+**The app is a native client of this API, not a web view around
+`static/index.html`.** A wrapper is rejected under guideline 4.2, and worse, iOS
+suspends a `WKWebView`'s `AudioContext` when the phone locks - so the episode
+would stop the moment it is most wanted.
+
+Three consequences for ordinary changes, starting now:
+
+- **Every feature is an API before it is a screen.** Behaviour that exists only
+  in the interface is behaviour that has to be written a second time.
+- **Nothing new on the audio path may assume a browser** - not `AudioContext`
+  semantics, not a cookie riding along on its own, not a relative URL.
+  `static/fam-audio.js` is the port's specification: the retained `Int16`
+  buffer, the clock-derived cursor and `TAIL_MARGIN` were all paid for in bugs.
+- **A listener id still never comes from the client, and `_listener` must be
+  satisfiable by a header**, not only by the cookie. A server-minted bearer
+  token in the Keychain keeps that rule exactly; `?user=` never does.
+
+The two settled constraints the app pressures, and how they resolve: **no MP3,
+no audio files still holds** - Opus over a stream is decoded as it arrives and
+writes nothing, so compression was always compatible and is now a prerequisite
+rather than a scale question (26 MB for a ten-minute episode on cellular). And
+**account deletion is missing**, which is a hard rejection for any app that
+creates accounts - and an interesting decision here, because the script cache
+is shared, so a deleted listener's scripts are other listeners' Explore feed.
+
+What has to happen, in order: hear an episode in the production voice (open
+problem #1 - everything else is scaffolding around an unlistened product);
+make the server a public API with a real quota rather than a 3-second
+debounce; then a throwaway Swift spike that plays one streamed episode with the
+phone locked, which is the go/no-go for all of it.
+
 ## Decisions that will shape the next phase
 
 - **Where does this deploy?** Bandwidth is 2.65 MB/min uncompressed; that is
@@ -455,9 +491,10 @@ not open a pull request unless asked.
 
 Read in this order: this file for where it is going and what is settled,
 `PROBLEMS.md` for every problem hit and its cause (newest last — §68-73 are the
-most recent), `DEVELOPMENT.md` for the loop, and `CREDENTIALS.md` for how a
-machine gets its API keys without anybody typing one, and `METERING.md` for
-what a listener costs and how the report says so.
+most recent), `DEVELOPMENT.md` for the loop, `CREDENTIALS.md` for how a
+machine gets its API keys without anybody typing one, `METERING.md` for
+what a listener costs and how the report says so, and `IOS_APP.md` for the
+app version this is now being written towards.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
 and the second one is not optional:
