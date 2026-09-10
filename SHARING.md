@@ -163,10 +163,11 @@ their phone held against their limit with nothing pointing at them.
 ## In the interface
 
 * **Messages**: the Explore New tile became **Save for Later**, as asked.
-  Explore New was *not* orphaned with it — it is the only surface offering
-  anything outside an established taste, so its only entry point becoming a
-  dead end would quietly remove the app's whole discovery path. It is now a row
-  under the tiles. If it belongs somewhere else, that is a one-line move.
+  Explore New moved to **myFAM**, where it is now a rail of its own between
+  "Made for you" and the crowd — found rather than remembered. That is a better
+  home than the tile it lost: it is the only surface offering anything outside
+  an established taste, and the interim row under the tiles that kept it
+  reachable is gone now that it has a real place.
 * **Every player** — search, play-all and Explore — has **share** and **save**.
   Explore included, so the surface where people find things is not the one
   where they cannot keep them.

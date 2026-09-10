@@ -136,10 +136,26 @@ def main() -> int:
                 "the recap could not be dismissed"
 
         def myfam():
+            """One rail per signal, and the count comes from the code.
+
+            Hard-coding it meant the number had to be edited by hand whenever a
+            section moved, which is exactly when nobody remembers to. Explore
+            New is checked by name because it is the one that has been removed
+            from this page once already.
+            """
             page.evaluate("openMyFamTab()")
             page.wait_for_selector(".feed-rail .seed-card", timeout=10000, state="attached")
             rails = page.eval_on_selector_all(".feed-section", "e => e.length")
-            assert rails == 3, f"expected 3 sections, saw {rails}"
+            wanted = len(topics_mod.SECTIONS)
+            assert rails == wanted, f"expected {wanted} sections, saw {rails}"
+            titles = page.eval_on_selector_all(".feed-title", "e => e.map(x => x.textContent)")
+            assert any("Explore New" in t for t in titles), \
+                f"Explore New is not on myFAM: {titles}"
+            # The heading is the way through to the full surface. Without a
+            # visible affordance nobody finds it, which is how Explore New
+            # became unreachable the first time.
+            assert page.eval_on_selector_all(".feed-see", "e => e.length") >= 1, \
+                "the Explore New rail offers no way through to the full surface"
 
         def go_deeper_titles_fit():
             """A clipped title is invisible to every other check.
@@ -252,10 +268,9 @@ def main() -> int:
             page.wait_for_timeout(600)
             tiles = page.eval_on_selector_all(".yf-tile-name", "e => e.map(x => x.textContent)")
             assert tiles == ["Weekly Recap", "Save for Later"], f"saw {tiles}"
-            # Explore New gave up its tile to Save for Later and must not have
-            # been orphaned with it: it is the only surface offering anything
-            # outside an established taste, so losing its last entry point
-            # would quietly remove the app's whole discovery path.
+            # Explore New gave up this tile to Save for Later and now lives on
+            # myFAM as a rail of its own - which is where it can be found
+            # rather than remembered. The screen behind it is checked here.
             page.evaluate("openExploreNew()")
             page.wait_for_selector("#screen-explorenew.active .xn-card",
                                    timeout=10000, state="attached")
@@ -621,7 +636,7 @@ def main() -> int:
         print(f"smoke test: {target.name}")
         check("The first run asks, then lets you in", first_run_asks_before_it_shows_the_app)
         check("The weekly recap pops and closes", the_weekly_recap_pops_on_a_new_week)
-        check("myFAM renders three rails", myfam)
+        check("myFAM renders a rail per signal", myfam)
         check("Go Deeper titles are not cut off", go_deeper_titles_fit)
         check("Go Deeper fills for a new listener", go_deeper_fills_for_a_new_listener)
         check("A file can be attached to a search", attachments)
@@ -633,7 +648,7 @@ def main() -> int:
               saving_from_the_player_asks_about_downloading)
         check("An episode can be shared outside FAM",
               an_episode_can_be_shared_outside_fam)
-        check("Your FAM offers the recap and Explore New",
+        check("Your FAM offers the recap and Save for Later",
               your_fam_offers_the_recap_and_explore_new)
         check("What's next offers four with a countdown",
               whats_next_offers_four_and_counts_down)

@@ -610,6 +610,12 @@
      are here, in the display face rather than a mono kicker. */
   .feed-title{ font-family:'Fraunces', serif; font-weight:400; font-size:20px;
     line-height:1.25; color:var(--text); margin:26px 0 12px; text-wrap:balance; }
+  /* A rail whose heading opens something says so. Without this the tap target
+     is invisible and nobody finds the surface behind it - which is how Explore
+     New became unreachable the first time. */
+  .feed-see{ font-family:'JetBrains Mono', monospace; font-size:9px;
+    letter-spacing:0.1em; text-transform:uppercase; color:var(--copper);
+    vertical-align:middle; margin-left:6px; white-space:nowrap; }
 
   /* Cards carry their reason. A recommendation that cannot say why it is
      there reads as arbitrary, and the tag doubles as the picture's caption. */
@@ -1541,14 +1547,6 @@
               <div class="yf-tile-name">Save for Later</div>
               <div class="yf-tile-sub" id="yfSavedSub">Episodes you kept</div>
             </div>
-          </div>
-          <!-- Explore New lost its tile to Save for Later, and is kept
-               reachable here rather than orphaned: it is the only surface that
-               offers anything OUTSIDE an established taste (CLAUDE.md open
-               problem #4), so deleting its only entry point would quietly
-               remove the app's whole discovery path. -->
-          <div class="sv-bar" onclick="openExploreNew()" style="cursor:pointer;">
-            EXPLORE NEW &middot; NEXT TO YOUR TASTE, NOT MORE OF IT &rsaquo;
           </div>
           <div class="search-bar" onclick="toast('Search messages (demo only)')">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -3811,9 +3809,17 @@
   // labelled the machinery ("co-listener overlap"); these speak to the person.
   var SECTION_TITLE = {
     from_history: null,           // built per-listener, see madeForTitle()
+    might_like:   "Explore New",
     followers:    "Your circle is on this",
     trending:     "What FAM can't stop playing"
   };
+
+  // Which rails open a fuller surface when the heading is tapped. Only
+  // Explore New has one: the rail is six cards from `rank_might_like` and the
+  // screen behind it is the same ranking with room to say why it chose them.
+  // One ranking, two views - so tapping through can never show a different
+  // answer to the question the rail just answered.
+  var SECTION_OPENS = { might_like: "openExploreNew()" };
 
   function madeForTitle(){
     var h = new Date().getHours();
@@ -3827,6 +3833,11 @@
   function seedWhy(sectionKey, topic){
     if(sectionKey === "from_history") return "Because of what you have played";
     if(sectionKey === "followers")    return "<b>People you follow</b> played this";
+    // Says the opposite of the others on purpose. This is the one rail that is
+    // not a reflection of an established taste, and a card that claimed
+    // "because of what you played" here would be describing the ranking that
+    // deliberately muted exactly that.
+    if(sectionKey === "might_like")   return "<b>Next to</b> your taste, not more of it";
     return "Playing across FAM now";
   }
 
@@ -3836,8 +3847,12 @@
     var html = sections.map(function(sec){
       var title = SECTION_TITLE[sec.key];
       if(sec.key === "from_history") title = madeForTitle();
-      var heading = '<div class="feed-title">' + escapeHtml(title || sec.title)
-        .replace(/\n/g, "<br>") + '</div>';
+      var opens = SECTION_OPENS[sec.key];
+      var heading = '<div class="feed-title"'
+        + (opens ? ' onclick="' + opens + '" style="cursor:pointer;"' : '')
+        + '>' + escapeHtml(title || sec.title).replace(/\n/g, "<br>")
+        + (opens ? ' <span class="feed-see">See all</span>' : '')
+        + '</div>';
 
       if(!sec.topics.length){
         // Honest rather than padded. A new listener has no history and no

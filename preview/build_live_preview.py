@@ -360,12 +360,18 @@ LIVE_SHIM = r"""
     // sections choose before the generic ones can claim the bank.
     out.from_history = take(scored.map(function (x) { return x.t; }), 6);
     out.followers = take(byCount, 6);
+    // Exploration, from the same ranking the Explore New screen uses - so the
+    // rail and the surface it opens cannot disagree about what is adjacent to
+    // a taste. Filled here, in FILL_ORDER position, so the personal sections
+    // still choose before it and trending still chooses last.
+    out.might_like = take(exploreNewBody(myPrefs().interests).topics, 6);
     out.trending = take(byCount.concat(BANK), 6);
     return { picked: out, personalised: Object.keys(profile).length > 0 };
   }
 
   var SECTIONS = [
     ["from_history", "Made for you", "Your first episode starts this one off."],
+    ["might_like", "Explore New", "Listen to a few episodes and this fills in."],
     ["followers", "Your circle is on this", "Nobody you overlap with has listened yet."],
     ["trending", "What FAM can't stop playing", "Nothing has been played yet."]
   ];

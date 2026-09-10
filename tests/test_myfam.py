@@ -191,6 +191,45 @@ def test_the_four_sections_are_always_present_and_in_order(store):
     assert [s["key"] for s in feed["sections"]] == [k for k, _ in T.SECTIONS]
 
 
+def test_explore_new_is_on_the_feed(store):
+    """It has been taken off this page once already.
+
+    `rank_might_like` is the only signal that offers anything *outside* an
+    established taste. Without it myFAM is history, co-listeners and the crowd
+    - three ways of being told what you already like - so its absence is not a
+    missing shelf, it is the page losing the only thing that widens a taste.
+    """
+    keys = [k for k, _ in T.SECTIONS]
+    assert "might_like" in keys, "Explore New is not on myFAM"
+    assert "might_like" in T.FILL_ORDER, \
+        "Explore New is displayed but never filled, so its rail is always empty"
+
+
+def test_explore_new_sits_between_the_personal_shelf_and_the_crowd(store):
+    """Not first: a returning listener most wants what was chosen *from* their
+    taste, and leading with the rail deliberately outside it puts the
+    least-confident shelf at the top. Not last either: below the crowd is where
+    a shelf goes to be ignored."""
+    keys = [k for k, _ in T.SECTIONS]
+    assert keys.index("from_history") < keys.index("might_like") < keys.index("trending")
+
+
+def test_explore_new_offers_something_outside_an_established_taste(store):
+    """The actual point of it, rather than its position.
+
+    A listener who only plays one tag must not get a fourth rail of that tag -
+    that is the filter bubble arrived at by accident, and it is what
+    `rank_might_like` mutes the strongest tag to avoid.
+    """
+    for _ in range(4):
+        store.record(T.Event("u", "complete", "chip-supply", "", ("tech",)))
+    by_key = {s["key"]: s for s in T.build_feed(store, "u")["sections"]}
+    picks = by_key["might_like"]["topics"]
+    assert picks, "Explore New came back empty for a listener with a clear taste"
+    assert not all("tech" in (t.get("tags") or []) for t in picks), \
+        "Explore New returned only the tag this listener already plays"
+
+
 def test_the_personal_section_comes_before_the_popular_one(store):
     """Someone opening myFAM should not scroll past the crowd to reach it."""
     keys = [k for k, _ in T.SECTIONS]

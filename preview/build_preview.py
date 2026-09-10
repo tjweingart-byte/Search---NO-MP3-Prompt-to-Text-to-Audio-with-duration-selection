@@ -48,17 +48,29 @@ def load_fixtures() -> dict:
         return {"key": key, "title": title,
                 "topics": [by_id[i] for i in ids if i in by_id], "empty_reason": ""}
 
+    # Keyed by section rather than zipped against SECTIONS in order. The zip
+    # was silently truncating: a fourth section arrived and the fixture kept
+    # producing three, so the preview showed a page the code no longer builds
+    # and the smoke test blamed the interface. A missing key now fails loudly
+    # here, where the fixture is, instead of vanishing.
+    myfam_picks = {
+        "from_history": ["chip-supply", "energy-grid", "founder-motivation", "hormuz"],
+        "might_like": ["hollywood-comebacks", "food-supply", "anxiety-loop",
+                       "training-load", "pricing-psychology"],
+        "followers": ["stadium-money", "sleep-science", "space-race", "longevity-claims"],
+        "trending": ["ai-agents", "fed-next-move", "housing-market", "operator-ceos",
+                     "habits-research", "transfer-window"],
+    }
+    missing = [k for k, _ in topics_mod.SECTIONS if k not in myfam_picks]
+    if missing:
+        raise SystemExit(
+            f"the myFAM fixture has no topics for {', '.join(missing)} - add "
+            f"them to myfam_picks, or the preview shows fewer rails than the "
+            f"app builds")
     myfam = {
         "personalised": True,
-        "sections": [
-            section(key, title, ids)
-            for (key, title), ids in zip(topics_mod.SECTIONS, [
-                ["chip-supply", "energy-grid", "founder-motivation", "hormuz"],
-                ["stadium-money", "sleep-science", "space-race", "longevity-claims"],
-                ["ai-agents", "fed-next-move", "housing-market", "operator-ceos",
-                 "hollywood-comebacks", "habits-research"],
-            ])
-        ],
+        "sections": [section(key, title, myfam_picks[key])
+                     for key, title in topics_mod.SECTIONS],
     }
 
     def mix(mix_id, name, ids, typed=(), public=False):

@@ -239,14 +239,15 @@ another rule.
    which existed only to measure it. The interface now shows an honest wait
    that names what it is waiting for and counts the seconds.
 4. **myFAM is built; the taste model is deliberately crude.** `topics.py` ranks
-   a *shared* bank of ~28 topics three ways (trending / co-listener / history)
-   from an append-only event log. Tags come from keyword matching, not a
-   classifier. A fourth ranking, `rank_might_like` (adjacent to your taste),
-   is no longer on myFAM but is no longer hidden either: **it is what Explore
-   New serves** (PROBLEMS.md §70). It is the only signal offering anything
-   *outside* an established taste; the myFAM feed itself is still history,
-   co-listeners and the crowd, and one line in `SECTIONS` brings it back there
-   too. The intro's chosen interests now seed `taste`, so "Made for you" is no
+   a *shared* bank of ~28 topics **four** ways (history / exploration /
+   co-listener / trending) from an append-only event log. Tags come from
+   keyword matching, not a classifier. `rank_might_like` (adjacent to your
+   taste) is **back on myFAM as the Explore New rail**, and serves the Explore
+   New screen behind it from the same ranking - one ranking, two views, so the
+   rail and the surface it opens cannot disagree. It sits second, between
+   "Made for you" and the crowd: it is the only signal offering anything
+   *outside* an established taste, and without it the page is three ways of
+   being told what you already like. The intro's chosen interests now seed `taste`, so "Made for you" is no
    longer honestly empty on a listener's first open. The cost design is the load-bearing part: **one bank for
    everyone, personalisation in the ordering, not the inventory** - so two
    people tapping a tile share one script through `cache.py`.
