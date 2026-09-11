@@ -615,16 +615,50 @@ def default_voice() -> str | None:
 def engine_for_voice(voice: str | None) -> TTSEngine:
     """Route a voice id to the engine that owns it.
 
-    An unknown or unavailable voice falls back to the best engine present
-    rather than failing: a listener choosing a voice that has since been
-    uninstalled should still hear their episode.
+    **A development engine is never selectable by a request.** This used to
+    route on `ENGINES`, which is `DEV_ENGINES` - so `voice=debug:tone` from a
+    browser returned the placeholder tone even on a machine where Chatterbox
+    was loaded and working, because `DebugEngine.available()` is
+    unconditionally True. `/api/health` went on reporting
+    `selected: chatterbox`, since that asks `build_engine()`, which never sees
+    the parameter. The interface said "voice: chatterbox" while a 220 Hz sine
+    with a 2 Hz envelope played - which is exactly what a listener would
+    describe as humming or buzzing.
+
+    A page acquires that id honestly: `list_voices` offers the placeholder
+    whenever the production slot is empty, so a tab opened while the voice
+    file was still being placed, or during warm-up, picks it up and keeps
+    sending it for the life of the session. Nothing later takes it back.
+
+    This is the Piper failure in a new place, and CLAUDE.md already names it:
+    an engine reached listeners three ways nobody chose, one of which was
+    `engine_for_voice` falling back to it. Announcing was not enough then
+    either. So production engines are matched first and a development id is
+    refused outright while a real voice exists.
+
+    What still works: `TTS_ENGINE=debug` selects a development engine, because
+    that is a decision made on the server by whoever started it rather than by
+    a query string, and `build_engine` honours it. And with no production
+    engine at all, `build_engine` returns the placeholder anyway, so a machine
+    that genuinely cannot speak still serves the tone rather than failing.
     """
     if voice and ":" in voice:
         name = voice.split(":", 1)[0]
-        cls = ENGINES.get(name)
-        if cls is not None and cls.available():
-            return cls()
-        log.warning("voice %r is unavailable; falling back", voice)
+        for cls in PRODUCTION_ENGINES:
+            if cls.name == name:
+                if cls.available():
+                    return cls()
+                log.warning("voice %r is unavailable; falling back", voice)
+                break
+        else:
+            # Only worth saying when there is a real voice being passed over.
+            # With none, the placeholder is the honest answer, not an override.
+            if name in DEV_ENGINES and production_engine() is not None:
+                log.warning(
+                    "ignoring development voice %r from a request: production "
+                    "speaks with %s, and an engine nobody chose is how this "
+                    "app has lost the most time", voice,
+                    production_engine().name)
     return build_engine()
 
 
