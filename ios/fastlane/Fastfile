@@ -1,0 +1,146 @@
+# TestFlight, from a clean machine, without anybody typing a credential.
+#
+# This is the same principle the server side already settled in CREDENTIALS.md:
+# a credential is never something a human types. There is no Apple ID password
+# here, no app-specific password and no 2FA prompt to babysit — an App Store
+# Connect API key authenticates as itself, which is the only way this works
+# unattended on a CI runner.
+#
+# Lanes:
+#   fastlane beta          build and upload to TestFlight internal testers
+#   fastlane external      promote the latest build to the external group
+#   fastlane certificates  refresh signing without building
+
+default_platform(:ios)
+
+# The last commit subject, which is the honest answer to "what changed".
+# Top level rather than inside the platform block: `def` inside a block leans
+# on where Ruby happens to attach the method, and a release script is the
+# wrong place to be clever.
+def default_changelog
+  `git log -1 --pretty=%s`.strip
+rescue StandardError
+  "Internal build"
+end
+
+APP_IDENTIFIER = "com.fam.app"
+SCHEME         = "FAM"
+PROJECT        = "FAM.xcodeproj"
+
+platform :ios do
+
+  before_all do
+    # The project is generated, not committed — see project.yml. Regenerating
+    # on every run is what stops a stale .xcodeproj shipping a setting nobody
+    # changed on purpose.
+    sh("which xcodegen > /dev/null || brew install xcodegen")
+    sh("cd .. && xcodegen generate")
+  end
+
+  desc "Build and upload to TestFlight (internal testers, no Beta App Review)"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id:      ENV.fetch("ASC_KEY_ID"),
+      issuer_id:   ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_P8"),   # base64 of the .p8
+      is_key_content_base64: true,
+      in_house: false
+    )
+
+    # The build number is the CI run number, never a human's guess. Two builds
+    # with the same number is the most common way an upload is rejected after
+    # the slow part has already run.
+    build = ENV["GITHUB_RUN_NUMBER"] || Time.now.strftime("%Y%m%d%H%M")
+    increment_build_number(
+      xcodeproj: PROJECT,
+      build_number: build
+    )
+
+    # Automatic signing against the API key: no match repo, no certificates in
+    # git, nothing to rotate by hand. Xcode creates and renews what it needs.
+    sync_code_signing(
+      type: "appstore",
+      app_identifier: APP_IDENTIFIER,
+      api_key: api_key,
+      readonly: false
+    ) if ENV["FAM_USE_MATCH"] == "1"
+
+    build_app(
+      project: PROJECT,
+      scheme: SCHEME,
+      configuration: "Release",
+      export_method: "app-store",
+      export_options: "ExportOptions.plist",
+      xcargs: "-allowProvisioningUpdates",
+      output_directory: "build",
+      clean: true
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      # Internal testers get the build as soon as it finishes processing, with
+      # no Beta App Review. This lane deliberately stops there.
+      distribute_external: false,
+      skip_waiting_for_build_processing: false,
+      # Every build says what changed. A tester who does not know what is new
+      # tests whatever they happen to tap.
+      changelog: ENV["FAM_CHANGELOG"] || default_changelog,
+      groups: ENV["FAM_INTERNAL_GROUP"] ? [ENV["FAM_INTERNAL_GROUP"]] : nil
+    )
+  end
+
+  desc "Promote the latest processed build to external testers (triggers Beta App Review)"
+  lane :external do
+    api_key = app_store_connect_api_key(
+      key_id:      ENV.fetch("ASC_KEY_ID"),
+      issuer_id:   ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_P8"),
+      is_key_content_base64: true
+    )
+
+    # External distribution is reviewed, and the guideline 1.2 items must be in
+    # before this lane is run for the first time: a filter on the generation
+    # path, report-an-episode from the player, and a published contact route.
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      distribute_only: true,
+      distribute_external: true,
+      groups: [ENV.fetch("FAM_EXTERNAL_GROUP", "Public Beta")],
+      changelog: ENV["FAM_CHANGELOG"] || default_changelog,
+      # Review runs against whatever the backend is doing that afternoon, and a
+      # cold GPU means the reviewer hears the placeholder tone.
+      beta_app_review_info: {
+        contact_email:      ENV.fetch("FAM_REVIEW_EMAIL"),
+        contact_first_name: ENV.fetch("FAM_REVIEW_FIRST_NAME"),
+        contact_last_name:  ENV.fetch("FAM_REVIEW_LAST_NAME"),
+        contact_phone:      ENV.fetch("FAM_REVIEW_PHONE"),
+        demo_account_name:     ENV.fetch("FAM_DEMO_USER"),
+        demo_account_password: ENV.fetch("FAM_DEMO_PASSWORD"),
+        notes: "Type a question and press Listen. Audio begins in about a " \
+               "second and continues with the phone locked."
+      }
+    )
+  end
+
+  desc "Refresh signing assets without building"
+  lane :certificates do
+    api_key = app_store_connect_api_key(
+      key_id:      ENV.fetch("ASC_KEY_ID"),
+      issuer_id:   ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_P8"),
+      is_key_content_base64: true
+    )
+    sync_code_signing(
+      type: "appstore",
+      app_identifier: APP_IDENTIFIER,
+      api_key: api_key,
+      readonly: false
+    )
+  end
+
+  error do |_lane, exception|
+    UI.error("TestFlight lane failed: #{exception.message}")
+  end
+end

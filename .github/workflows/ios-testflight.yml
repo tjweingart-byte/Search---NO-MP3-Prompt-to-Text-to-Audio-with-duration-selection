@@ -1,0 +1,96 @@
+# Build the iOS app and upload it to TestFlight.
+#
+# Manual by default. A beta build that fires on every push burns the 90-day
+# expiry clock and floods testers with builds nobody asked them to test; the
+# person releasing should decide when a build is worth a tester's attention.
+#
+# Every credential is a repository secret. Nothing here is typed on the runner,
+# and no Apple ID password or 2FA is involved — the App Store Connect API key
+# authenticates as itself.
+
+name: iOS · TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      changelog:
+        description: "What testers should look at in this build"
+        required: true
+        type: string
+      distribute:
+        description: "Who gets it"
+        required: true
+        default: internal
+        type: choice
+        options:
+          - internal
+          - external
+
+concurrency:
+  # Two uploads racing produce two builds with the same number, and the second
+  # is rejected after the slow part has already run.
+  group: ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    # A macOS runner is not optional: xcodebuild exists nowhere else.
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        # Pinned. "Whatever the runner image happens to have" is how a build
+        # starts failing on a morning nobody changed anything.
+        run: sudo xcode-select -switch /Applications/Xcode_15.4.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: ios
+
+      - name: Build and upload
+        working-directory: ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          FAM_TEAM_ID: ${{ secrets.FAM_TEAM_ID }}
+          FAM_APP_IDENTIFIER: ${{ vars.FAM_APP_IDENTIFIER }}
+          # The deployed server. A build pointed at the wrong one is the quiet
+          # failure this project has lost the most time to, so it is a variable
+          # somebody set rather than a default.
+          FAM_API_BASE_URL_RELEASE: ${{ vars.FAM_API_BASE_URL_RELEASE }}
+          FAM_API_BASE_URL_DEBUG: ${{ vars.FAM_API_BASE_URL_RELEASE }}
+          FAM_INTERNAL_GROUP: ${{ vars.FAM_INTERNAL_GROUP }}
+          FAM_EXTERNAL_GROUP: ${{ vars.FAM_EXTERNAL_GROUP }}
+          FAM_CHANGELOG: ${{ inputs.changelog }}
+          FAM_REVIEW_EMAIL: ${{ secrets.FAM_REVIEW_EMAIL }}
+          FAM_REVIEW_FIRST_NAME: ${{ secrets.FAM_REVIEW_FIRST_NAME }}
+          FAM_REVIEW_LAST_NAME: ${{ secrets.FAM_REVIEW_LAST_NAME }}
+          FAM_REVIEW_PHONE: ${{ secrets.FAM_REVIEW_PHONE }}
+          FAM_DEMO_USER: ${{ secrets.FAM_DEMO_USER }}
+          FAM_DEMO_PASSWORD: ${{ secrets.FAM_DEMO_PASSWORD }}
+        run: |
+          if [ -z "$FAM_API_BASE_URL_RELEASE" ]; then
+            echo "::error::FAM_API_BASE_URL_RELEASE is unset. Set it as a repository variable before releasing."
+            exit 1
+          fi
+          bundle exec fastlane ${{ inputs.distribute == 'external' && 'external' || 'beta' }}
+
+      - name: Keep the build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ios/build/*.ipa
+            ~/Library/Logs/gym
+          if-no-files-found: ignore
+          retention-days: 7

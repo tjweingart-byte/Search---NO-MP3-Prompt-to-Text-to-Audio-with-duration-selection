@@ -564,8 +564,11 @@ machine gets its API keys without anybody typing one, `METERING.md` for
 what a listener costs and how the report says so, `ACCOUNTS.md` for identity,
 tiers, quotas and the public API, `SHARING.md` for friends, sharing, saving
 and downloads, `IOS_APP.md` for the app version this is now being written
-towards, and `BETA_READINESS.md` for the schedule that follows from it — the
-four ways to reach an iPhone, weighed, and the staged path to TestFlight.
+towards, `BETA_READINESS.md` for the schedule that follows from it — the
+four ways to reach an iPhone, weighed, and the staged path to TestFlight — and
+`TESTFLIGHT.md` for the procedure that ships a build, beside the client in
+`ios/`. None of that Swift has been compiled: this container is Linux, so the
+first run on a Mac is also the first build.
 
 A fresh container has none of the dependencies installed. Setup is two lines,
 and the second one is not optional:

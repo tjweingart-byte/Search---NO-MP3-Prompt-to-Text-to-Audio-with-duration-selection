@@ -56,3 +56,12 @@ pod-results/
 # If genuinely new experiment source is ever written on this branch, this line
 # would hide it. Add it with `git add -f`, or reconsider the line.
 experiments/
+ios/FAM.xcodeproj/
+ios/build/
+ios/fastlane/.env
+ios/fastlane/report.xml
+ios/fastlane/Preview.html
+ios/fastlane/screenshots
+ios/fastlane/test_output
+*.ipa
+*.dSYM.zip
