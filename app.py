@@ -385,6 +385,43 @@ def _database_report() -> list[dict]:
     return report
 
 
+def _limit_key(request: Request) -> str:
+    """Who a limiter is pacing: the listener, not the address.
+
+    Keying on `request.client.host` was correct on a laptop and wrong
+    everywhere this actually runs. Behind the RunPod public proxy - and
+    behind Render's router - every request arrives from the proxy, so the
+    whole world shared one bucket: reproduced with two listeners through a
+    non-loopback proxy, where the first got 200 and the second got 429
+    while `X-Forwarded-For` carried the right addresses and was ignored
+    (uvicorn trusts forwarded headers only from 127.0.0.1 by default). At
+    RATE_LIMIT_SECONDS=3 that is one episode every three seconds for all
+    listeners at once, which is not a limiter, it is an outage.
+
+    Trusting `X-Forwarded-For` would fix the symptom and open a hole: the
+    header is client-supplied, so anyone could forge a new one per request
+    and never be paced at all - and this limiter guards model spend, which
+    `metering.py` exists precisely because it is real.
+
+    The session id is the right key and was already here. It is minted by
+    the server, carried in an HttpOnly cookie, and cannot be set by the
+    page - the same property that made it the right key for every store.
+    So pacing follows the listener across proxies, across Render and
+    RunPod, and across a phone changing networks mid-episode.
+
+    The address stays as a fallback for the one case that has no session:
+    the middleware mints identity for `/` and `/api/*` but skips
+    `/api/health`, and minting can fail. An unpaced endpoint is worse than
+    a coarsely paced one, so that case keeps the old behaviour rather than
+    keeping no behaviour. The prefixes keep the two namespaces apart, so a
+    session id can never collide with an address.
+    """
+    listener = _listener(request)
+    if listener:
+        return "listener:" + listener
+    return "ip:" + (request.client.host if request.client else "anonymous")
+
+
 def _rate_limit(request: Request) -> None:
     """One generation per client per RATE_LIMIT_SECONDS.
 
@@ -399,7 +436,7 @@ def _rate_limit(request: Request) -> None:
     """
     if settings.rate_limit_seconds <= 0:
         return
-    client = request.client.host if request.client else "anonymous"
+    client = _limit_key(request)
     now = time.monotonic()
     if now - _last_request[client] < settings.rate_limit_seconds:
         raise HTTPException(status_code=429, detail="Slow down a moment, then try again.")
@@ -415,7 +452,11 @@ def _read_limit(request: Request) -> None:
     """
     if settings.read_limit_per_window <= 0:
         return
-    client = request.client.host if request.client else "anonymous"
+    # Same key, same reason. This one is worse when it is wrong: the
+    # interface fires several cheap reads whenever a tab opens, so a
+    # shared 60-per-10s ceiling is spent by a handful of listeners
+    # navigating normally.
+    client = _limit_key(request)
     now = time.monotonic()
     hits = _read_hits[client]
     cutoff = now - READ_WINDOW_SECONDS

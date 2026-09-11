@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import accounts as accounts_mod  # noqa: E402
 import app as appmod  # noqa: E402
 import config as config_mod  # noqa: E402
 import pipeline as pipeline_module  # noqa: E402
@@ -222,3 +223,94 @@ def test_explore_replays_are_not_paced(client):
     ]
     assert 429 not in codes, "swiping Explore hit the generation pace"
     assert set(codes) == {409}, "replay-only must fail as a cache miss, not a throttle"
+
+
+# --- 4. the limiter paces a listener, not an address -----------------------
+#
+# Reproduced on a real proxy before it was fixed: two different listeners, back
+# to back, through a non-loopback proxy. The first got 200, the second got 429,
+# and `X-Forwarded-For` carried the right addresses the whole time - uvicorn
+# trusts forwarded headers only from 127.0.0.1 by default, so FAM saw the proxy
+# for both. At RATE_LIMIT_SECONDS=3 that is one episode every three seconds for
+# every listener in the world at once.
+#
+# TestClient reports the same client host for every instance, so these tests
+# *are* the shared-proxy case: what separates the listeners below is only the
+# session cookie the server minted for each.
+
+
+def test_two_listeners_behind_one_proxy_do_not_pace_each_other(monkeypatch, instant):
+    """The bug, as a test. Both are new listeners; both must be served."""
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", None)
+    monkeypatch.setattr(appmod, "_read_limit", lambda request: None)
+
+    alice = TestClient(appmod.app)
+    bob = TestClient(appmod.app)
+    first = alice.post("/api/script", json={"query": "why the sky is blue", "minutes": 1})
+    second = bob.post("/api/script", json={"query": "why the sea is blue", "minutes": 1})
+
+    assert first.status_code == 200
+    assert second.status_code == 200, (
+        "one listener paced another - the limiter is keyed on the address again")
+    # And they really were two listeners sharing one apparent address.
+    assert alice.cookies.get(accounts_mod.COOKIE_NAME) != bob.cookies.get(
+        accounts_mod.COOKIE_NAME)
+
+
+def test_one_listener_is_still_paced_inside_the_window(monkeypatch, instant):
+    """The limiter still has to limit. Same cookie jar, two generations."""
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", None)
+    monkeypatch.setattr(appmod, "_read_limit", lambda request: None)
+
+    alice = TestClient(appmod.app)
+    first = alice.post("/api/script", json={"query": "why the sky is blue", "minutes": 1})
+    second = alice.post("/api/script", json={"query": "why the sea is blue", "minutes": 1})
+
+    assert first.status_code == 200
+    assert second.status_code == 429, "the same listener generated twice in the window"
+
+
+def test_with_no_session_the_limiter_falls_back_to_the_address(monkeypatch, instant):
+    """The fallback must pace, not crash and not wave everything through.
+
+    Identity can be absent: the middleware skips `/api/health`, and minting can
+    fail. An unpaced endpoint is worse than a coarsely paced one, so this case
+    keeps the old address-keyed behaviour.
+    """
+    monkeypatch.setattr(appmod, "SCRIPT_CACHE", None)
+    monkeypatch.setattr(appmod, "_read_limit", lambda request: None)
+    # No listener resolves, however the request arrived.
+    monkeypatch.setattr(appmod, "_listener", lambda request: "")
+
+    alice = TestClient(appmod.app)
+    bob = TestClient(appmod.app)
+    first = alice.post("/api/script", json={"query": "why the sky is blue", "minutes": 1})
+    second = bob.post("/api/script", json={"query": "why the sea is blue", "minutes": 1})
+
+    assert first.status_code == 200
+    assert second.status_code == 429, "with no identity at all, nothing was paced"
+
+
+def test_the_limit_key_prefers_the_listener_and_namespaces_the_fallback():
+    """Unit-level, so the ordering cannot regress quietly.
+
+    The prefixes matter: without them a session id could collide with an
+    address and two unrelated callers would share a bucket.
+    """
+    class Req:
+        def __init__(self, listener, host):
+            self.state = type("S", (), {"listener": listener})()
+            self.client = type("C", (), {"host": host})() if host else None
+
+    with_listener = Req(accounts_mod.Listener("user-abc"), "10.0.0.1")
+    assert appmod._limit_key(with_listener) == "listener:user-abc"
+
+    without = Req(None, "10.0.0.1")
+    assert appmod._limit_key(without) == "ip:10.0.0.1"
+
+    nothing = Req(None, None)
+    assert appmod._limit_key(nothing) == "ip:anonymous"
+
+    # A listener id that looks like an address still cannot collide with one.
+    assert appmod._limit_key(Req(accounts_mod.Listener("10.0.0.1"), "10.0.0.1")) != \
+        appmod._limit_key(without)
