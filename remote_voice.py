@@ -84,6 +84,10 @@ WIRE_FORMAT = "pcm_s16le"
 #: envelope, not an engine.
 TRANSPORTS = ("runpod", "http")
 
+#: The route `voice_worker/server.py` serves the contract on, and the only part
+#: of the URL this side invents. `REMOTE_VOICE_URL` is the pod's *base* URL.
+SYNTH_ROUTE = "/synth"
+
 
 class RemoteVoiceError(RuntimeError):
     """The remote voice could not speak, and this says why.
@@ -132,6 +136,29 @@ class RemoteConfig:
             concurrency=max(1, int(settings.remote_voice_concurrency)),
             voice=(settings.remote_voice_id or "").strip(),
         )
+
+    def synth_url(self) -> str:
+        """Where the POST actually goes.
+
+        `REMOTE_VOICE_URL` is documented as the pod's base URL and the route is
+        this side's to add - but an operator who pastes the URL they were
+        testing with, the one that already ends in `/synth`, has configured
+        something unambiguous, and appending a second `/synth` to it produces a
+        404 indistinguishable from a worker that has no route at all.
+        """
+        if self.url.endswith(SYNTH_ROUTE):
+            return self.url
+        return self.url + SYNTH_ROUTE
+
+    def base_url(self) -> str:
+        """The origin, whichever way the URL was written.
+
+        `/health` and `/openapi.json` hang off this, so a configured
+        `.../synth` must not send the probes to `.../synth/health`.
+        """
+        if self.url.endswith(SYNTH_ROUTE):
+            return self.url[:-len(SYNTH_ROUTE)]
+        return self.url
 
     def problem(self) -> str:
         """Why this configuration cannot be used, or "" if it can.
@@ -219,6 +246,9 @@ class RemoteChatterboxEngine(TTSEngine):
     _gate_size: int = 0
     _reachability = Reachability()
     _woken_at: float = 0.0
+    #: A route the worker named itself, kept as (base url, route) so a
+    #: reconfigured endpoint is not answered with the old one's answer.
+    _found_route: tuple[str, str] | None = None
 
     # -- configuration -----------------------------------------------------
 
@@ -365,11 +395,80 @@ class RemoteChatterboxEngine(TTSEngine):
             body = self._decode_json(polled, f"status/{job_id}")
 
     async def _call_http(self, payload: dict, config: RemoteConfig) -> dict:
-        """A plain speech server: one POST, one answer, no envelope."""
+        """A plain speech server: one POST, one answer, no envelope.
+
+        The one thing that can go wrong here without going wrong on the card is
+        the *address*. A 404 is not a worker failing to speak; it is nothing
+        having been asked - and the two are indistinguishable in a log unless
+        this says which. So a 404 is followed by one question to the worker
+        itself (`/openapi.json`, which FastAPI serves for free) rather than by a
+        guess: either it names the route it does serve, and this retries there,
+        or nothing at that address is a FAM voice worker and the error says so
+        with the two things that cause it.
+        """
         client = self._http(config)
-        response = await client.post(f"{config.url}/synth", json=payload,
+        found = type(self)._found_route
+        url = found[1] if found and found[0] == config.url else config.synth_url()
+        response = await client.post(url, json=payload,
                                      headers=self._headers(config))
+        if response.status_code == 404:
+            route = await self._route_from_worker(config, url)
+            response = await client.post(route, json=payload,
+                                         headers=self._headers(config))
+            # Remembered only once it has answered something other than 404:
+            # a second wrong route is worse than the first.
+            if response.status_code != 404:
+                type(self)._found_route = (config.url, route)
         return self._decode_json(response, "synth")
+
+    async def _route_from_worker(self, config: RemoteConfig, tried: str) -> str:
+        """Ask the worker which route takes the contract, or say why there is none.
+
+        Bounded on purpose: one GET, only ever after a 404, never on the path a
+        working deployment takes. It reads the worker's own schema instead of
+        trying candidate paths, because a POST to a guessed route on a machine
+        that is not this worker is a request to somebody else's service.
+        """
+        client = self._http(config)
+        base = config.base_url()
+        try:
+            schema = await client.get(f"{base}/openapi.json",
+                                      headers=self._headers(config))
+        except Exception as exc:
+            raise RemoteVoiceError(
+                f"remote voice synth returned HTTP 404 at {tried}, and asking "
+                f"the worker what it serves failed too: {type(exc).__name__}: "
+                f"{exc}") from exc
+        paths: dict = {}
+        if schema.status_code < 400:
+            try:
+                body = schema.json()
+                paths = body.get("paths") or {} if isinstance(body, dict) else {}
+            except Exception:
+                paths = {}
+        posts = [path for path, methods in paths.items()
+                 if isinstance(methods, dict) and "post" in methods]
+        speaks = [path for path in posts if "synth" in path.lower()] or posts
+        if len(speaks) == 1:
+            log.warning("remote voice: %s has no %s; this worker serves POST %s "
+                        "and that is what will be used", base, SYNTH_ROUTE,
+                        speaks[0])
+            route = speaks[0] if speaks[0].startswith("/") else "/" + speaks[0]
+            return base + route
+        if not paths:
+            raise RemoteVoiceError(
+                f"nothing at {base} answers as a FAM voice worker: POST {tried} "
+                f"returned 404 and GET {base}/openapi.json returned "
+                f"{schema.status_code}. The two things that cause this are a "
+                "REMOTE_VOICE_URL naming a proxied port the worker is not "
+                "listening on (Dockerfile.voice serves ${PORT:-8001}), and a "
+                "pod started without VOICE_WORKER_MODE=http, which runs the "
+                "serverless handler and opens no port at all.")
+        raise RemoteVoiceError(
+            f"the worker at {base} does not serve {SYNTH_ROUTE} and does not "
+            f"name one route that could: it posts {sorted(posts) or 'nothing'}. "
+            "Point REMOTE_VOICE_URL at a FAM voice worker, or rebuild the "
+            "image from Dockerfile.voice.")
 
     @staticmethod
     def _decode_json(response, what: str) -> dict:

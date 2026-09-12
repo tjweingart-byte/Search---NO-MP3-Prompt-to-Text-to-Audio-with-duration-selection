@@ -4149,3 +4149,91 @@ game last night` is still unmeasured - `tools/compare_search.py` is the harness
 and nobody has pointed it at a sports recap. If the packets come back thin,
 this change is what stops thin evidence becoming a confident shrug: the tool is
 there, and now the model is told to use it.
+
+## 78. The 404 that could have been three different things
+
+Production, with the research half finally working:
+
+    SEARCH yes '49ers game vs Rams'
+    POST https://t6x3rlixn0tz18-8002.proxy.runpod.net/synth "HTTP/1.1 404 Not Found"
+    remote voice synth returned HTTP 404
+
+The episode was researched and written, and then nothing spoke.
+
+### Both sides already agreed, which is what made it hard to read
+
+`voice_worker/server.py` serves exactly two routes - `GET /health` and
+`POST /synth` - plus the three FastAPI adds for free (`/openapi.json`, `/docs`,
+`/redoc`). `remote_voice._call_http` posted to `f"{config.url}/synth"`. The log
+line shows `/synth` at the origin, so the request the app sent was the request
+the worker is written to answer. **The two halves of the repo were not in
+disagreement; the address was.**
+
+That is the part worth writing down: a 404 is the one voice failure that says
+nothing about the voice. Every other guard in `remote_voice.py` is about a
+worker that *answered* - empty audio, the wrong sample rate, an odd byte count,
+`mp3`. A 404 means nobody was home, and an address has three halves that can be
+wrong independently:
+
+1. **the route** - the running image may be a different version of this repo
+   than the checkout you are reading;
+2. **the port** - the container serves `${PORT:-8001}`, and the live URL names
+   **8002**, while `.env.example` documents `-8001`. A proxied port with nothing
+   behind it returns `404 page not found` from RunPod's proxy, which is
+   indistinguishable in a log from a worker with no such route;
+3. **the mode** - `Dockerfile.voice` defaults to `VOICE_WORKER_MODE=serverless`,
+   which runs `handler.py` and opens no port at all. A pod started without that
+   variable set to `http` 404s every path, `/health` included.
+
+Nothing in the app's log separated them, and the build container cannot reach
+the pod to ask (its egress policy denies `proxy.runpod.net`, and there is no GPU
+here either), so the fix had to make the *deployment* answer the question
+instead of a guess deciding it.
+
+### What changed
+
+* **`tools/probe_remote_voice.py`** asks the live worker and prints the answer:
+  `/health`, then **every route from `/openapi.json`** - the authority on the
+  route name, since the image outranks the checkout - then a real sentence,
+  decoded through the same checks the app applies. Exit 0 only if audio came
+  back. §52's rule, applied to an address: reading a Dockerfile answers a
+  cheaper question than asking the machine.
+* **A 404 is now diagnosed rather than reported.** `_call_http` follows one with
+  a single `GET /openapi.json`. If the worker names a POST route, the request is
+  retried there and the route is remembered for the process, so a renamed route
+  costs one extra request per deployment instead of a dead episode. If nothing
+  answers, the error names the port and the mode - the two causes above - in the
+  sentence that reaches the log.
+* **A `REMOTE_VOICE_URL` that already ends in `/synth` is honoured** instead of
+  becoming `/synth/synth`. It is the URL an operator tests the pod with by hand,
+  and doubling it produced a 404 identical to the one being debugged.
+* **The worker announces itself at boot**: `serving on port 8001: GET /health,
+  POST /synth, ...`. The pod's log is the only place all three halves of the
+  address are visible at once, and it was saying none of them.
+
+### Three things this deliberately does not do
+
+**No fallback to another voice.** The retry is to the same worker, at a route
+that worker named. §61's guard holds: a remote voice that cannot speak raises
+with the reason. `test_a_404_never_becomes_a_different_voice` says so.
+
+**No guessed paths.** The retry uses the schema the worker publishes, never a
+list of likely names - a POST to a guessed route on a machine that is not this
+worker is a request to somebody else's service.
+
+**No extra request on the happy path.** The probe only ever follows a 404;
+`test_the_happy_path_costs_no_extra_request` fails if that drifts.
+
+### Verified, and what is still unverified
+
+On a real socket, with the card stubbed and `voice_worker.server:app` itself
+serving: `/health` 200, the route table exactly `GET /health` and `POST /synth`,
+`POST /synth` 401 without the token and 200 with it, and the app's own engine
+getting PCM back through a base URL, through a URL ending in `/synth`, and
+through a worker whose route is renamed. A port answering 404 to everything
+produces the sentence naming `PORT` and `VOICE_WORKER_MODE`.
+
+What that does **not** prove is which of the three it is on `t6x3rlixn0tz18`,
+because this container cannot reach it, and it is not a listening test - the
+audio in that loop came from a stub, not from Chatterbox. CLAUDE.md's open
+problem #1 is untouched: nobody has heard a FAM episode in this voice.
