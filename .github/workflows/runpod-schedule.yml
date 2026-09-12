@@ -25,7 +25,11 @@ jobs:
       - name: Start or stop RunPod pod
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
-          POD_ID: k5p4ji8ihk3mr3
+          # safe_peach_goat. The pod this schedule starts and stops must be
+          # the pod production actually runs on: this named a retired one, so
+          # the 08:00 start and 23:00 stop were acting on the wrong machine
+          # while the live pod ran unmanaged.
+          POD_ID: t6x3rlixn0tz18
           MANUAL_ACTION: ${{ github.event.inputs.action }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
