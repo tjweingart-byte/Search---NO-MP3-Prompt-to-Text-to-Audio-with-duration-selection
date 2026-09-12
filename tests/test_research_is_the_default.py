@@ -40,7 +40,7 @@ import app as app_mod  # noqa: E402
 import config as config_mod  # noqa: E402
 import research as research_mod  # noqa: E402
 import script_generator as sg  # noqa: E402
-from script_generator import ScriptGenerator, plan_episode  # noqa: E402
+from script_generator import ScriptGenerator, build_prompt, plan_episode  # noqa: E402
 
 #: The question from the Render log, and four more that no keyword list would
 #: ever flag. These are the ones the old default got wrong.
@@ -208,3 +208,90 @@ def _ask(client, **params):
     """Fire a real request and stop as soon as the plan has been built."""
     with client.stream("GET", "/api/audio", params={"minutes": 1, **params}) as r:
         r.read()
+
+
+# --- a tool is not an instruction -------------------------------------------
+#
+# The always-on default made an older, quieter bug reachable on every episode
+# instead of the few the keyword list flagged. `_request_kwargs` attaches the
+# web_search tool whenever an episode is researched and no evidence packet came
+# back - the `claude` backend, or Exa returning nothing usable - and
+# `build_prompt` said nothing about it. So the model was handed a capability it
+# was never asked to use, wrote from memory, and reported honestly that it had
+# nothing: "I don't have any information on the 49ers game last night. I can't
+# confirm the score, the opponent, or the plays."
+#
+# That is the silent bypass in its last hiding place. These pin the fix.
+
+def _no_packet_plan(query="49ers game last night"):
+    """A researched episode that got no evidence - the reachable failure."""
+    plan = plan_episode(query, 3)
+    assert plan.search is True
+    assert not plan.evidence, "this fixture is about the empty-packet path"
+    return plan
+
+
+def test_an_episode_with_no_packet_still_gets_the_search_tool():
+    kwargs = ScriptGenerator.__new__(ScriptGenerator)._request_kwargs(_no_packet_plan())
+    assert [t["name"] for t in kwargs.get("tools", [])] == ["web_search"]
+
+
+def test_and_is_actually_told_to_use_it():
+    """The half that was missing. Attaching a tool is not asking for research."""
+    prompt = build_prompt(_no_packet_plan())
+    assert "web search tool" in prompt, (
+        "the model was handed a search tool and never asked to search")
+    assert "Search first" in prompt
+
+
+def test_the_exact_answer_production_gave_is_named_as_unacceptable():
+    """Pinned to the symptom. A model that will not search should at least have
+    been told that refusing to look is the one answer that is not allowed."""
+    prompt = build_prompt(_no_packet_plan())
+    assert "I can't confirm" in prompt
+    assert "don't have that information" in prompt
+
+
+def test_an_episode_that_has_evidence_is_not_told_to_search():
+    """The tool and the packet are alternatives - never both, or the model
+    searches on top of what it was handed and the episode is unattributable."""
+    plan = dataclasses.replace(_no_packet_plan(), evidence="SOURCE 1\nTitle: x")
+    prompt = build_prompt(plan)
+    assert "web search tool" not in prompt
+    kwargs = ScriptGenerator.__new__(ScriptGenerator)._request_kwargs(plan)
+    assert "tools" not in kwargs
+
+
+def test_an_unresearched_episode_is_told_nothing_about_searching():
+    prompt = build_prompt(plan_episode("how does a heat pump work", 3, search=False))
+    assert "web search tool" not in prompt
+
+
+def test_the_claude_backend_reaches_the_same_instruction(monkeypatch):
+    """`research()` returns the plan untouched on `claude` - the model does its
+    own looking - so that backend lands on this path for *every* episode."""
+    monkeypatch.setattr(
+        sg, "settings", dataclasses.replace(sg.settings, research_backend="claude"))
+    plan = plan_episode("what is the NASDAQ", 3)
+    returned = asyncio.run(ScriptGenerator(api_key="").research(plan))
+    assert returned.evidence == "", "the claude backend must retrieve nothing"
+    assert "web search tool" in build_prompt(returned)
+
+
+# --- the server can say which code it is running ----------------------------
+
+def test_health_reports_the_commit_and_where_search_mode_came_from(client):
+    """"Is the fix deployed?" was unanswerable from outside the server, so it
+    got answered by reasoning about what should have happened instead."""
+    body = client.get("/api/health").json()
+    assert body["build"]["commit"], "no way to tell which code is serving"
+    assert body["search_mode"] == "always"
+    assert body["search_mode_source"] == "config.py default"
+
+
+def test_health_says_when_an_env_var_is_overriding_the_default(client, monkeypatch):
+    """An env var beats the code default silently and outlives any number of
+    pushes. That is a different claim from "the default was changed"."""
+    monkeypatch.setenv("SEARCH_MODE", "auto")
+    body = client.get("/api/health").json()
+    assert body["search_mode_source"] == "SEARCH_MODE env var"

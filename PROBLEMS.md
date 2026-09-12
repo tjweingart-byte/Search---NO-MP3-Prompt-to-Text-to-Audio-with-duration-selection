@@ -4073,3 +4073,79 @@ what is not is whether time-to-first-audio holds at the half-second Exa is
 credited with under production concurrency. If it does not, the answer is
 `ANSWER_FIRST=1` — which exists for exactly this and currently follows the
 backend — and not a return to guessing.
+
+## 77. The search tool was attached to every episode and never asked for
+
+§76 made every episode researched. Production then answered `49ers game last
+night`, and `Rams game last night`, with:
+
+> I don't have any information on the 49ers game last night. I can't confirm
+> the score, the opponent, or the plays.
+
+Which reads like §76 not being deployed. It was deployed, and it was working:
+the episode *was* routed for research. The bug is one layer further in, and it
+was already there before §76 - reachable only on the few questions the keyword
+list happened to flag, which is why nobody had seen it.
+
+### Cause
+
+`_request_kwargs` attaches Anthropic's `web_search` tool whenever an episode is
+researched and no evidence packet came back:
+
+    if plan.search and not plan.evidence:
+        kwargs["tools"] = [{"type": "web_search_20260209", ...}]
+
+and `build_prompt` said **nothing about it**. The model was handed a capability
+it was never asked to use, in a prompt whose every other line is about writing a
+story of a certain length. So it wrote one, from memory, and reported honestly
+that its memory was empty.
+
+**A tool is not an instruction.** Attaching one says the model *may* search; it
+never says it *must*, and a prompt that spends three hundred words on narrative
+structure and none on research is a prompt about narrative structure.
+
+That path is reached in two ways, and §76 widened both from "the questions a
+keyword list flagged" to "every question":
+
+* `RESEARCH_BACKEND=claude` - `research()` returns the plan untouched by
+  design, because the model does its own looking. *Every* episode lands here.
+* `RESEARCH_BACKEND=exa` where retrieval returned nothing usable. `retrieve`
+  logs `exa returned N result(s) but no usable evidence` and hands back an
+  empty packet, deliberately, so the tool stays attached - which only works if
+  something then asks the model to use it.
+
+### Fix
+
+`build_prompt` grows the block that was missing: when an episode is researched
+and carries no evidence, it says there is a search tool, that the question was
+routed for research, to search before writing, and that `"I don't have that
+information"` and `"I can't confirm"` are the one pair of answers not available
+- naming the exact sentences production produced. The packet and the tool stay
+alternatives, never both: an episode with evidence is told to read it and is
+given no tool, because searching on top of a packet pays the 10-25 seconds the
+packet exists to avoid and makes the episode unattributable.
+
+### The other half: the server could not say what it was running
+
+Diagnosing this took a round of "is the fix even deployed?", and from outside
+the server that question had no answer - which is PROBLEMS.md 52 with the
+deployment as the subject. `/api/health` now reports:
+
+* `build` - the running commit, from `RENDER_GIT_COMMIT` (Render injects it),
+  `FAM_COMMIT`, or `git rev-parse` in a checkout, and `"unknown"` rather than a
+  guess;
+* `search_mode_source` - whether the mode came from `SEARCH_MODE`,
+  `ENABLE_WEB_SEARCH`, or the code default. An env var beats the default
+  silently and outlives any number of pushes, so "the default was changed" and
+  "this server researches" are different claims and only the second one matters.
+
+Neither is a feature. They are the two facts that had to be inferred, and
+inferring them is how a session gets spent.
+
+### What this does not fix
+
+Whether Exa's `type="fast"` retrieval is any good on a question like `49ers
+game last night` is still unmeasured - `tools/compare_search.py` is the harness
+and nobody has pointed it at a sports recap. If the packets come back thin,
+this change is what stops thin evidence becoming a confident shrug: the tool is
+there, and now the model is told to use it.

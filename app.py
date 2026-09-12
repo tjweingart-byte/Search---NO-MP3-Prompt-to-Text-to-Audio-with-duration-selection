@@ -667,10 +667,45 @@ class ScriptRequest(BaseModel):
     search: bool | None = None
 
 
+def _build_report() -> dict:
+    """Which code this process is actually running.
+
+    "Is my fix deployed?" was unanswerable from outside this server, so it was
+    answered by reasoning about what *should* have happened - which is the
+    shape PROBLEMS.md 52 is about. Render injects RENDER_GIT_COMMIT and
+    RENDER_GIT_BRANCH into every build; FAM_COMMIT covers a host that does
+    not, and a checkout that has its .git is asked directly. Unknown says
+    unknown rather than guessing.
+    """
+    commit = (os.environ.get("RENDER_GIT_COMMIT")
+              or os.environ.get("FAM_COMMIT") or "").strip()
+    branch = (os.environ.get("RENDER_GIT_BRANCH")
+              or os.environ.get("FAM_BRANCH") or "").strip()
+    source = "environment"
+    if not commit:
+        try:
+            import subprocess
+
+            import pathlib
+
+            root = pathlib.Path(__file__).resolve().parent
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                text=True, timeout=5, check=True).stdout.strip()
+            source = "git"
+        except Exception:
+            source = "unknown"
+    return {"commit": commit or "unknown", "short": (commit or "unknown")[:7],
+            "branch": branch or "unknown", "source": source}
+
+
 @app.get("/api/health")
 async def health() -> dict:
     return {
         "status": "ok",
+        # Which commit is serving this request. Without it, "the fix is
+        # pushed" and "the fix is live" are the same sentence from outside.
+        "build": _build_report(),
         "mode": "demo" if DEMO_MODE else "live",
         "model": settings.model,
         "web_search_default": settings.enable_web_search,
@@ -700,6 +735,15 @@ async def health() -> dict:
         # How the listener is told what is happening while they wait. There is
         # no filler any more, so the interface has to be honest instead.
         "search_mode": settings.search_mode,
+        # Where that value came from. An env var beats the code default
+        # silently and outlives any number of pushes, so "the default was
+        # changed" and "this server researches" are different claims and this
+        # is the one that settles them.
+        "search_mode_source": ("SEARCH_MODE env var"
+                               if os.environ.get("SEARCH_MODE", "").strip()
+                               else "ENABLE_WEB_SEARCH env var"
+                               if os.environ.get("ENABLE_WEB_SEARCH", "").strip()
+                               else "config.py default"),
         "research_words": sorted(research_words()),
         "cache": _cache_report(),
         # Every database, its resolved path, and a real read against each.
