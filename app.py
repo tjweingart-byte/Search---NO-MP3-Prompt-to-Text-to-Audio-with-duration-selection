@@ -10,6 +10,7 @@ Endpoints
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import os
 import json
@@ -289,6 +290,33 @@ ATTACHMENTS = attachments_mod.AttachmentStore()
 DEMO_MODE = not settings.anthropic_api_key
 
 
+def _wake_remote_voice() -> None:
+    """Fire-and-forget: start a remote GPU booting, if one is configured.
+
+    Deliberately not awaited. The wake is worth several seconds when it lands
+    and must be worth zero when it does not, so nothing here may raise, block,
+    or keep a reference the request has to clean up. A no-op for every backend
+    but a serverless one, where there is genuinely something asleep.
+    """
+    if settings.voice_backend != "remote":
+        return
+    try:
+        import remote_voice
+
+        task = asyncio.create_task(remote_voice.RemoteChatterboxEngine.wake())
+        # Held so the loop cannot garbage-collect a running task, and dropped
+        # the moment it finishes.
+        _WAKES.add(task)
+        task.add_done_callback(_WAKES.discard)
+    except Exception as exc:  # pragma: no cover - a hint that cannot cost one
+        log.debug("could not wake the remote voice: %s", exc)
+
+
+#: Strong references to in-flight wake tasks. asyncio keeps only weak ones, so
+#: without this a wake can be collected mid-flight and silently never sent.
+_WAKES: set = set()
+
+
 def _make_pipeline(voice: Optional[str] = None) -> PodcastPipeline:
     engine = engine_for_voice(voice)
     if DEMO_MODE:
@@ -385,6 +413,43 @@ def _database_report() -> list[dict]:
     return report
 
 
+def _limit_key(request: Request) -> str:
+    """Who a limiter is pacing: the listener, not the address.
+
+    Keying on `request.client.host` was correct on a laptop and wrong
+    everywhere this actually runs. Behind the RunPod public proxy - and
+    behind Render's router - every request arrives from the proxy, so the
+    whole world shared one bucket: reproduced with two listeners through a
+    non-loopback proxy, where the first got 200 and the second got 429
+    while `X-Forwarded-For` carried the right addresses and was ignored
+    (uvicorn trusts forwarded headers only from 127.0.0.1 by default). At
+    RATE_LIMIT_SECONDS=3 that is one episode every three seconds for all
+    listeners at once, which is not a limiter, it is an outage.
+
+    Trusting `X-Forwarded-For` would fix the symptom and open a hole: the
+    header is client-supplied, so anyone could forge a new one per request
+    and never be paced at all - and this limiter guards model spend, which
+    `metering.py` exists precisely because it is real.
+
+    The session id is the right key and was already here. It is minted by
+    the server, carried in an HttpOnly cookie, and cannot be set by the
+    page - the same property that made it the right key for every store.
+    So pacing follows the listener across proxies, across Render and
+    RunPod, and across a phone changing networks mid-episode.
+
+    The address stays as a fallback for the one case that has no session:
+    the middleware mints identity for `/` and `/api/*` but skips
+    `/api/health`, and minting can fail. An unpaced endpoint is worse than
+    a coarsely paced one, so that case keeps the old behaviour rather than
+    keeping no behaviour. The prefixes keep the two namespaces apart, so a
+    session id can never collide with an address.
+    """
+    listener = _listener(request)
+    if listener:
+        return "listener:" + listener
+    return "ip:" + (request.client.host if request.client else "anonymous")
+
+
 def _rate_limit(request: Request) -> None:
     """One generation per client per RATE_LIMIT_SECONDS.
 
@@ -399,7 +464,7 @@ def _rate_limit(request: Request) -> None:
     """
     if settings.rate_limit_seconds <= 0:
         return
-    client = request.client.host if request.client else "anonymous"
+    client = _limit_key(request)
     now = time.monotonic()
     if now - _last_request[client] < settings.rate_limit_seconds:
         raise HTTPException(status_code=429, detail="Slow down a moment, then try again.")
@@ -415,7 +480,11 @@ def _read_limit(request: Request) -> None:
     """
     if settings.read_limit_per_window <= 0:
         return
-    client = request.client.host if request.client else "anonymous"
+    # Same key, same reason. This one is worse when it is wrong: the
+    # interface fires several cheap reads whenever a tab opens, so a
+    # shared 60-per-10s ceiling is spent by a handful of listeners
+    # navigating normally.
+    client = _limit_key(request)
     now = time.monotonic()
     hits = _read_hits[client]
     cutoff = now - READ_WINDOW_SECONDS
@@ -598,10 +667,45 @@ class ScriptRequest(BaseModel):
     search: bool | None = None
 
 
+def _build_report() -> dict:
+    """Which code this process is actually running.
+
+    "Is my fix deployed?" was unanswerable from outside this server, so it was
+    answered by reasoning about what *should* have happened - which is the
+    shape PROBLEMS.md 52 is about. Render injects RENDER_GIT_COMMIT and
+    RENDER_GIT_BRANCH into every build; FAM_COMMIT covers a host that does
+    not, and a checkout that has its .git is asked directly. Unknown says
+    unknown rather than guessing.
+    """
+    commit = (os.environ.get("RENDER_GIT_COMMIT")
+              or os.environ.get("FAM_COMMIT") or "").strip()
+    branch = (os.environ.get("RENDER_GIT_BRANCH")
+              or os.environ.get("FAM_BRANCH") or "").strip()
+    source = "environment"
+    if not commit:
+        try:
+            import subprocess
+
+            import pathlib
+
+            root = pathlib.Path(__file__).resolve().parent
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                text=True, timeout=5, check=True).stdout.strip()
+            source = "git"
+        except Exception:
+            source = "unknown"
+    return {"commit": commit or "unknown", "short": (commit or "unknown")[:7],
+            "branch": branch or "unknown", "source": source}
+
+
 @app.get("/api/health")
 async def health() -> dict:
     return {
         "status": "ok",
+        # Which commit is serving this request. Without it, "the fix is
+        # pushed" and "the fix is live" are the same sentence from outside.
+        "build": _build_report(),
         "mode": "demo" if DEMO_MODE else "live",
         "model": settings.model,
         "web_search_default": settings.enable_web_search,
@@ -631,6 +735,15 @@ async def health() -> dict:
         # How the listener is told what is happening while they wait. There is
         # no filler any more, so the interface has to be honest instead.
         "search_mode": settings.search_mode,
+        # Where that value came from. An env var beats the code default
+        # silently and outlives any number of pushes, so "the default was
+        # changed" and "this server researches" are different claims and this
+        # is the one that settles them.
+        "search_mode_source": ("SEARCH_MODE env var"
+                               if os.environ.get("SEARCH_MODE", "").strip()
+                               else "ENABLE_WEB_SEARCH env var"
+                               if os.environ.get("ENABLE_WEB_SEARCH", "").strip()
+                               else "config.py default"),
         "research_words": sorted(research_words()),
         "cache": _cache_report(),
         # Every database, its resolved path, and a real read against each.
@@ -2252,6 +2365,17 @@ async def audio(
         # broken, not the listener spending.
         _refund(reserved, user)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    # Ask for a GPU now, before Claude has written a word.
+    #
+    # A serverless worker that has scaled to zero pays container boot plus a
+    # ~10s model load on its first job. Firing that here means it happens
+    # *alongside* script generation instead of in front of the first chunk -
+    # which is CLAUDE.md's rule that latency is answered by starting earlier
+    # rather than by filling the gap, applied to the one wait this split adds.
+    # It is a hint: `wake()` never raises and never blocks, and a miss costs
+    # only the cold start it was trying to hide.
+    _wake_remote_voice()
 
     stats = GenerationStats()
     started = time.monotonic()

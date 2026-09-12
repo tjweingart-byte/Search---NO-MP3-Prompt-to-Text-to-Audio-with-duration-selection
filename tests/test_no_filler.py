@@ -8,9 +8,12 @@ which is not covering anything - and it was prompted to state no facts, so
 the five seconds it did cover were worthless. A setting left behind is an
 invitation to turn it back on, so there is no setting.
 
-**Search is opt-in, and the question opts in.** Paying 10-25 seconds on every
-episode bought nothing for "what is the NASDAQ". The same keyword signal the
-cache already uses to decide freshness now decides research.
+**Search used to be opt-in, and the question opted in. It no longer is** - the
+production default is `SEARCH_MODE=always` and every episode is researched
+(config.search_mode has the arithmetic; the short version is that the keyword
+guess was priced against 10-25 second research and Exa retrieves in about half
+a second). The heuristic itself is still here, still tested, and still what
+`SEARCH_MODE=auto` runs - it is just no longer in the production path.
 """
 from __future__ import annotations
 
@@ -83,7 +86,24 @@ def test_a_generator_that_still_offers_one_is_ignored():
     assert stats.sentences > 0
 
 
-# --- search is decided by the question --------------------------------------
+# --- search, and the heuristic that no longer decides it ---------------------
+
+
+def _auto(query, minutes=3):
+    """Plan the same episode under SEARCH_MODE=auto, whatever production does.
+
+    The heuristic is kept and still has a mode of its own, so it still needs
+    covering - but reading it through the production default would only ever
+    say True and prove nothing.
+    """
+    import unittest.mock as mock
+
+    with mock.patch.object(
+        sg, "settings", dataclasses.replace(sg.settings, search_mode="auto")
+    ):
+        return plan_episode(query, minutes)
+
+
 
 @pytest.mark.parametrize("query", [
     "latest news on the fed",
@@ -95,6 +115,7 @@ def test_a_generator_that_still_offers_one_is_ignored():
 def test_a_question_about_a_moving_target_is_researched(query):
     assert cache_mod.needs_fresh_information(query) is True
     assert plan_episode(query, 3).search is True
+    assert _auto(query).search is True
 
 
 @pytest.mark.parametrize("query", [
@@ -104,10 +125,15 @@ def test_a_question_about_a_moving_target_is_researched(query):
     "why the Roman republic fell",
     "what habit research actually shows about lasting change",
 ])
-def test_an_evergreen_question_answers_from_memory(query):
-    """These are the questions that were paying 30-45 seconds for nothing."""
+def test_an_evergreen_question_is_researched_anyway(query):
+    """The heuristic still reads these as timeless, and production researches
+    them regardless. Both halves matter: the signal is unchanged, and it no
+    longer decides."""
     assert cache_mod.needs_fresh_information(query) is False
-    assert plan_episode(query, 3).search is False
+    assert _auto(query).search is False, "the freshness signal itself changed"
+    assert plan_episode(query, 3).search is True, (
+        "a timeless-looking question was answered from model memory; "
+        "production researches every episode")
 
 
 def test_an_explicit_request_still_wins_both_ways():

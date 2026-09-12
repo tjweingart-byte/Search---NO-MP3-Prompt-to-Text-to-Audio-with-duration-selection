@@ -1,0 +1,10 @@
+# The GPU worker, on top of requirements.txt and requirements-chatterbox.txt.
+#
+# Only the serverless entrypoint needs this; `voice_worker/server.py` runs on
+# the fastapi and uvicorn that requirements.txt already declares. It is one
+# line rather than a third install step because the image serves both modes and
+# is not rebuilt to switch between them.
+#
+# Imported late, inside `handler.main()`, so the HTTP entrypoint and the tests
+# do not need it present at all.
+runpod>=1.6

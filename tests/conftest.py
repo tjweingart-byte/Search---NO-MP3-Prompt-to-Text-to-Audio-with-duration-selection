@@ -63,6 +63,16 @@ FAM_ENVIRONMENT = (
     # suite: a test asserting a link is not yet public would pass or fail
     # depending on whose machine it ran on.
     "PUBLIC_BASE_URL",
+    # Which machine speaks, and how it is reached. A developer with a real
+    # RunPod endpoint configured must run the same suite as CI: without these
+    # cleared, `VOICE_BACKEND=remote` in their shell would point the engine
+    # tests at a rented GPU - billing a test run, and making the result depend
+    # on whether a worker happened to be warm.
+    "VOICE_BACKEND", "REMOTE_VOICE_TRANSPORT", "REMOTE_VOICE_URL",
+    "REMOTE_VOICE_TOKEN", "REMOTE_VOICE_SAMPLE_RATE", "REMOTE_VOICE_TIMEOUT",
+    "REMOTE_VOICE_CONNECT_TIMEOUT", "REMOTE_VOICE_CONCURRENCY",
+    "REMOTE_VOICE_ID", "REMOTE_VOICE_WAKE_INTERVAL",
+    "RUNPOD_ENDPOINT_ID", "RUNPOD_API_KEY", "RUNPOD_BASE_URL",
 )
 
 #: Where each database lives is per-machine state too. These reach config.py

@@ -1,0 +1,69 @@
+name: RunPod Schedule
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+      timezone: 'America/Los_Angeles'
+    - cron: '0 23 * * *'
+      timezone: 'America/Los_Angeles'
+
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Choose what to do'
+        required: true
+        type: choice
+        options:
+          - start
+          - stop
+
+jobs:
+  manage-runpod:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Start or stop RunPod pod
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          # safe_peach_goat. The pod this schedule starts and stops must be
+          # the pod production actually runs on: this named a retired one, so
+          # the 08:00 start and 23:00 stop were acting on the wrong machine
+          # while the live pod ran unmanaged.
+          POD_ID: t6x3rlixn0tz18
+          MANUAL_ACTION: ${{ github.event.inputs.action }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ACTION="$MANUAL_ACTION"
+          else
+            HOUR=$(TZ=America/Los_Angeles date +%H)
+
+            if [ "$HOUR" = "08" ]; then
+              ACTION="start"
+            elif [ "$HOUR" = "23" ]; then
+              ACTION="stop"
+            else
+              echo "No action required."
+              exit 0
+            fi
+          fi
+
+          if [ "$ACTION" = "start" ]; then
+            echo "Starting RunPod pod..."
+
+            curl --fail-with-body -X POST \
+              -H "Authorization: Bearer $RUNPOD_API_KEY" \
+              -H "Content-Type: application/json" \
+              "https://rest.runpod.io/v1/pods/$POD_ID/start"
+
+          elif [ "$ACTION" = "stop" ]; then
+            echo "Stopping RunPod pod..."
+
+            curl --fail-with-body -X POST \
+              -H "Authorization: Bearer $RUNPOD_API_KEY" \
+              -H "Content-Type: application/json" \
+              "https://rest.runpod.io/v1/pods/$POD_ID/stop"
+
+          else
+            echo "Unknown action: $ACTION"
+            exit 1
+          fi

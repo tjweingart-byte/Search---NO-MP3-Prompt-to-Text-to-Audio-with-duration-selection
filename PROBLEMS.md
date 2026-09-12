@@ -3858,3 +3858,294 @@ and a failover still keeps the keys behind it.
 about as a chain - environment, then provider, then files - and the chain is
 right. The cache in front of it was not part of that reasoning, and a cache is a
 precedence decision whether or not anyone wrote it down as one.
+
+## 75. The GPU was 99% idle, so the voice moved off the app's machine
+
+Not a bug. A cost shape that the architecture had already named and nobody had
+acted on, and it is written down here because the *reasoning* is the part worth
+keeping — the code is small.
+
+`DEPLOY.md` said it plainly: **Chatterbox runs in-process, so every replica
+needs a GPU, and a GPU left running is the expensive kind.** At the volume this
+product is actually at, that is the whole problem. Thirty minutes of audio a day
+is **2% of the month**, and at Chatterbox's measured ~4.6x realtime the card is
+genuinely working **0.45%** of the hours it is rented for. A pod billed 24/7 is
+therefore about 99.5% idle, and the bill does not know that.
+
+**What was measured before deciding.** Resemble's hosted API was priced first,
+since it is the same company that publishes Chatterbox: Flex is $0.0005 per
+second of audio with no monthly ceiling, so a 3-minute episode is $0.09 against
+a ~$0.03 script — four times the writing, and about $34.50 per million
+characters, which puts it in the *expensive* third of `VOICE_OPTIONS.md`'s
+shortlist rather than the cheap end. It would also have meant a different model
+and a different voice, and a fresh consent recording from the person whose voice
+`reference_3` is. Renting the same card by the second is cheaper than renting
+somebody's inference by the second, and it keeps the voice.
+
+### The shape of the change
+
+One JSON contract, two envelopes, one worker image:
+
+    remote_voice.py           the app's side; owns the transport, nothing else
+    voice_worker/synth.py     the card's side; owns the audio, nothing else
+    voice_worker/handler.py   RunPod Serverless envelope
+    voice_worker/server.py    plain-HTTP envelope, for an always-on pod
+
+The worker **imports the real `ChatterboxEngine`** rather than reimplementing
+`generate()`. That was the single most load-bearing decision here. The six
+numbers in `CHATTERBOX_GENERATION` *are* the voice — the file says changing one
+invalidates every listening judgement made on it — so a second copy on the
+worker would be a second place for them to drift, and the drift would be
+inaudible until someone compared two episodes side by side. Importing also
+inherits the rights gate and the CPU refusal for free, which are two more things
+that must not exist twice.
+
+`speech_assembly.py` already batches sentences into ~33-word chunks, so an
+episode is about fifteen requests rather than one per sentence. Each chunk is
+~10 seconds of audio, which is ~10 seconds of playback headroom for the next
+round trip. The split is affordable because that batching already happened.
+
+### Four things that had to be got right, none of them obvious
+
+* **The sample rate is known before the first call.** `app.py` writes
+  `X-Sample-Rate` from `engine.sample_rate` before the response body runs, so
+  the engine cannot wait to be told. It is configured, asked for in every
+  request, and the reply is *checked* against it. A worker answering at a
+  different rate is refused rather than played — a wrong rate is a failure the
+  listener hears and nothing anywhere explains.
+* **Base64 over JSON is not an audio file.** "No MP3, no audio files" is a rule
+  about what reaches the listener and what is written to disk, not about what
+  two servers say to each other — the same reasoning §61's WellSaid work
+  established. Nothing is transcoded, and a worker offering `mp3` is refused
+  rather than decoded.
+* **Configured is not reachable.** `available()` reads configuration and never
+  touches the network, because `/api/health` calls it and a health check that
+  makes a billed third-party request is one nobody can afford to poll. What
+  *does* perform the real action is `warm_up()`, and its answer is kept rather
+  than only logged, so `/api/health` reports `reachable: {state: ok|failed|
+  unknown}` beside `configured`. §52 again: "a credential is set" is not "the
+  credential works", and one report must not let either stand in for the other.
+* **The cold start is answered by starting earlier.** A serverless worker at
+  zero pays boot plus a ~10s model load. `app.py` fires `remote_voice.wake()`
+  when a request arrives — before Claude has written a word — so the worker
+  boots while the script is being written. It never raises, never blocks and
+  will not stampede; a miss costs only the cold start it was trying to hide.
+  This is the same move as prefetching scripts for the browse surfaces, and it
+  is emphatically *not* the cold open: nothing is played to cover the wait.
+
+### §61's two guards, re-added by hand as it said to
+
+`VOICE_OPTIONS.md` wrote both down rather than leaving them as dead code, on the
+grounds that the next hosted engine should add them deliberately. It did.
+
+* **A rented voice is never the default.** `VOICE_BACKEND` defaults to
+  `chatterbox` and nothing auto-detects. `default_voice()` returning the first
+  offered voice is how WellSaid silently became what every listener got on any
+  machine without Piper; here the remote backend is unreachable without an
+  explicit decision, and a test fails if that default ever drifts.
+* **A hosted engine never falls back to a local one.** Every failure raises
+  with the real reason — network error, 401, empty audio, wrong rate. There is
+  no substitution, because substituting means judging one backend by another's
+  output, and an operator debugging a GPU that was never being asked to speak.
+
+### Deliberately a knob, which is the exception
+
+This project deletes rather than disables — the cold open, Piper, WellSaid —
+because a knob left behind is an invitation to turn it back on, and this one
+turned itself once already. That rule is suspended here **on purpose**: a card
+of our own is where this is going, and the split exists only while the volume
+does not justify one. So `Dockerfile.gpu`, `RUNPOD_PRODUCTION.md`,
+`pack_for_pod.py`, `pod_production_test.sh`, `requirements-chatterbox.txt` and
+`ChatterboxEngine` are all untouched, and going back is one variable.
+
+The difference from the cases the rule is for: those knobs led *away* from the
+product's spec. This one leads back to it.
+
+### Still unheard
+
+Nobody has heard a FAM episode through this path, or through any Chatterbox
+path — that is still open problem #1 in CLAUDE.md and this does not close it.
+What the tests establish is that the transport is correct, that failures fail,
+and that the contract survives a worker answering wrongly. **Whether it sounds
+like the in-process engine is the thing to check first**, and it is checkable
+cheaply: the same script through both backends, back to back.
+
+The other unmeasured number is the wake. Whether it actually covers a cold
+start on a real endpoint has not been observed — only reasoned about from the
+script-generation time on one side and the model-load time on the other. If it
+does not, `REMOTE_VOICE.md` lists the three fixes in order of cost.
+
+## 76. The question decided whether to research, and it decided wrong
+
+Render, in production, on a question about a game played the previous evening:
+
+    SEARCH no '49ers game last night' - nothing in it reads as time-sensitive;
+    answering from what the model knows
+
+The episode was written from model memory. Nothing was broken: that log line
+is `script_generator.plan_episode` reporting the designed behaviour of
+`SEARCH_MODE=auto`, which was the shipped default.
+
+### The cause is a price that changed, not a bug
+
+`auto` was the settled constraint — "search is opt-in, and the question opts
+in" — and it was right when it was written. Research then meant Anthropic's
+server-side `web_search` tool running inside the model's turn, which
+front-loads **10-25 seconds** before the first word. Against that, a keyword
+guess is worth making: the questions it gets right save half a minute each, and
+the one-sentence spec says a wait in front of the first word is the one cost
+this product refuses.
+
+`RESEARCH_BACKEND=exa` (§57, `research.py`) changed the number the guess was
+priced against. Exa retrieves in about **half a second**. At that price the
+arithmetic inverts completely:
+
+* a question guessed **wrong** is answered from memory that may be a year
+  stale — the whole failure, and invisible, because a confident wrong answer
+  sounds exactly like a right one;
+* a question guessed **right** saves half a second, which no listener can hear.
+
+So the guess had stopped buying anything and was still capable of losing
+everything. That is not a heuristic that needs widening. `research_reason` had
+already been widened once (§58 added "who runs X", "how many", bare years) and
+`last night` still missed — which is the general shape: a keyword list can
+always be widened by one more word, and the next question it misses is already
+written somewhere.
+
+### The fix
+
+One default, not a deleted code path. `config.search_mode` now defaults to
+`always`, and `.env.example` moves with it (§54: a setting is settled only
+where it is copied, and `tests/test_env_example.py` fails on any disagreement).
+`auto` and `never` are kept and are explicitly **not production** — offline
+`write.py`, `tools/compare_search.py`, a deployment with no Exa key. An
+explicit `search=1` / `search=0` on a request still wins, because opt-out has
+to mean something or the API documents a lie.
+
+Three things moved with it, because a decision that is only changed in one
+place is §54 again:
+
+* **The log line says which mode it is in** in all three branches. The old one
+  reported a reason without saying whose rule produced it, so the Render log
+  looked like a heuristic misfiring rather than a default being wrong.
+* **The interface asks the server which mode it is in** (`/api/health` already
+  reported `search_mode`; `static/index.html` now reads it). It was mirroring
+  the keyword list to choose a loading caption, so with research always on it
+  would have told the listener "answering from what I know" while the server
+  retrieved — a new version of the lie the honest wait was built to remove.
+* **`demo_preflight` warns on the opposite condition.** It used to flag
+  `always` as the mistake. It now flags anything that is *not* `always`, and —
+  "verify, do not inspect" (§52) — asks `research.diagnose()` whether the
+  backend can actually run, because with every episode researched a missing
+  `EXA_API_KEY` is not a degraded demo, it is a demo where nothing generates.
+
+### What is deliberately not done
+
+**No fallback to model knowledge when research fails.** `ScriptGenerator.
+research` lets `ResearchUnavailable` propagate, `app.friendly_error` turns it
+into the sentence that names the remedy, and that is the whole of it.
+Substituting memory for a failed retrieval would restore exactly this bug,
+invisibly, on the days the backend is down — and an episode nobody can tell
+was unresearched is unattributable.
+
+The empty-packet path is different and stays: when Exa returns nothing usable,
+`research` returns the plan without evidence, and since the plan still says
+`search`, `_request_kwargs` leaves the `web_search` tool attached — so the
+model searches after all rather than being handed an empty packet and told it
+is research.
+
+### The test that would have caught it
+
+`tests/test_research_is_the_default.py`, and the shape worth copying: it
+asserts the symptom (`"answering from what the model knows"` can no longer be
+logged) as well as the cause, it goes through `/api/audio` rather than calling
+`plan_episode` directly (§58's lesson — a default that is correct in the
+function and wrong at the boundary is invisible to any test that starts inside
+the boundary), and it follows the flag to the call by stubbing
+`research.retrieve` and asserting it actually ran. Checked against the old
+default, 17 of its 34 cases fail — including `49ers game last night`.
+
+### Still open
+
+Nobody has listened to an always-researched episode end to end with a key in
+place. What is measured is that research is planned, invoked and attributed;
+what is not is whether time-to-first-audio holds at the half-second Exa is
+credited with under production concurrency. If it does not, the answer is
+`ANSWER_FIRST=1` — which exists for exactly this and currently follows the
+backend — and not a return to guessing.
+
+## 77. The search tool was attached to every episode and never asked for
+
+§76 made every episode researched. Production then answered `49ers game last
+night`, and `Rams game last night`, with:
+
+> I don't have any information on the 49ers game last night. I can't confirm
+> the score, the opponent, or the plays.
+
+Which reads like §76 not being deployed. It was deployed, and it was working:
+the episode *was* routed for research. The bug is one layer further in, and it
+was already there before §76 - reachable only on the few questions the keyword
+list happened to flag, which is why nobody had seen it.
+
+### Cause
+
+`_request_kwargs` attaches Anthropic's `web_search` tool whenever an episode is
+researched and no evidence packet came back:
+
+    if plan.search and not plan.evidence:
+        kwargs["tools"] = [{"type": "web_search_20260209", ...}]
+
+and `build_prompt` said **nothing about it**. The model was handed a capability
+it was never asked to use, in a prompt whose every other line is about writing a
+story of a certain length. So it wrote one, from memory, and reported honestly
+that its memory was empty.
+
+**A tool is not an instruction.** Attaching one says the model *may* search; it
+never says it *must*, and a prompt that spends three hundred words on narrative
+structure and none on research is a prompt about narrative structure.
+
+That path is reached in two ways, and §76 widened both from "the questions a
+keyword list flagged" to "every question":
+
+* `RESEARCH_BACKEND=claude` - `research()` returns the plan untouched by
+  design, because the model does its own looking. *Every* episode lands here.
+* `RESEARCH_BACKEND=exa` where retrieval returned nothing usable. `retrieve`
+  logs `exa returned N result(s) but no usable evidence` and hands back an
+  empty packet, deliberately, so the tool stays attached - which only works if
+  something then asks the model to use it.
+
+### Fix
+
+`build_prompt` grows the block that was missing: when an episode is researched
+and carries no evidence, it says there is a search tool, that the question was
+routed for research, to search before writing, and that `"I don't have that
+information"` and `"I can't confirm"` are the one pair of answers not available
+- naming the exact sentences production produced. The packet and the tool stay
+alternatives, never both: an episode with evidence is told to read it and is
+given no tool, because searching on top of a packet pays the 10-25 seconds the
+packet exists to avoid and makes the episode unattributable.
+
+### The other half: the server could not say what it was running
+
+Diagnosing this took a round of "is the fix even deployed?", and from outside
+the server that question had no answer - which is PROBLEMS.md 52 with the
+deployment as the subject. `/api/health` now reports:
+
+* `build` - the running commit, from `RENDER_GIT_COMMIT` (Render injects it),
+  `FAM_COMMIT`, or `git rev-parse` in a checkout, and `"unknown"` rather than a
+  guess;
+* `search_mode_source` - whether the mode came from `SEARCH_MODE`,
+  `ENABLE_WEB_SEARCH`, or the code default. An env var beats the default
+  silently and outlives any number of pushes, so "the default was changed" and
+  "this server researches" are different claims and only the second one matters.
+
+Neither is a feature. They are the two facts that had to be inferred, and
+inferring them is how a session gets spent.
+
+### What this does not fix
+
+Whether Exa's `type="fast"` retrieval is any good on a question like `49ers
+game last night` is still unmeasured - `tools/compare_search.py` is the harness
+and nobody has pointed it at a sports recap. If the packets come back thin,
+this change is what stops thin evidence becoming a confident shrug: the tool is
+there, and now the model is told to use it.

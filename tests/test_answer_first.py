@@ -87,11 +87,17 @@ def test_a_researched_episode_starts_both_halves_at_once(on):
     assert stats.answered_first is True
 
 
-def test_an_instant_episode_makes_only_one_call(on):
-    """A question that needs no research must not pay for a second call."""
+def test_an_unresearched_episode_makes_only_one_call(on):
+    """The cover exists to fill a research wait, so no research means no cover.
+
+    Reaching an unresearched episode now takes `search=False`: production
+    researches every one (PROBLEMS.md 76), and the question no longer opts
+    out on the listener's behalf. The rule being tested is unchanged - the
+    second call is paid for by the wait, not by the episode.
+    """
     gen = TwoHalves()
     _run(PodcastPipeline(generator=gen, engine=DebugEngine(), cache=None),
-         plan_episode("what is the NASDAQ", 2), GenerationStats())
+         plan_episode("what is the NASDAQ", 2, search=False), GenerationStats())
     assert gen.roles == [""], "an unresearched episode split itself in two"
 
 

@@ -97,15 +97,27 @@ def main() -> int:
     if live:
         say(f"  writing    {BOLD}live{RESET}  ·  {settings.model}  ·  "
             f"search {settings.search_mode}")
-        # The two settings that put seconds in front of the first word. Both
-        # are off by default and both have been turned on by accident, by an
-        # .env copied from an example that disagreed with the code.
-        if settings.search_mode == "always":
-            say(f"  {BOLD}SEARCH_MODE=always{RESET} - every episode waits 10-25s "
-                f"before the first word,")
-            say(f"{DIM}             including the ones that did not need it. "
-                f"SEARCH_MODE=auto reads the question.{RESET}")
+        # Production researches every episode. The two modes that do not are
+        # for offline work and benchmarks, and an .env left in one of them is
+        # a demo that answers today's questions from months-old memory - the
+        # "quietly worse than intended" failure again.
+        if settings.search_mode != "always":
+            say(f"  {BOLD}SEARCH_MODE={settings.search_mode}{RESET} - episodes "
+                f"will be written from what the model already knows,")
+            say(f"{DIM}             without research. Production is "
+                f"SEARCH_MODE=always.{RESET}")
             worst = max(worst, 1)
+        elif settings.research_backend == "exa":
+            # "Verify, do not inspect": ask the backend why it can or cannot
+            # serve rather than checking that a variable is set. With every
+            # episode researched, a backend that cannot run is not a degraded
+            # demo, it is a demo where nothing generates at all.
+            ok, why = research.diagnose()
+            if not ok:
+                say(f"  {BOLD}Research cannot run{RESET} - {why}.")
+                say(f"{DIM}             Every episode is researched, so every "
+                    f"episode will fail with that message.{RESET}")
+                worst = max(worst, 2)
         # Which file the key came from, because "a key is set" has been the
         # wrong answer to "is the right key set" more than once here.
         say(f"{DIM}             key {describe_key()} from {key_source()}{RESET}")

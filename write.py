@@ -53,19 +53,29 @@ async def main() -> int:
     if args.model:
         overrides["model"] = args.model
     if args.no_search:
-        overrides["enable_web_search"] = False
+        # `enable_web_search` is the *other* switch - the model's own search
+        # tool - and `plan_episode` has never read it, so this flag printed
+        # "search off" and researched anyway. Unnoticeable while the default
+        # was `auto` and most queries went unresearched; a lie now that every
+        # episode is researched (PROBLEMS.md 76). The mode is what decides.
+        overrides["search_mode"] = "never"
     if overrides:
         script_generator.settings = dataclasses.replace(settings, **overrides)
 
-    plan = plan_episode(args.query, args.minutes)
+    plan = plan_episode(args.query, args.minutes,
+                        search=False if args.no_search else None)
     active = script_generator.settings
 
     if args.prompt:
         print(script_generator.build_prompt(plan))
         print("\n" + "=" * 72 + "\n")
 
+    # Read off the plan, not off a setting. What this line is for is telling
+    # you whether the script you are about to judge was researched, and only
+    # the plan knows.
     print(f'"{args.query}"  ·  {plan.minutes} min  ·  {active.model}'
-          f'  ·  search {"off" if not active.enable_web_search else "on"}\n')
+          f'  ·  search {"on" if plan.search else "off"}'
+          f'{f" ({active.research_backend})" if plan.search else ""}\n')
 
     generator = ScriptGenerator()
     generator.client = build_async_client()

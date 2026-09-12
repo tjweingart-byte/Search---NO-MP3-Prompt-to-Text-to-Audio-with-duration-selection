@@ -9,7 +9,7 @@ True/False is the listener's own choice and must win. But the endpoint
 declared `search: bool = Query(False)`, so FastAPI turned an *omitted*
 parameter into an explicit `False` before the planner ever saw it. The
 browser never sends `search=` at all. So every episode the app ever produced
-said "the listener asked for no research", and SEARCH_MODE=auto was dead code
+said "the listener asked for no research", and the search mode was dead code
 in production while passing every test.
 
 The tests missed it because they called `plan_episode(...)` directly with the
@@ -70,7 +70,7 @@ def test_a_request_that_says_nothing_about_search_leaves_it_undecided(client, se
     _ask(client, q="what is the nasdaq")
     assert seen["search_arg"] is None, (
         "an omitted search parameter arrived as an explicit choice, which "
-        "overrides SEARCH_MODE=auto and disables the heuristic entirely")
+        "overrides SEARCH_MODE entirely - including the production default")
 
 
 def test_a_question_about_a_moving_target_is_researched_through_the_api(client, seen):
@@ -79,10 +79,14 @@ def test_a_question_about_a_moving_target_is_researched_through_the_api(client, 
     assert seen["plan"].search is True
 
 
-def test_an_evergreen_question_is_still_answered_from_memory(client, seen):
-    """Over-triggering is cheap, not free."""
+def test_an_evergreen_question_is_researched_too(client, seen):
+    """The production default is `always`, and this is the case it exists for:
+    nothing in this question reads as time-sensitive, and it is researched
+    anyway. The heuristic is still consulted under SEARCH_MODE=auto and is
+    covered in test_no_filler.py; it is no longer in the production path."""
     _ask(client, q="how does a heat pump work")
-    assert seen["plan"].search is False
+    assert seen["search_arg"] is None
+    assert seen["plan"].search is True
 
 
 @pytest.mark.parametrize("query", [

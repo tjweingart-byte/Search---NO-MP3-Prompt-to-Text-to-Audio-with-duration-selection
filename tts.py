@@ -516,6 +516,38 @@ class ChatterboxEngine(TTSEngine):
 #: options at all. They exist only if the host OS happens to provide them, so
 #: relying on either means the deployed app sounds different, and worse, than
 #: the laptop it was built on.
+#:
+#: **It is now chosen, not detected.** `settings.voice_backend` names which
+#: machine fills the slot - `chatterbox` for the card in this process, `remote`
+#: for the same model on a GPU somewhere else - and it defaults to
+#: `chatterbox`, so a deployment that says nothing behaves exactly as it did
+#: before the remote backend existed. That default is the guard PROBLEMS.md §61
+#: asked for by name: a rented or hosted voice must never become what every
+#: listener gets merely because nothing local was installed.
+def _remote_engine():
+    """Imported late: remote_voice.py imports this module for its base class."""
+    from remote_voice import RemoteChatterboxEngine
+
+    return RemoteChatterboxEngine
+
+
+def production_engines() -> tuple:
+    """The engine classes this deployment may serve, in preference order.
+
+    Exactly one, always. There is no falling back from the remote voice to the
+    local one or the other way round: substituting a different engine means a
+    listener judging one backend by another's behaviour, and an operator
+    debugging a GPU that was never being asked to speak.
+    """
+    if settings.voice_backend == "remote":
+        return (_remote_engine(),)
+    return PRODUCTION_ENGINES
+
+
+#: The in-process slot, and what `production_engines()` returns for every
+#: backend but `remote`. Left as a module constant deliberately: it is what
+#: `verify_voice.py` and the engine-contract tests name, and what they
+#: substitute in order to exercise the fallback without a GPU.
 PRODUCTION_ENGINES: tuple = (ChatterboxEngine,)
 
 #: What a machine that cannot run the production engine gets instead: a tone,
@@ -552,7 +584,7 @@ DEV_ENGINES = {
 
 def production_engine() -> TTSEngine | None:
     """The first production engine this machine can actually run, or None."""
-    for cls in PRODUCTION_ENGINES:
+    for cls in production_engines():
         if cls.available():
             return cls()
     return None
@@ -582,7 +614,7 @@ def build_engine(preference: str | None = None) -> TTSEngine:
     # Nothing can speak. Say why, at WARNING, every time an engine is built:
     # this used to be a flat-sounding voice nobody had chosen, which is a
     # failure that plays. A tone is a failure that is heard as one.
-    for cls in PRODUCTION_ENGINES:
+    for cls in production_engines():
         log.warning("%s is unavailable (%s); serving a placeholder tone, not a "
                     "voice", cls.name, cls.diagnose()[1])
     return PLACEHOLDER_ENGINE()
@@ -598,7 +630,7 @@ def list_voices() -> list[Voice]:
     voice, and offering them in the picker made them one in practice.
     """
     voices: list[Voice] = []
-    for cls in PRODUCTION_ENGINES:
+    for cls in production_engines():
         voices.extend(cls.voices())
     if not voices:
         # Never empty: the picker must always have something in it, and a
@@ -615,16 +647,54 @@ def default_voice() -> str | None:
 def engine_for_voice(voice: str | None) -> TTSEngine:
     """Route a voice id to the engine that owns it.
 
-    An unknown or unavailable voice falls back to the best engine present
-    rather than failing: a listener choosing a voice that has since been
-    uninstalled should still hear their episode.
+    **A development engine is never selectable by a request.** This used to
+    route on `ENGINES`, which is `DEV_ENGINES` - so `voice=debug:tone` from a
+    browser returned the placeholder tone even on a machine where Chatterbox
+    was loaded and working, because `DebugEngine.available()` is
+    unconditionally True. `/api/health` went on reporting
+    `selected: chatterbox`, since that asks `build_engine()`, which never sees
+    the parameter. The interface said "voice: chatterbox" while a 220 Hz sine
+    with a 2 Hz envelope played - which is exactly what a listener would
+    describe as humming or buzzing.
+
+    A page acquires that id honestly: `list_voices` offers the placeholder
+    whenever the production slot is empty, so a tab opened while the voice
+    file was still being placed, or during warm-up, picks it up and keeps
+    sending it for the life of the session. Nothing later takes it back.
+
+    This is the Piper failure in a new place, and CLAUDE.md already names it:
+    an engine reached listeners three ways nobody chose, one of which was
+    `engine_for_voice` falling back to it. Announcing was not enough then
+    either. So production engines are matched first and a development id is
+    refused outright while a real voice exists.
+
+    What still works: `TTS_ENGINE=debug` selects a development engine, because
+    that is a decision made on the server by whoever started it rather than by
+    a query string, and `build_engine` honours it. And with no production
+    engine at all, `build_engine` returns the placeholder anyway, so a machine
+    that genuinely cannot speak still serves the tone rather than failing.
     """
     if voice and ":" in voice:
         name = voice.split(":", 1)[0]
-        cls = ENGINES.get(name)
-        if cls is not None and cls.available():
-            return cls()
-        log.warning("voice %r is unavailable; falling back", voice)
+        # `production_engines()`, not the static tuple: with VOICE_BACKEND=remote
+        # the slot holds the remote engine, and matching against the in-process
+        # one would let a request name a *different* backend than the deployment
+        # serves - the substitution `production_engines()` exists to forbid.
+        for cls in production_engines():
+            if cls.name == name:
+                if cls.available():
+                    return cls()
+                log.warning("voice %r is unavailable; falling back", voice)
+                break
+        else:
+            # Only worth saying when there is a real voice being passed over.
+            # With none, the placeholder is the honest answer, not an override.
+            if name in DEV_ENGINES and production_engine() is not None:
+                log.warning(
+                    "ignoring development voice %r from a request: production "
+                    "speaks with %s, and an engine nobody chose is how this "
+                    "app has lost the most time", voice,
+                    production_engine().name)
     return build_engine()
 
 
@@ -641,6 +711,14 @@ async def warm_up() -> None:
         log.info("speech engine %s warmed up", engine.name)
     except Exception as exc:  # pragma: no cover - never block startup
         log.warning("could not warm up %s: %s", engine.name, exc)
+        # For a remote voice this is the *only* moment anything performs the
+        # real action before a listener does, so the answer is kept rather than
+        # only logged: `/api/health` reports it, and "configured but never
+        # reachable" stops looking like "configured".
+        if engine.name == "remote":
+            import remote_voice
+
+            remote_voice.RemoteChatterboxEngine.record_failure(str(exc))
 
 
 def engine_report() -> dict:
@@ -654,12 +732,23 @@ def engine_report() -> dict:
     fills `interim_engine` changed, from a voice to the placeholder.
     """
     selected = build_engine()
-    return {
+    engines = production_engines()
+    report = {
         "selected": selected.name,
-        "production_engines": [cls.name for cls in PRODUCTION_ENGINES],
-        "interim": not PRODUCTION_ENGINES or production_engine() is None,
+        "backend": settings.voice_backend,
+        "production_engines": [cls.name for cls in engines],
+        "interim": not engines or production_engine() is None,
         "interim_engine": PLACEHOLDER_ENGINE.name,
         "debug": True,
         "voices": [v.as_dict() for v in list_voices()],
         "default_voice": default_voice(),
     }
+    if settings.voice_backend == "remote":
+        # Where the card is, and whether a real call has ever succeeded against
+        # it. "Configured" and "reachable" are different questions and this
+        # answers both separately - reporting only the first is the cheaper
+        # question PROBLEMS.md §52 is about.
+        import remote_voice
+
+        report["remote"] = remote_voice.report()
+    return report

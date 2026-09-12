@@ -378,15 +378,18 @@ def plan_episode(
     else:
         sections = ["the full arc, including how it came to be this way"]
 
-    # Option B: the question decides. An explicit search=1/0 on the request
-    # still wins - that is what "opt in" means - but the default is neither
-    # "always" nor "never", it is "when the answer depends on something recent".
+    # Every episode is researched. An explicit search=1/0 on the request still
+    # wins - that is what opt-out means - and `SEARCH_MODE` can still be set to
+    # `auto` or `never`, but neither is production: see config.search_mode for
+    # why the question no longer gets a vote.
     if search is None:
-        mode = getattr(settings, "search_mode", "auto")
+        mode = getattr(settings, "search_mode", "always")
         if mode == "always":
             use_search = True
+            log.info("SEARCH yes  %r - every episode is researched", query)
         elif mode == "never":
             use_search = False
+            log.info("SEARCH no   %r - SEARCH_MODE=never", query)
         else:
             reason = research_reason(query)
             use_search = bool(reason)
@@ -396,10 +399,11 @@ def plan_episode(
             # "no" - produced no output at all. A decision that is silent when
             # it goes one way cannot be checked by watching.
             if use_search:
-                log.info("SEARCH yes  %r - %s", query, reason)
+                log.info("SEARCH yes  %r - SEARCH_MODE=auto: %s", query, reason)
             else:
-                log.info("SEARCH no   %r - nothing in it reads as time-sensitive; "
-                         "answering from what the model knows", query)
+                log.info("SEARCH no   %r - SEARCH_MODE=auto: nothing in it reads "
+                         "as time-sensitive; answering from what the model knows",
+                         query)
     else:
         use_search = bool(search)
         log.info("SEARCH %-3s %r - the request asked for it explicitly",
@@ -495,6 +499,39 @@ not reading a citation list.
 </evidence>
 """
 
+    # The other half of a researched episode, and the one that was missing.
+    #
+    # `_request_kwargs` attaches the web_search tool whenever an episode is
+    # researched and no evidence packet came back - the `claude` backend, or
+    # Exa returning nothing usable. It attached the tool and said nothing
+    # about it, so the model was handed a capability it was never asked to
+    # use: it wrote from memory and said "I don't have any information on the
+    # 49ers game last night. I can't confirm the score, the opponent, or the
+    # plays." Which is honest, and is not research.
+    #
+    # A tool is not an instruction. This is the instruction.
+    research_now = ""
+    if plan.search and not plan.evidence:
+        research_now = """
+Nothing has been looked up for you, and you have a web search tool. Use it
+before you write - this question was routed for research, which means what you
+remember is not good enough on its own.
+
+Search first, then write from what you find. If the first search misses, try
+different words before giving up on it.
+
+Do not write "I don't have that information".
+Do not write "I can't confirm" anything.
+Neither is true: you have the means to find out, and declining to look is the
+one answer that is not available here.
+
+If you genuinely searched and the answer is not out there, say what you did
+establish and what is not yet reported, plainly, and carry on.
+
+Never read a source's title, number or URL aloud. This is someone listening,
+not reading a citation list.
+"""
+
     follow_up = ""
     if plan.context:
         follow_up = f"""
@@ -510,7 +547,7 @@ straight into the narrower thing they asked for and stay on it.
 <request>{plan.query}</request>
 
 It is currently {now_line()}. Prefer the newest information you can establish.
-{attached}{evidence}{follow_up}{ROLE_BRIEFS.get(plan.role, "")}
+{attached}{evidence}{research_now}{follow_up}{ROLE_BRIEFS.get(plan.role, "")}
 You have about {plan.minutes} minute{"s" if plan.minutes != 1 else ""} - roughly
 {budget} words. That is room for {plan.sections[0]}.
 

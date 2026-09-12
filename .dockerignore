@@ -1,0 +1,74 @@
+# What must never reach a container registry.
+#
+# `Dockerfile` and `Dockerfile.gpu` both `COPY . .`, and **Docker does
+# not read .gitignore**. Without this file, a build on a developer's machine
+# bakes that machine's private state into an image that is then pushed to a
+# registry and pulled onto rented hardware. Three of those are serious:
+#
+#   .env                  the Anthropic key. `Dockerfile.gpu` says credentials
+#                         go in the host's template and "never anywhere" in the
+#                         image; this is what makes that true rather than
+#                         merely intended.
+#   *.db                  listener accounts, history, echoes and the metering
+#                         ledger. Real data from a real machine.
+#   experiments/          reference recordings AND `sources.json`, which maps
+#                         neutral ids back to the people who recorded them.
+#                         `pack_for_pod.py` regenerates a *minimal* rights
+#                         record precisely so identity does not leave the Mac
+#                         (RUNPOD_PRODUCTION.md §1). A `COPY . .` walks around
+#                         that gate, so the gate has to exist here too.
+#
+# The rest is size and correctness: a host virtualenv holds wheels built for
+# the wrong architecture, and shipping one into a linux/amd64 image produces
+# import errors that name a module rather than the cause.
+#
+# Mirrors .gitignore where the reason is the same. Where they differ, this file
+# is the stricter one: git tracks source, and an image needs less than that.
+
+# --- credentials -------------------------------------------------------
+.env
+*.env
+!.env.example
+
+# --- listener data -----------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+
+# --- somebody's voice, and who they are --------------------------------
+experiments/
+pod-voice/
+fam-pod.tar.gz
+*.wav
+voices/
+*.onnx
+*.onnx.json
+
+# --- the wrong architecture, and a lot of it ---------------------------
+.venv/
+venv/
+.fam-venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# --- history and results, neither of which the worker runs -------------
+.git/
+.github/
+pod-results/
+
+.DS_Store
+
+# --- deliberately NOT excluded, and why --------------------------------
+#
+# `static/` and `preview/` look like dead weight, and excluding them was the
+# first draft of this file. Both stay, because **one .dockerignore serves both
+# Dockerfiles**: each runs the whole app, and `app.py` mounts `static/` at
+# import (`app.mount("/", StaticFiles(...))`), which fails at startup when the
+# directory is absent. An exclusion that is correct for one image and fatal for
+# the other is exactly the kind of silent divergence this project keeps paying
+# for, so this file is the union of what both images need rather than the
+# minimum either one does.
+#
+# The cost is about 2 MB, against a CUDA base measured in gigabytes. Not worth
+# a footgun.

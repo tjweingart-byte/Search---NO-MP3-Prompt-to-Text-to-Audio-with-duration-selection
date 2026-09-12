@@ -26,7 +26,7 @@ import time
 
 import voice_store
 from audio_utils import pcm_duration
-from tts import PRODUCTION_ENGINES, engine_for_voice, engine_report, list_voices
+from tts import engine_for_voice, engine_report, list_voices, production_engines
 
 SENTENCE = (
     "This is a test of the voice this app speaks with. "
@@ -60,7 +60,11 @@ async def main() -> int:
         # silent success this project has lost the most time to.
         print("\n  NO VOICE ON THIS MACHINE. What plays is a placeholder tone,")
         print("  not FAM. Nothing below is a judgement of how FAM sounds.")
-        for cls in PRODUCTION_ENGINES:
+        # Asks the backend this deployment actually selected, not the
+        # in-process default: with VOICE_BACKEND=remote the reason is a
+        # missing endpoint, and naming Chatterbox's would send whoever
+        # reads this to a GPU that was never going to be used.
+        for cls in production_engines():
             print(f"    {cls.name}: {cls.diagnose()[1]}")
         print("    Fix: pip install -r requirements-chatterbox.txt, on a GPU")
         print("         machine, with a reference recording whose rights record")

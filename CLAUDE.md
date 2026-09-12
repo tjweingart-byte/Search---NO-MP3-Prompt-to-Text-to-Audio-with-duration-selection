@@ -333,12 +333,30 @@ another rule.
   briefing does. The interface says what it is waiting for and how long it has
   been waiting; a wait you were warned about is a different experience from the
   same wait unexplained.
-- **Search is opt-in, and the question opts in.** `SEARCH_MODE=auto` reads the
-  query with the same keyword signal the cache uses for freshness: "latest",
-  "today", "score", "breaking" get researched; everything else is answered from
-  what the model already knows, immediately. `search=1`/`search=0` on a request
-  still wins. Paying 10-25 seconds on every episode bought nothing for "what is
-  the NASDAQ", which is most of what people ask.
+- **Every episode is researched. (Reversed — this used to say the opposite.)**
+  *(PROBLEMS.md §76.)* `SEARCH_MODE=always` is the production default and the
+  question no longer gets a vote. The old rule was "search is opt-in, and the
+  question opts in": `auto` read the query with the cache's freshness keywords
+  and answered everything else from memory. That was correct arithmetic against
+  research that cost **10-25 seconds** — the model's own `web_search` tool.
+  `RESEARCH_BACKEND=exa` retrieves in about **half a second**, and at that price
+  the guess only ever loses: a question it gets wrong is answered from memory
+  that may be a year stale, and one it gets right saves nothing a listener can
+  hear. Production proved it on `49ers game last night`, logged as *"nothing in
+  it reads as time-sensitive"*. A keyword list can always be widened by one more
+  word, and the next question it misses is already written.
+  `auto` and `never` are kept and are **not production** — offline `write.py`,
+  `tools/compare_search.py`, a deployment with no Exa key. `search=1`/`search=0`
+  on a request still wins. This does not reopen the one-sentence spec: half a
+  second is not seconds in front of the first word, and if that ever stops being
+  true the answer is `ANSWER_FIRST=1`, not guessing again.
+  **And a tool is not an instruction** *(§77).* When an episode is researched
+  and no evidence packet came back — `RESEARCH_BACKEND=claude`, or Exa finding
+  nothing usable — `_request_kwargs` attaches the `web_search` tool, and
+  `build_prompt` must *ask the model to use it*. It did not, for as long as the
+  tool has existed; always-on research turned that from a rare case into every
+  episode, which is how it was finally seen. The packet and the tool stay
+  alternatives, never both.
 - **An account gates what is kept, never what is heard.** *(PROBLEMS.md §70.)*
   Saved mixes, chosen interests and language, and the weekly recap need an
   account; search, myFAM, DailyFAM's episodes, Explore, Go Deeper and the whole
@@ -400,6 +418,14 @@ another rule.
   mode did announce itself, in an 8.5px chip, and still cost a whole session -
   and it was writing its canned script into the shared cache, so the failure
   outlived the run. Announcing is not enough if the thing keeps a record.)*
+- **A running server says which code it is running.** *(PROBLEMS.md §77.)*
+  `/api/health` reports `build` (the commit, from `RENDER_GIT_COMMIT`,
+  `FAM_COMMIT` or `git rev-parse`, and `"unknown"` rather than a guess) and
+  `search_mode_source` (env var or code default). Both exist because a session
+  went into inferring them: "the fix is pushed" and "the fix is live" are the
+  same sentence from outside, and an env var beats a code default silently and
+  outlives every push. Anything else that can be set in two places belongs
+  here too.
 - **Verify, do not inspect.** *(PROBLEMS.md §52.)* Four consecutive failures on
   a real machine all had the same shape: a check answered a cheaper question
   than the one being asked and then reported OK. "A key is set" is not "the key
