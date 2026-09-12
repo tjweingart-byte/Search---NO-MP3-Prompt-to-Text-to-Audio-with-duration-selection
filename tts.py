@@ -676,7 +676,11 @@ def engine_for_voice(voice: str | None) -> TTSEngine:
     """
     if voice and ":" in voice:
         name = voice.split(":", 1)[0]
-        for cls in PRODUCTION_ENGINES:
+        # `production_engines()`, not the static tuple: with VOICE_BACKEND=remote
+        # the slot holds the remote engine, and matching against the in-process
+        # one would let a request name a *different* backend than the deployment
+        # serves - the substitution `production_engines()` exists to forbid.
+        for cls in production_engines():
             if cls.name == name:
                 if cls.available():
                     return cls()

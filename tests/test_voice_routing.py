@@ -95,3 +95,49 @@ def test_the_server_side_override_still_works(mute, monkeypatch):
     monkeypatch.setattr(tts, "settings",
                         dataclasses.replace(tts.settings, tts_engine="debug"))
     assert tts.build_engine().name == "debug"
+
+
+# --- the two fixes have to compose ----------------------------------------
+#
+# `engine_for_voice` originally matched a requested voice against the static
+# PRODUCTION_ENGINES tuple. Once VOICE_BACKEND=remote exists that tuple is no
+# longer what the deployment serves, so a request naming `chatterbox:...` on a
+# remote deployment reached the in-process engine - the engine substitution
+# `production_engines()` exists to forbid, arriving by the same door the
+# placeholder tone used.
+#
+# The local engine is forced *available* here on purpose. Without that the bug
+# hides: a machine where Chatterbox cannot run falls through to `build_engine`
+# and lands on the remote engine anyway, so the wrong lookup is invisible
+# exactly where it is cheapest to test and bites on the GPU box instead.
+
+
+@pytest.fixture
+def remote_deployment(monkeypatch):
+    """VOICE_BACKEND=remote, and a local engine that *could* have answered."""
+    import dataclasses
+    import remote_voice
+
+    cfg = dataclasses.replace(
+        tts.settings, voice_backend="remote", remote_voice_transport="http",
+        remote_voice_url="https://pod.example/synth", remote_voice_token="t")
+    monkeypatch.setattr(tts, "settings", cfg)
+    monkeypatch.setattr(remote_voice, "settings", cfg)
+    monkeypatch.setattr(tts.ChatterboxEngine, "_available", True)
+    monkeypatch.setattr(tts.ChatterboxEngine, "available", classmethod(lambda cls: True))
+    return remote_voice.RemoteChatterboxEngine
+
+
+def test_on_a_remote_deployment_a_request_cannot_name_the_local_engine(remote_deployment):
+    """One backend must not be judged by another's behaviour."""
+    assert tts.production_engines() == (remote_deployment,)
+    assert tts.engine_for_voice("chatterbox:reference_3").name != "chatterbox"
+
+
+def test_on_a_remote_deployment_the_remote_voice_routes_to_the_remote_engine(remote_deployment):
+    assert tts.engine_for_voice("remote:reference_3").name == "remote"
+
+
+def test_the_placeholder_is_still_refused_on_a_remote_deployment(remote_deployment):
+    """The voice-routing fix has to keep holding when the slot is remote."""
+    assert tts.engine_for_voice("debug:tone").name == "remote"
