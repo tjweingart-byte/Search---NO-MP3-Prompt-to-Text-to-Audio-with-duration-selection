@@ -387,6 +387,27 @@ def test_the_env_example_ships_the_default_it_documents():
     assert f"RESEARCH_BACKEND={config.DEFAULT_RESEARCH_BACKEND}" in lines
 
 
+def test_every_image_installs_the_backend_it_defaults_to():
+    """Render started with research already broken, and said so in a log line.
+
+    `research.py` imports `exa_py`, which is declared only in
+    requirements-exa.txt. The CPU Dockerfile - the one Render builds - installed
+    requirements.txt alone, so the image came up with RESEARCH_BACKEND=exa and
+    no Exa: `diagnose` reported "exa_py is not installed" and every researched
+    episode would raise ResearchUnavailable rather than search another way.
+    Dockerfile.gpu had always installed both; this is the same shape as §54,
+    where a setting was settled in one place and not in the one that shipped.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    for name in ("Dockerfile", "Dockerfile.gpu"):
+        text = (root / name).read_text()
+        assert "requirements-exa.txt" in text, (
+            f"{name} does not install exa_py, but RESEARCH_BACKEND defaults to "
+            f"{config.DEFAULT_RESEARCH_BACKEND!r}")
+
+
 @pytest.mark.parametrize("value", ["exaa", "web", "", "google"])
 def test_an_unrecognised_backend_is_refused_at_import(value):
     with pytest.raises(ValueError, match="is not a research backend"):

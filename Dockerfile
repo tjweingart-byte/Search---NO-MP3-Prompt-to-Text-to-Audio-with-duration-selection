@@ -13,8 +13,16 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Both files. `exa_py` is declared only in requirements-exa.txt, and
+# RESEARCH_BACKEND defaults to `exa` (config.py DEFAULT_RESEARCH_BACKEND), so
+# without it this image starts with research already broken: `research.diagnose`
+# reports "exa_py is not installed" and every researched episode raises
+# ResearchUnavailable rather than searching another way. Dockerfile.gpu has
+# always installed both; this image was the one left behind.
+#
+# It costs nothing to carry: exa-py is pure Python, no torch, no CUDA.
+COPY requirements.txt requirements-exa.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-exa.txt
 
 COPY . .
 
