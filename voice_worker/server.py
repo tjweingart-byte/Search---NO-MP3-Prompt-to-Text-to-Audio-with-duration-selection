@@ -76,6 +76,22 @@ async def _startup() -> None:
     log.info("model resident, emitting %s Hz", await _load())
 
 
+@app.on_event("startup")
+async def _announce() -> None:
+    """Say what this container serves, and where.
+
+    A 404 in the app's log says only that nothing was home at an address. It
+    cannot say whether this worker was the thing that answered, was listening
+    on another port, or was never started in `http` mode at all - and the pod's
+    own log is the one place all three are visible. So it is printed rather
+    than left to be inferred from a Dockerfile.
+    """
+    routes = sorted(f"{sorted(r.methods)[0]} {r.path}"
+                    for r in app.routes if getattr(r, "methods", None))
+    log.info("serving on port %s: %s", os.environ.get("PORT", "8001"),
+             ", ".join(routes))
+
+
 @app.get("/health")
 async def health() -> dict:
     """What this worker can actually do. Cheap enough to be a probe target."""

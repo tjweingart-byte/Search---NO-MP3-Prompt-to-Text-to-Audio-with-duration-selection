@@ -418,6 +418,125 @@ def test_an_http_pod_needs_no_runpod_credential(monkeypatch):
     assert RemoteChatterboxEngine.available() is True
 
 
+# --- the address, which is the one thing only this half can get wrong -------
+#
+# Production hit this: `POST https://<pod>-8002.proxy.runpod.net/synth` ->
+# 404, on a deployment where the research half had just started working. A 404
+# is the failure that looks like the voice and is not: nothing was asked, and
+# every earlier guard here (empty audio, wrong rate, odd byte count) is about a
+# worker that *answered*. These are about being sure which of the two it was.
+
+
+def http_pod(monkeypatch, url="https://pod.example", **overrides):
+    configure(monkeypatch, remote_voice_transport="http", remote_voice_url=url,
+              remote_voice_token="shh", **overrides)
+    RemoteChatterboxEngine._found_route = None
+
+
+def audio_reply():
+    return FakeResponse({"audio": base64.b64encode(PCM).decode("ascii"),
+                         "sample_rate": 24000, "format": "pcm_s16le"})
+
+
+def not_found(text='{"detail":"Not Found"}'):
+    return FakeResponse({"detail": "Not Found"}, status_code=404, text=text)
+
+
+def test_a_url_that_already_names_the_route_is_not_given_a_second_one(monkeypatch):
+    """The 404 that reads exactly like a missing route, and is a doubled path.
+
+    `REMOTE_VOICE_URL` is documented as a base URL, and the URL an operator
+    verified the pod with by hand is the one ending in /synth. Both are
+    unambiguous, so both work."""
+    http_pod(monkeypatch, url="https://pod.example/synth")
+    client = install(monkeypatch, audio_reply())
+    assert speak() == PCM
+    assert client.posts[0]["url"] == "https://pod.example/synth"
+    assert not client.gets, "a working address asks the worker nothing"
+
+
+def test_the_happy_path_costs_no_extra_request(monkeypatch):
+    http_pod(monkeypatch)
+    client = install(monkeypatch, audio_reply())
+    assert speak() == PCM
+    assert [p["url"] for p in client.posts] == ["https://pod.example/synth"]
+    assert not client.gets
+
+
+def test_a_404_asks_the_worker_which_route_it_serves_and_uses_it(monkeypatch):
+    """A worker whose route is not this app's name for it is a fixable
+    deployment, not a broken episode - and the retry is the worker's own
+    answer, never a guessed path."""
+    http_pod(monkeypatch)
+    client = install(
+        monkeypatch,
+        not_found(),
+        FakeResponse({"paths": {"/health": {"get": {}},
+                                "/v1/synthesise": {"post": {}}}}),
+        audio_reply())
+    assert speak() == PCM
+    assert client.gets[0]["url"] == "https://pod.example/openapi.json"
+    assert [p["url"] for p in client.posts] == [
+        "https://pod.example/synth", "https://pod.example/v1/synthesise"]
+
+
+def test_the_route_the_worker_named_is_not_asked_for_twice(monkeypatch):
+    """Fifteen chunks an episode. One discovery, not fifteen."""
+    http_pod(monkeypatch)
+    client = install(
+        monkeypatch,
+        not_found(),
+        FakeResponse({"paths": {"/v1/synthesise": {"post": {}}}}),
+        audio_reply(),
+        audio_reply())
+    assert speak() == PCM
+    assert speak() == PCM
+    assert len(client.gets) == 1
+    assert client.posts[-1]["url"] == "https://pod.example/v1/synthesise"
+
+
+def test_a_404_everywhere_names_the_port_and_the_mode(monkeypatch):
+    """The failure production actually saw, and the sentence it needed.
+
+    Nothing answering `/openapi.json` either means the thing being called is
+    not this worker at all - which is a proxied port with nothing behind it, or
+    a pod running the serverless handler, and neither is visible from a 404 on
+    its own."""
+    http_pod(monkeypatch)
+    install(monkeypatch, not_found(), not_found())
+    with pytest.raises(RemoteVoiceError) as raised:
+        speak()
+    said = str(raised.value)
+    assert "PORT" in said and "VOICE_WORKER_MODE=http" in said
+    assert "openapi.json" in said
+
+
+def test_the_probes_hang_off_the_origin_not_the_route(monkeypatch):
+    """`.../synth/openapi.json` would answer nothing and blame the worker."""
+    http_pod(monkeypatch, url="https://pod.example/synth")
+    client = install(monkeypatch, not_found(), not_found())
+    with pytest.raises(RemoteVoiceError):
+        speak()
+    assert client.gets[0]["url"] == "https://pod.example/openapi.json"
+
+
+def test_a_worker_that_serves_no_post_route_is_not_guessed_at(monkeypatch):
+    http_pod(monkeypatch)
+    install(monkeypatch, not_found(),
+            FakeResponse({"paths": {"/health": {"get": {}}}}))
+    with pytest.raises(RemoteVoiceError, match="does not serve"):
+        speak()
+
+
+def test_a_404_never_becomes_a_different_voice(monkeypatch):
+    """§61's second guard, at the one place a retry exists at all."""
+    http_pod(monkeypatch)
+    install(monkeypatch, not_found(), not_found())
+    with pytest.raises(RemoteVoiceError):
+        speak()
+    assert RemoteChatterboxEngine.name == "remote"
+
+
 # --- the worker half --------------------------------------------------------
 
 class StubEngine:

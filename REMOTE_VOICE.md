@@ -91,6 +91,46 @@ Copy the **endpoint id**.
 expose port 8001, and use the proxy URL RunPod gives you as
 `REMOTE_VOICE_URL`.
 
+**Two things about that pod are the whole of what goes wrong** (PROBLEMS.md
+§78), and neither is visible from the app's side:
+
+* **`VOICE_WORKER_MODE=http` is not optional on a pod.** The image defaults to
+  `serverless`, which runs `handler.py` and opens *no port at all* - so the
+  proxy URL answers 404 on every path, including `/health`, and the app's log
+  reads exactly like a worker with a missing route.
+* **The port in the proxy URL must be the port the worker listens on.** The
+  container serves `${PORT:-8001}`, so a pod exposing 8002 needs `PORT=8002`
+  in its environment as well. `https://<pod>-8002.proxy.runpod.net` with
+  uvicorn on 8001 is a 404 from RunPod's proxy, not from the worker.
+
+## When it answers 404
+
+    POST https://<pod>-8002.proxy.runpod.net/synth -> 404 Not Found
+    remote voice synth returned HTTP 404
+
+A 404 means nothing was home at that address, and it cannot say which half of
+the address was wrong. One command answers it, from anywhere that can reach the
+pod:
+
+    REMOTE_VOICE_TOKEN=... python tools/probe_remote_voice.py \
+        --url https://<pod>-<port>.proxy.runpod.net
+
+It asks `/health`, prints **every route the running image serves** from
+`/openapi.json` - which is the authority on the route name, not this repo,
+since the image may be a different version of it - and then makes it speak.
+Exit 0 only when real audio came back. The three outcomes:
+
+| What it prints | What is wrong | Fix |
+|---|---|---|
+| `POST /synth 200: ... bytes` | nothing; the voice works | - |
+| routes listed, but no `/synth` | the image serves a different route | rebuild from `Dockerfile.voice`; the app retries at the route the worker names, at the cost of one extra request per chunk |
+| `Nothing at ... is a FAM voice worker` | wrong port, or the pod is in serverless mode | set `PORT` to the exposed port and `VOICE_WORKER_MODE=http` on the pod |
+
+The pod's own log now names both facts at boot, so the same question can be
+answered from RunPod's console without a probe:
+
+    voice_worker serving on port 8001: GET /health, POST /synth, ...
+
 ### 4. Point Render at it
 
 `render.yaml` already declares these; set the two `sync: false` values in the
