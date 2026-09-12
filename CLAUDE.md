@@ -333,12 +333,23 @@ another rule.
   briefing does. The interface says what it is waiting for and how long it has
   been waiting; a wait you were warned about is a different experience from the
   same wait unexplained.
-- **Search is opt-in, and the question opts in.** `SEARCH_MODE=auto` reads the
-  query with the same keyword signal the cache uses for freshness: "latest",
-  "today", "score", "breaking" get researched; everything else is answered from
-  what the model already knows, immediately. `search=1`/`search=0` on a request
-  still wins. Paying 10-25 seconds on every episode bought nothing for "what is
-  the NASDAQ", which is most of what people ask.
+- **Every episode is researched. (Reversed — this used to say the opposite.)**
+  *(PROBLEMS.md §76.)* `SEARCH_MODE=always` is the production default and the
+  question no longer gets a vote. The old rule was "search is opt-in, and the
+  question opts in": `auto` read the query with the cache's freshness keywords
+  and answered everything else from memory. That was correct arithmetic against
+  research that cost **10-25 seconds** — the model's own `web_search` tool.
+  `RESEARCH_BACKEND=exa` retrieves in about **half a second**, and at that price
+  the guess only ever loses: a question it gets wrong is answered from memory
+  that may be a year stale, and one it gets right saves nothing a listener can
+  hear. Production proved it on `49ers game last night`, logged as *"nothing in
+  it reads as time-sensitive"*. A keyword list can always be widened by one more
+  word, and the next question it misses is already written.
+  `auto` and `never` are kept and are **not production** — offline `write.py`,
+  `tools/compare_search.py`, a deployment with no Exa key. `search=1`/`search=0`
+  on a request still wins. This does not reopen the one-sentence spec: half a
+  second is not seconds in front of the first word, and if that ever stops being
+  true the answer is `ANSWER_FIRST=1`, not guessing again.
 - **An account gates what is kept, never what is heard.** *(PROBLEMS.md §70.)*
   Saved mixes, chosen interests and language, and the weekly recap need an
   account; search, myFAM, DailyFAM's episodes, Explore, Go Deeper and the whole

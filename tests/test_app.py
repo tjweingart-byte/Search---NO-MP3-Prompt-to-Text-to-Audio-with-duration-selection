@@ -122,23 +122,31 @@ def test_health_reports_demo_mode(client, monkeypatch):
 # --------------------------------------------------------------------------
 # Speed is the product
 #
-# The promise is: type a question, hear the answer within about a second.
-# Live web search put 10-25 seconds in front of the first word, which no amount
-# of buffering can disguise, so it is off unless a request asks for it.
+# The promise is: type a question, hear the answer within about a second. The
+# model's own web_search tool put 10-25 seconds in front of the first word,
+# which no amount of buffering can disguise. Exa retrieval costs about half a
+# second, so every episode is now researched (PROBLEMS.md 76) - and the tool
+# that cost the 10-25 seconds is still not what production uses.
 # --------------------------------------------------------------------------
 
 
-def test_web_search_is_off_by_default():
-    """It is the single biggest cost in time-to-first-word."""
+def test_research_is_on_for_every_episode():
+    """The old default guessed from keywords and got 'last night' wrong."""
     from script_generator import plan_episode
 
+    assert plan_episode("anything", 3).search is True
+    assert appmod.settings.research_backend == "exa", (
+        "the always-on default is priced on Exa retrieval; the model's own "
+        "search tool costs 10-25s and cannot be paid on every episode")
+    # The old ENABLE_WEB_SEARCH switch is the model-tool path, and forcing it
+    # on is still an explicit act rather than the default.
     assert appmod.settings.enable_web_search is False
-    assert plan_episode("anything", 3).search is False
 
 
-def test_search_can_be_requested_per_episode():
+def test_search_can_be_turned_off_per_episode():
     from script_generator import plan_episode
 
+    assert plan_episode("todays results", 3, search=False).search is False
     assert plan_episode("todays results", 3, search=True).search is True
 
 

@@ -61,13 +61,17 @@ def test_text_settings_match(defaults, key, attr):
     assert example_values()[key] == str(getattr(defaults, attr))
 
 
-def test_search_is_not_on_for_every_episode(defaults):
-    """The one-sentence spec expressed as a setting. `always` pays 10-25s on
-    every episode including the ones that never needed it."""
-    assert defaults.search_mode == "auto", "the default search mode drifted"
-    assert example_values()["SEARCH_MODE"] == "auto", (
-        "SEARCH_MODE in .env.example is not auto: copying it puts seconds in "
-        "front of the first word, which is the one thing the product refuses"
+def test_search_is_on_for_every_episode(defaults):
+    """Reversed, deliberately. `auto` was priced against research that cost
+    10-25 seconds; Exa retrieves in about half a second, and at that price a
+    keyword guess about which questions "read as time-sensitive" only ever
+    costs freshness. The example file has to move with the code or following
+    the documented setup configures the product against itself again - which
+    is the whole reason this file exists."""
+    assert defaults.search_mode == "always", "the default search mode drifted"
+    assert example_values()["SEARCH_MODE"] == "always", (
+        "SEARCH_MODE in .env.example is not always: copying it gives a "
+        "deployment that answers today's questions from stale memory"
     )
 
 

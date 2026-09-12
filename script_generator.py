@@ -378,15 +378,18 @@ def plan_episode(
     else:
         sections = ["the full arc, including how it came to be this way"]
 
-    # Option B: the question decides. An explicit search=1/0 on the request
-    # still wins - that is what "opt in" means - but the default is neither
-    # "always" nor "never", it is "when the answer depends on something recent".
+    # Every episode is researched. An explicit search=1/0 on the request still
+    # wins - that is what opt-out means - and `SEARCH_MODE` can still be set to
+    # `auto` or `never`, but neither is production: see config.search_mode for
+    # why the question no longer gets a vote.
     if search is None:
-        mode = getattr(settings, "search_mode", "auto")
+        mode = getattr(settings, "search_mode", "always")
         if mode == "always":
             use_search = True
+            log.info("SEARCH yes  %r - every episode is researched", query)
         elif mode == "never":
             use_search = False
+            log.info("SEARCH no   %r - SEARCH_MODE=never", query)
         else:
             reason = research_reason(query)
             use_search = bool(reason)
@@ -396,10 +399,11 @@ def plan_episode(
             # "no" - produced no output at all. A decision that is silent when
             # it goes one way cannot be checked by watching.
             if use_search:
-                log.info("SEARCH yes  %r - %s", query, reason)
+                log.info("SEARCH yes  %r - SEARCH_MODE=auto: %s", query, reason)
             else:
-                log.info("SEARCH no   %r - nothing in it reads as time-sensitive; "
-                         "answering from what the model knows", query)
+                log.info("SEARCH no   %r - SEARCH_MODE=auto: nothing in it reads "
+                         "as time-sensitive; answering from what the model knows",
+                         query)
     else:
         use_search = bool(search)
         log.info("SEARCH %-3s %r - the request asked for it explicitly",

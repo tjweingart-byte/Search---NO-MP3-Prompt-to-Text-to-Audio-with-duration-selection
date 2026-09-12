@@ -322,7 +322,9 @@ def test_the_generator_records_what_the_provider_billed(monkeypatch):
          "cache_read_input_tokens": 800, "cache_creation_input_tokens": 0},
     ))})()
 
-    plan = sg.plan_episode("anything", 1)
+    # search=False - the default researches every episode (PROBLEMS.md 76)
+    # and what is being counted here is model tokens, not retrieval.
+    plan = sg.plan_episode("anything", 1, search=False)
     notes = sg.ScriptNotes()
 
     async def drain():

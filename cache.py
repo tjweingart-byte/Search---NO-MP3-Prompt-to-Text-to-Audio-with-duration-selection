@@ -151,6 +151,12 @@ def research_reason(query: str, now: Optional[float] = None) -> str:
     Deliberately a keyword test, not a model call: classifying the query with a
     model puts a round trip in front of the first word, which is the one cost
     this product refuses.
+
+    **This no longer decides whether an episode is researched** (PROBLEMS.md
+    76). Production is `SEARCH_MODE=always`; this is consulted only under
+    `SEARCH_MODE=auto`, and by the cache, which still needs to know how long an
+    answer stays true. Widening it changes what `auto` does and how long
+    entries live - not what a listener hears.
     """
     text = query.lower()
     tokens = set(_SPACE.split(_PUNCT.sub(" ", text)))

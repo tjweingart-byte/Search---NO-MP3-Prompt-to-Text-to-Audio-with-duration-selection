@@ -298,18 +298,32 @@ class Settings:
     allow_topups: bool = field(
         default_factory=lambda: os.environ.get("ALLOW_TOPUPS", "0") not in ("0", "false", "False")
     )
-    # auto | never | always.
+    # always | auto | never. **The default is now `always`** - every episode is
+    # researched before it is written.
     #
-    # `auto` reads the question: one that names a moving target - "latest",
-    # "today", "score", "breaking" - gets researched and waits for it; one that
-    # does not is answered from what the model already knows, immediately.
-    # Search front-loads 10-25 seconds before the first word, so paying that on
-    # every episode meant paying it mostly for questions that did not need it.
+    # This reverses `auto`, and the reversal is about arithmetic rather than
+    # taste. `auto` was written when "search" meant Anthropic's server-side
+    # `web_search` tool, which front-loads 10-25 seconds; at that price a
+    # keyword guess about which questions "read as time-sensitive" was worth
+    # making, because the ones guessed wrong only lost freshness while the ones
+    # guessed right saved half a minute. With `RESEARCH_BACKEND=exa` -
+    # DEFAULT_RESEARCH_BACKEND above - retrieval is about half a second, and at
+    # that price the guess costs more than it saves: every question it gets
+    # wrong is answered from memory that may be years stale, and nothing
+    # observable is bought for the ones it gets right.
+    #
+    # The specific failure that ended it: "49ers game last night" was logged as
+    # `SEARCH no - nothing in it reads as time-sensitive`. A keyword list can
+    # always be widened one more word, and the next question it misses is
+    # already written.
+    #
+    # `auto` and `never` are kept, and are what `write.py`, `compare_search.py`
+    # and a deployment without an Exa key use. They are not production.
     # A request can still say search=1 or search=0 explicitly and win.
     search_mode: str = field(
         default_factory=lambda: (
             "always" if os.environ.get("ENABLE_WEB_SEARCH", "") in ("1", "true", "True")
-            else os.environ.get("SEARCH_MODE", "auto").lower()
+            else os.environ.get("SEARCH_MODE", "always").lower()
         )
     )
     #: Kept so existing callers and the health report still have a boolean to

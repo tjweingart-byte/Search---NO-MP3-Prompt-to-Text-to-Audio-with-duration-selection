@@ -3974,3 +3974,102 @@ The other unmeasured number is the wake. Whether it actually covers a cold
 start on a real endpoint has not been observed — only reasoned about from the
 script-generation time on one side and the model-load time on the other. If it
 does not, `REMOTE_VOICE.md` lists the three fixes in order of cost.
+
+## 76. The question decided whether to research, and it decided wrong
+
+Render, in production, on a question about a game played the previous evening:
+
+    SEARCH no '49ers game last night' - nothing in it reads as time-sensitive;
+    answering from what the model knows
+
+The episode was written from model memory. Nothing was broken: that log line
+is `script_generator.plan_episode` reporting the designed behaviour of
+`SEARCH_MODE=auto`, which was the shipped default.
+
+### The cause is a price that changed, not a bug
+
+`auto` was the settled constraint — "search is opt-in, and the question opts
+in" — and it was right when it was written. Research then meant Anthropic's
+server-side `web_search` tool running inside the model's turn, which
+front-loads **10-25 seconds** before the first word. Against that, a keyword
+guess is worth making: the questions it gets right save half a minute each, and
+the one-sentence spec says a wait in front of the first word is the one cost
+this product refuses.
+
+`RESEARCH_BACKEND=exa` (§57, `research.py`) changed the number the guess was
+priced against. Exa retrieves in about **half a second**. At that price the
+arithmetic inverts completely:
+
+* a question guessed **wrong** is answered from memory that may be a year
+  stale — the whole failure, and invisible, because a confident wrong answer
+  sounds exactly like a right one;
+* a question guessed **right** saves half a second, which no listener can hear.
+
+So the guess had stopped buying anything and was still capable of losing
+everything. That is not a heuristic that needs widening. `research_reason` had
+already been widened once (§58 added "who runs X", "how many", bare years) and
+`last night` still missed — which is the general shape: a keyword list can
+always be widened by one more word, and the next question it misses is already
+written somewhere.
+
+### The fix
+
+One default, not a deleted code path. `config.search_mode` now defaults to
+`always`, and `.env.example` moves with it (§54: a setting is settled only
+where it is copied, and `tests/test_env_example.py` fails on any disagreement).
+`auto` and `never` are kept and are explicitly **not production** — offline
+`write.py`, `tools/compare_search.py`, a deployment with no Exa key. An
+explicit `search=1` / `search=0` on a request still wins, because opt-out has
+to mean something or the API documents a lie.
+
+Three things moved with it, because a decision that is only changed in one
+place is §54 again:
+
+* **The log line says which mode it is in** in all three branches. The old one
+  reported a reason without saying whose rule produced it, so the Render log
+  looked like a heuristic misfiring rather than a default being wrong.
+* **The interface asks the server which mode it is in** (`/api/health` already
+  reported `search_mode`; `static/index.html` now reads it). It was mirroring
+  the keyword list to choose a loading caption, so with research always on it
+  would have told the listener "answering from what I know" while the server
+  retrieved — a new version of the lie the honest wait was built to remove.
+* **`demo_preflight` warns on the opposite condition.** It used to flag
+  `always` as the mistake. It now flags anything that is *not* `always`, and —
+  "verify, do not inspect" (§52) — asks `research.diagnose()` whether the
+  backend can actually run, because with every episode researched a missing
+  `EXA_API_KEY` is not a degraded demo, it is a demo where nothing generates.
+
+### What is deliberately not done
+
+**No fallback to model knowledge when research fails.** `ScriptGenerator.
+research` lets `ResearchUnavailable` propagate, `app.friendly_error` turns it
+into the sentence that names the remedy, and that is the whole of it.
+Substituting memory for a failed retrieval would restore exactly this bug,
+invisibly, on the days the backend is down — and an episode nobody can tell
+was unresearched is unattributable.
+
+The empty-packet path is different and stays: when Exa returns nothing usable,
+`research` returns the plan without evidence, and since the plan still says
+`search`, `_request_kwargs` leaves the `web_search` tool attached — so the
+model searches after all rather than being handed an empty packet and told it
+is research.
+
+### The test that would have caught it
+
+`tests/test_research_is_the_default.py`, and the shape worth copying: it
+asserts the symptom (`"answering from what the model knows"` can no longer be
+logged) as well as the cause, it goes through `/api/audio` rather than calling
+`plan_episode` directly (§58's lesson — a default that is correct in the
+function and wrong at the boundary is invisible to any test that starts inside
+the boundary), and it follows the flag to the call by stubbing
+`research.retrieve` and asserting it actually ran. Checked against the old
+default, 17 of its 34 cases fail — including `49ers game last night`.
+
+### Still open
+
+Nobody has listened to an always-researched episode end to end with a key in
+place. What is measured is that research is planned, invoked and attributed;
+what is not is whether time-to-first-audio holds at the half-second Exa is
+credited with under production concurrency. If it does not, the answer is
+`ANSWER_FIRST=1` — which exists for exactly this and currently follows the
+backend — and not a return to guessing.

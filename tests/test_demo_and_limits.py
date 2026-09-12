@@ -102,7 +102,10 @@ def test_demo_mode_still_reads_the_cache():
     """Explore replays, and replaying needs no credentials at all - so reads
     must survive the fix that stopped the writes."""
     cache = MemoryScriptCache()
-    plan = plan_episode("how reusable rockets changed spaceflight", 1)
+    # search=False so the replay path is what is exercised. Research runs
+    # on every episode by default now and this one is about reading the
+    # cache without credentials of any kind.
+    plan = plan_episode("how reusable rockets changed spaceflight", 1, search=False)
     real = ["A first sentence.", "A second sentence."]
     cache.put(cache_key(plan.query, plan.minutes), real, 3600, plan.query, "", 1)
 
