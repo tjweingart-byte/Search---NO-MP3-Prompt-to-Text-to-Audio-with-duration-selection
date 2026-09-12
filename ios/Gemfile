@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+# Pinned so a runner upgrade cannot change what "upload to TestFlight" means
+# on a morning nobody touched the release.
+gem "fastlane", "~> 2.220"

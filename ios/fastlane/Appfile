@@ -1,0 +1,5 @@
+# No Apple ID here on purpose. Authentication is an App Store Connect API key
+# supplied by the environment (ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8), so
+# this file carries no credential and no personal account.
+app_identifier(ENV["FAM_APP_IDENTIFIER"] || "com.fam.app")
+team_id(ENV["FAM_TEAM_ID"])

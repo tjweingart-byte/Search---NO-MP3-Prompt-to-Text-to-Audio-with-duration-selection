@@ -1,0 +1,78 @@
+# XcodeGen spec. `xcodegen generate` turns this into FAM.xcodeproj.
+#
+# The project file is generated rather than committed on purpose: an
+# .xcodeproj is a directory of machine-written XML that conflicts on every
+# concurrent edit and cannot be reviewed. This file is the reviewable version
+# of the same thing, and it is the one place the bundle id, the background
+# mode and the per-configuration server URL are set.
+#
+#   brew install xcodegen && cd ios && xcodegen generate
+
+name: FAM
+options:
+  bundleIdPrefix: com.fam
+  deploymentTarget:
+    # AVAudioEngine, async/await and SwiftUI's NavigationStack. 16 is the
+    # oldest that carries all three without back-deployment shims.
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    # Overwritten per build by fastlane from the CI run number, so a build
+    # number is never chosen by a human and never collides in TestFlight.
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  FAM:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/FAM
+        excludes:
+          - "**/*.md"
+    info:
+      path: Sources/FAM/Support/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.fam.app
+        PRODUCT_NAME: FAM
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1"    # iPhone. iPad is not designed yet.
+        CODE_SIGN_STYLE: Automatic
+        # Set in the CI environment, never committed.
+        DEVELOPMENT_TEAM: $(FAM_TEAM_ID)
+      configs:
+        Debug:
+          # A laptop on the same wifi. `./dev.sh` prints this address.
+          FAM_API_BASE_URL: $(FAM_API_BASE_URL_DEBUG)
+        Release:
+          # The deployed server with a GPU that is up when a phone asks.
+          FAM_API_BASE_URL: $(FAM_API_BASE_URL_RELEASE)
+    entitlements:
+      path: Sources/FAM/Support/FAM.entitlements
+      properties:
+        # Sign in with Apple is already built server-side, and is not optional
+        # once Google sign-in is offered. The entitlement ships now so the
+        # capability does not have to be added under review later.
+        com.apple.developer.applesignin:
+          - Default
+
+schemes:
+  FAM:
+    build:
+      targets:
+        FAM: all
+    run:
+      config: Debug
+    archive:
+      config: Release
